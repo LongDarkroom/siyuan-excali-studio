@@ -1505,6 +1505,51 @@ dock 白板库是唯一主入口，文档树降级为**可选存档层**（要�
   这些既有链路一条不用改。
 - 约束：该模块必须留在宿主 bundle——**不能 import tab.tsx 的运行时**（会提前拉进 8MB 引擎）。
 
+**第五十九轮（2026-10-22，AI 计划布局：正交避障走线 + 源点下沉 + 按词换行 + radial 多圈）**
+
+- 根因（走线）：`routeEdges` 只看起止两个盒，固定走「中点折一次」的三段折线，路上有什么
+  一概不管——跨层的线直接穿过中间层节点；层内又按输入顺序排，交叉没人收拾。
+- 修法：新增 `ai/route.ts`。全图共用一张稀疏网格（障碍边界 + 节点中线 + 相邻线的中线），
+  出入桩点恰好落在网格上，障碍判定只预算一次；每条边跑 A*，代价 = 长度 + 拐弯 + 走在已有
+  线上的长度。起止边先试朝向对方的 2×2 种，不通再试 16 种，仍不通才退回旧折线。同一个口
+  尽量不既进又出（同向汇流允许）。短边先布，输出仍按计划边序（`edge-N` 编号不变）。
+- 标签放在最长一段上，避开节点与已放的标签。
+- 上下（左右）相对、另一轴上有可落线重叠的两个节点直接一条直线，线放在重叠区中点；矩形避开两端圆角，
+  菱形/椭圆只认中线（只有那里碰得到外框）。中心差十几像素时不再多出一个小台阶。
+- 分层：没有入边的节点下沉到最近后继的上一层，不再顶在第 0 层拖一根跨层长线；层内用重心法
+  上下各扫两遍（稳定排序，重心相同时仍按输入顺序）。
+- radial：以前所有叶子挤在一圈、半径不看个数，12 个以上就互相重叠（重叠的节点之间根本没路
+  可走）。现在按「相邻弦长 ≥ 节点对角线 + 间距」定每圈容量，放不下开外圈；外圈只用从中心
+  直线看得见的方向（采样后贪心挑），挑不齐就把这一圈推远 15% 再试。radial 的线优先直线放射，
+  被挡住才走正交。
+- 换行（`wrapTextByWidth`）：以前逐字断，「Excali tools」断成「Excali t / ools」、「3.8.8」断成
+  「3.8 / .8」。现在中文逐字、其余按词，只有单词本身超宽才逐字断；行首行尾空格不保留。
+- 性能（上限 40 节点 / 80 边）：lr/tb/grid ≈ 150–200ms，radial ≈ 350ms。
+- 测试：`test/ai-route.test.mjs`——不穿节点（含上限规模四种布局，斜线按真正的线段/矩形相交判）、
+  源点下沉、进出口分离、边序不变、标签不压节点、radial 不重叠且放射为直线、按词换行。
+
+**第六十轮（2026-10-22，计划 DSL 的可选布局提示：rank / order / groups）**
+
+- 动机：自动布局只能猜。模型知道「这两个是一组」「网关必须在中间那层」，以前没法说；能说的只有
+  坐标，而坐标恰恰是 DSL 不让模型碰的。所以补的是**意图**，不是坐标。
+- `node.rank`（lr/tb）：钉层，在源点下沉之后最后生效。grid/radial 写了会在 `warnings` 里说明被忽略。
+- `node.order`：层内（grid 是格子、radial 是环上）的先后，与位次比较；平局时写了 order 的在前，
+  所以 `order: 0` 就是「排第一」。
+- `groups`（`{ 组名: 标题 }` 或 `[{ id, label }]`，组名对应 `node.group`）：列出的组画框，同组节点
+  在层内挨着放（整组落在组内最靠前成员的位次上）。框是**事后量出来的**，不推开别的节点；包住了
+  非成员、或两个框相叠，就在 `warnings` 里点名，提示用 rank/order 调整——宁可报出来，也不悄悄
+  画一张框错的图。只写 `node.group`、不列进 `groups` 的组照旧只上底色，行为与以前一致。
+- 框的画法：透明底、虚线、圆角的普通矩形 + 左上角标题，排在节点前（z 序在下），与成员同一个
+  Excalidraw 组（拖整组时框跟着走）。不用 Excalidraw frame：frame 会裁剪并接管子元素，事后编辑别扭。
+- 有框时层间距自动撑开（容下上一层框的下沿 + 下一层框的标题行）；框的标题与四条边线进标签避让，
+  连线标签不会压在虚线上。框的标题在成员上方，坐标会为负，布局最后整体平移回左上角 = 0。
+- 写错的提示（rank 非整数、order 非数字、groups 指向没人用的组）只记 `warnings`，不整单失败。
+- schema：内核 MCP 工具与前端智能体的 `plan` 都加了 `groups` 与 `nodes` 的字段说明（i18n 两份同步）；
+  `script/excali-draw/SKILL.md` 补了用法与示例。
+- 测试：`test/ai-hints.test.mjs`——不写提示时布局不变、rank 钉层、order 排序（层内/grid/radial）、
+  框包住成员且在节点下层、框不与标题重叠且坐标非负、标签不压框线、包住非成员时报 warning、
+  错误提示只记 warning、数组写法。
+
 **适配**
 
 - 跟随思源明暗主题；可选「画笔颜色跟随思源强调色」（只影响新建画板第一笔的默认色）
@@ -1565,7 +1610,8 @@ src/studio/ea-api.ts         ea 脚本 API（ExcalidrawAutomate 最小子集，�
 src/studio/ea-handle.ts      EaBoardHandle 工厂：把 vendor imperative api 包成脚本画布句柄
 src/studio/ea-element.ts     ea 元素工厂纯函数（可 node 单测）
 src/studio/ai/plan.ts        AI 绘图计划 DSL：松散输入归一化、上限、PlanError/warnings
-src/studio/ai/layout.ts      计划布局：lr/tb/grid/radial + 折线走线（间距读 preset.space）
+src/studio/ai/layout.ts      计划布局：lr/tb/grid/radial、源点下沉 + 层内重心排序、radial 多圈（间距读 preset.space）
+src/studio/ai/route.ts       走线：共享网格上的正交避障 A*、radial 直线放射、标签避让（第五十九轮）
 src/studio/ai/preset.ts      风格注册表：内置 pencil/marker/blueprint + 外部包（extends 懒解析）
 src/studio/ai/style-pack.ts  风格包 JSON：校验/注册/目录加载（data/assets/excali-styles）
 src/studio/ai/render.ts      计划 → 元素 specs/节点 id/路线/包围盒（前端与 CLI 共用）
