@@ -347,10 +347,11 @@ test("契约·导出链路（第二十六轮 T1 重写）：预览与载荷分�
 
 test("契约·第二十六轮：分包加载 / 图片外置接线 / 嵌入图点击 / 图形跳文档", () => {
   // T3 分包：思源装载插件不是 Node 模块机制（loader.ts 把 index.js 文本包进
-  // anonymous(require, module, exports) 后 eval，require 是宿主注入的 requireFunc，
-  // 相对路径必炸 renderer_init）——引擎走 HTTP fetch + 思源同款包装执行（loadEngineModule）
-  assert.match(INDEX, /loadEngineModule\(\): Promise/, "vendor 引擎经 engine.js 单文件懒加载（HTTP fetch + eval 包装）");
-  assert.match(INDEX, /anonymous\(require, module, exports\)/, "与思源 loader.ts 同款包装，引擎内 require(siyuan) 才能解析");
+  // (function(require, module, exports){…}) 后 eval，require 是宿主注入的 requireFunc，
+  // 相对路径必炸 renderer_init）——引擎走 HTTP fetch + <script> 注入执行（loadEngineModule）
+  assert.match(INDEX, /loadEngineModule\(\): Promise/, "vendor 引擎经 engine.js 单文件懒加载（HTTP fetch + <script> 注入，绕过 WebKit eval 尺寸上限）");
+  assert.match(INDEX, /__exsEngineFactory=\(function\(require,module,exports\)/, "引擎包成 factory 经 <script> 注入执行，引擎内 require(siyuan) 才能解析");
+  assert.equal(INDEX.includes("window.eval("), false, "引擎不再用 window.eval 执行（WebKit 移动端对 eval 巨串有尺寸上限，会「画板引擎加载失败」）");
   assert.match(INDEX, /this\.lazyEngine \?\?= this\.loadEngineModule\(\)/, "并发首开只装载一次");
   const staticVendorImports = INDEX.replace(/import type[^;]+;/g, "").match(/from "\.\/studio\/(svg|scene|tab)"|attachStudioTab,/);
   assert.equal(staticVendorImports, null, "vendor 模块不许静态 import 进主包（只有 import type）");

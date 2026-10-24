@@ -8,6 +8,9 @@
  * 只开在按钮上——不挡画布任何交互。定位口径与 vendor sceneCoordsToViewportCoords
  * 一致：x = (sceneX + scrollX) * zoom.value + offsetLeft。
  *
+ * 选中让位：折叠头正被选中时，vendor 会在包围盒左缘中点画选区把手，圆点按
+ * SELECT_NUDGE 再往左让一截（见 text-fold.ts 的 badgeAnchor）——不隐藏开关。
+ *
  * 位置同步：vendor 的 onChange 只在场景/appState 变化时回调，而本层要跟平移/缩放
  * 走——用 rAF 轮询 + 签名去重（元素 id 集 + 各头 collapsed 态 + 视口五元组），
  * 签名不变不 setState。frameNameBoundsCache 也是这个模式（vendor 自己就这么干）。
@@ -74,13 +77,18 @@ export function TextFoldOverlay({ api, getHandle, notify }: TextFoldOverlayProps
     const tick = (): void => {
       const els = api.getSceneElements();
       const st = api.getAppState();
-      const next = foldBadgesOf(els, {
-        zoom: st.zoom?.value ?? 1,
-        scrollX: st.scrollX,
-        scrollY: st.scrollY,
-        offsetLeft: st.offsetLeft,
-        offsetTop: st.offsetTop,
-      });
+      const next = foldBadgesOf(
+        els,
+        {
+          zoom: st.zoom?.value ?? 1,
+          scrollX: st.scrollX,
+          scrollY: st.scrollY,
+          offsetLeft: st.offsetLeft,
+          offsetTop: st.offsetTop,
+        },
+        // 头被选中时圆点左让，躲开 vendor 画在左缘中点的选区把手
+        new Set(Object.keys(st.selectedElementIds ?? {})),
+      );
       const sigNext = foldBadgesSig(next);
       if (sigNext !== sig) {
         sig = sigNext;

@@ -172,11 +172,34 @@ export interface FoldViewport {
 export const BADGE_R = 9;
 /** 圆点与文本左缘的视觉留白（CSS px，屏幕上恒定——跟着缩放走才算真「贴前面」） */
 const BADGE_GAP = 6;
+/**
+ * 选中态再左让的量（CSS px）。vendor 选中元素后会在包围盒**左缘中点**画一个
+ * ~9px 把手，正好压在圆点右半边（圆点右缘距左缘只有 BADGE_GAP=6px，hover 放大
+ * 到 1.18 倍还会盖上去）。不隐藏开关只让位——隐藏了用户就找不到「收起」在哪。
+ */
+const SELECT_NUDGE = 10;
+/** 无字号也无高度时的兜底首行半高（场景单位），等价于旧口径的 20 号字 */
+const FALLBACK_LINE_HALF = (20 * 1.25) / 2;
 
 /** 圆点随缩放的比例（钉住上下限：缩到 0.3 时圆点比字还大，放到 4 倍时又成针尖） */
 export function badgeScale(zoom: number): number {
   const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
   return Math.min(1.8, Math.max(0.65, z));
+}
+
+/**
+ * 圆点圆心相对折叠头顶边的场景偏移。
+ *
+ * 文本头 = 首行中线（`fontSize × 1.25 / 2`）；矩形/容器/箭头这类**没有 fontSize**
+ * 的头 = 元素几何中线（`height / 2`）。旧口径把没字号的一律按 20 号字算，
+ * 拿矩形当折叠头时圆点会顶在框子上沿。
+ */
+export function headLineOffset(head: FoldCandidate): number {
+  const fs = head.fontSize;
+  if (typeof fs === "number" && fs > 0) return (fs * 1.25) / 2;
+  const h = head.height;
+  if (typeof h === "number" && h > 0) return h / 2;
+  return FALLBACK_LINE_HALF;
 }
 
 /**
@@ -189,18 +212,20 @@ export function badgeScale(zoom: number): number {
  * 2026-10-22 修正：水平偏移改成**屏幕像素**（圆点半径 + 6px 留白），
  * 不再是 22 个场景单位——后者在缩小时间距被一起缩小，圆点会压到字上；
  * 竖直仍是「首行中线」，随 zoom 缩放（与文本同比例）。
+ *
+ * `selected` = 这个头当前正被选中 ⇒ 多让 SELECT_NUDGE，躲开左缘中点的选区把手。
  */
 export function badgeAnchor(
   head: FoldCandidate,
   view: FoldViewport,
+  selected = false,
 ): { left: number; top: number } {
   const zoom = view.zoom || 1;
-  const lineH = (head.fontSize ?? 20) * 1.25;
   const textLeft = (head.x + view.scrollX) * zoom + view.offsetLeft;
   const textTop = (head.y + view.scrollY) * zoom + view.offsetTop;
   return {
-    left: textLeft - (BADGE_R * badgeScale(zoom) + BADGE_GAP),
-    top: textTop + (lineH / 2) * zoom,
+    left: textLeft - (BADGE_R * badgeScale(zoom) + BADGE_GAP + (selected ? SELECT_NUDGE : 0)),
+    top: textTop + headLineOffset(head) * zoom,
   };
 }
 
@@ -221,10 +246,12 @@ export interface FoldBadge {
   top: number;
   /** 圆点随缩放的比例（CSS 用 --exs-fold-scale 吃） */
   scale: number;
+  /** 头正被选中（已折进 left 的让位量里，组件侧只用于样式/调试） */
+  selected: boolean;
 }
 
 /**
- * 一帧的徽章快照：场景元素 + 视口 → 每个折叠头一个渲染项。
+ * 一帧的徽章快照：场景元素 + 视口 (+ 选中 id 集) → 每个折叠头一个渲染项。
  *
  * 位置随元素走（head.x/y 直接进算），所以**拖动折叠头 / 编辑文本改变宽高时
  * 徽章必须重算**——组件侧的签名里要带上 x/y/width/height，否则 rAF 轮询会
@@ -234,11 +261,13 @@ export interface FoldBadge {
 export function foldBadgesOf(
   elements: ReadonlyArray<unknown>,
   view: FoldViewport,
+  selectedIds?: ReadonlySet<string>,
 ): FoldBadge[] {
   const aliveIds = new Set(elements.map((e) => (e as { id?: unknown }).id).filter((id): id is string => typeof id === "string"));
   const scale = badgeScale(view.zoom || 1);
   return foldHeadsOf(elements).map(({ el, toggle }) => {
-    const a = badgeAnchor(el, view);
+    const selected = !!selectedIds?.has(el.id);
+    const a = badgeAnchor(el, view, selected);
     const missing = hiddenCount(toggle, aliveIds);
     return {
       id: el.id,
@@ -249,6 +278,7 @@ export function foldBadgesOf(
       left: a.left,
       top: a.top,
       scale,
+      selected,
     };
   });
 }
@@ -256,10 +286,11 @@ export function foldBadgesOf(
 /**
  * 徽章快照的签名（rAF 轮询去重用）：位置随元素/视口变，所以几何必须进签名。
  * 计数用 count 而不是 aliveIds：成员增删已经体现在 count 上，无关元素变动
- * 不必触发重渲染。
+ * 不必触发重渲染。selected 单独进签名——让位量已经折进 left，但「选中」这个
+ * 事实还决定样式，不该只靠一个数值差来传递。
  */
 export function foldBadgesSig(badges: ReadonlyArray<FoldBadge>): string {
   return badges
-    .map((b) => `${b.id}:${b.collapsed ? 1 : 0}:${b.count}:${b.left.toFixed(1)},${b.top.toFixed(1)}@${b.scale.toFixed(2)}`)
+    .map((b) => `${b.id}:${b.collapsed ? 1 : 0}:${b.count}:${b.selected ? 1 : 0}:${b.left.toFixed(1)},${b.top.toFixed(1)}@${b.scale.toFixed(2)}`)
     .join("|");
 }

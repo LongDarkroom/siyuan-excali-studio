@@ -180,28 +180,106 @@ export default class ExcaliStudioPlugin extends Plugin {
    * 装载独立构建的引擎单文件（scripts/build.mjs 第二趟产物，位于插件根目录 engine.js）。
    *
    * 为什么不能 require("./engine.js")：思源装载插件不是 Node 模块机制——
-   * app/src/plugin/loader.ts 把 index.js **文本**包进
-   * `(function anonymous(require, module, exports){…})` 后 window.eval 执行，
-   * 插件里的 require 是宿主注入的 requireFunc：`"siyuan"` 返回 API，其余任何 key
-   * 都落到 window.require，按 Electron 宿主自己的目录解析 ⇒ 相对路径必炸
-   * （Cannot find module './engine.js'，Require stack: renderer_init）。
+   * app/src/plugin/loader.ts 把 index.js 文本包进 (function(require, module, exports){…})
+   * 后 eval，插件里的 require 是宿主注入的 requireFunc：相对路径按 Electron 宿主目录解析
+   * ⇒ 必炸（Cannot find module './engine.js'）。故这里同样不能走相对 require。
    *
-   * 所以这里改走 HTTP：引擎与字体同源（思源把 data/plugins/<name>/ 挂在 web 根的
-   * /plugins/<name>/ 下），fetch 引擎文本后用思源装载插件的**同款包装**执行——
-   * require 传插件作用域收到的这一个，引擎内部的 require("siyuan") 才能解析到宿主 API。
+   * 2026-10-24 移动端修复：引擎 8MB+，iOS/iPadOS 的 WebKit 对 eval / new Function 的
+   * 「动态编译脚本尺寸」有上限（桌面 V8 无此限制）——直接 eval(code) 在移动端抛错、
+   * 表现为「画板引擎加载失败」。改走 HTTP fetch 引擎文本 + <script> 注入执行：
+   * 普通脚本不走该尺寸上限，桌面/移动通用。引擎代码包成 (function(require, module, exports){…})
+   * 赋给 window.__exsEngineFactory，脚本装载后用 require shim 调起；shim 喂
+   * require("siyuan")（url/util 被 typeof document 守卫、移动端永不触发），其余 key
+   * 回落原 window.require（桌面 Node 内置），引擎内 require(siyuan) 才能解析到宿主 API。
    */
   private async loadEngineModule(): Promise<typeof import("./studio/lazy")> {
     const url = new URL(`plugins/${PLUGIN_WEB_DIR}/engine.js`, `${location.origin}/`).href;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
     const code = await res.text();
+
     const moduleObj = { exports: {} as typeof import("./studio/lazy") };
-    // 与 loader.ts runCode 同款：anonymous(require, module, exports) + sourceURL 便于 DevTools 定位
-    const factory = window.eval(
-      `(function anonymous(require, module, exports){\n${code}\n})\n//# sourceURL=plugins/${PLUGIN_WEB_DIR}/engine.js\n`,
-    ) as (r: unknown, m: { exports: unknown }, e: unknown) => void;
-    factory(require, moduleObj, moduleObj.exports);
+    await this.runEngineScript(code, this.makeEngineRequire(), moduleObj.exports);
     return moduleObj.exports;
+  }
+
+  /** 让 <script> 注入的引擎能取到 siyuan；其余 key 回落宿主 window.require（桌面 Node 内置） */
+  private makeEngineRequire(): (id: string) => unknown {
+    const winRequire = (window as unknown as { require?: (id: string) => unknown }).require;
+    const localRequire = require;
+    return (id: string): unknown => {
+      if (id === "siyuan") return localRequire("siyuan");
+      if (typeof winRequire === "function") return winRequire(id);
+      throw new Error(`Cannot find module '${id}'`);
+    };
+  }
+
+  /**
+   * 通过 <script> 注入执行引擎代码，绕过 WebKit 的 eval 尺寸上限。
+   * 引擎以 (function(require, module, exports){ … }) 形态给出；这里包一层赋值到
+   * window.__exsEngineFactory，脚本装载后用 shim 调起，等价于原来的
+   * window.eval + factory(require, module, exports)。
+   *
+   * 优先用 Blob <script src>（不进 DOM 文本、最干净）；若被 CSP 拦截（onerror）则
+   * 回落 inline <script> textContent——两者都不走 eval 尺寸上限，只是 CSP 来源要求不同
+   * （unsafe-inline 通常与 unsafe-eval 成对出现，而 blob: 不一定在白名单里）。
+   */
+  private runEngineScript(
+    code: string,
+    requireShim: (id: string) => unknown,
+    exportsObj: typeof import("./studio/lazy"),
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const source = `window.__exsEngineFactory=(function(require,module,exports){\n${code}\n});\n//# sourceURL=plugins/${PLUGIN_WEB_DIR}/engine.js`;
+
+      const finish = (): void => {
+        try {
+          const win = window as unknown as {
+            __exsEngineFactory?: (r: unknown, m: { exports: unknown }, e: unknown) => void;
+          };
+          const factory = win.__exsEngineFactory;
+          delete win.__exsEngineFactory;
+          if (typeof factory !== "function") throw new Error("引擎未导出工厂函数");
+          factory(requireShim, { exports: exportsObj }, exportsObj);
+          resolve();
+        } catch (e) {
+          reject(e instanceof Error ? e : new Error(String(e)));
+        }
+      };
+
+      const tryInline = (): void => {
+        try {
+          const script = document.createElement("script");
+          script.type = "text/javascript";
+          script.textContent = source;
+          document.head.appendChild(script); // 内联脚本同步执行：append 后即已跑完
+          finish();
+        } catch (e) {
+          reject(e instanceof Error ? e : new Error(String(e)));
+        }
+      };
+
+      let objectUrl: string | null = null;
+      try {
+        const blob = new Blob([source], { type: "text/javascript" });
+        objectUrl = URL.createObjectURL(blob);
+      } catch (e) {
+        tryInline();
+        return;
+      }
+      const script = document.createElement("script");
+      script.type = "text/javascript";
+      script.src = objectUrl;
+      script.onload = () => {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        finish();
+      };
+      script.onerror = () => {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        tryInline();
+      };
+      document.head.appendChild(script);
+    });
   }
 
   async onload() {

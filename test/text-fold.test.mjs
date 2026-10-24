@@ -10,6 +10,7 @@ import {
   foldBadgesOf,
   foldBadgesSig,
   foldHeadsOf,
+  headLineOffset,
   hiddenCount,
   pickFoldHead,
   planFold,
@@ -151,6 +152,42 @@ test("badgeAnchor：缩放时水平间距按屏幕像素恒定（不再随 zoom 
   assert.ok(Math.abs(gapAt(3) - 22.2) < 1e-9, "放大超上限 1.8：9×1.8 + 6（圆点不无限制长大）");
   // 旧口径（22 个 scene 单位）在 zoom 0.5 时只留 11px，圆点直径 18px 会压到字上
   assert.ok(gapAt(0.5) > 11, "zoom 0.5 时仍留出比旧口径更宽的间距");
+});
+
+test("headLineOffset：文本头按首行中线，无字号的矩形/容器头按几何中线", () => {
+  assert.equal(headLineOffset({ id: "h", type: "text", x: 0, y: 0, fontSize: 20 }), 12.5, "20 号字 ⇒ 20×1.25/2");
+  assert.equal(headLineOffset({ id: "h", type: "text", x: 0, y: 0, fontSize: 40 }), 25, "大标题的首行中线要更低");
+  assert.equal(headLineOffset({ id: "r", type: "rectangle", x: 0, y: 0, height: 120 }), 60, "矩形头＝框子垂直居中（旧口径按 20 号字算，会顶在框上沿）");
+  // fontSize 脏值（0 / undefined）+ 无高度 ⇒ 兜底
+  assert.equal(headLineOffset({ id: "r", type: "rectangle", x: 0, y: 0, fontSize: 0 }), 12.5);
+  assert.equal(headLineOffset({ id: "r", type: "rectangle", x: 0, y: 0 }), 12.5);
+});
+
+test("badgeAnchor：矩形折叠头垂直居中于框，选中时左让躲开选区把手", () => {
+  const view = { zoom: 1, scrollX: 0, scrollY: 0, offsetLeft: 0, offsetTop: 0 };
+  const box = { id: "r", type: "rectangle", x: 100, y: 200, width: 300, height: 120 };
+  assert.deepEqual(badgeAnchor(box, view), { left: 85, top: 260 }, "框中线 y=200+60");
+  const txt = text("h", 100);
+  // 未选中：圆心距文本左缘 9+6=15；选中：再让 10 ⇒ 25（vendor 的左缘中点把手约 ±4.5px）
+  assert.equal(badgeAnchor(txt, view).left, 85);
+  assert.equal(badgeAnchor(txt, view, true).left, 75);
+  // 让位量是屏幕像素，不随 zoom 放大而缩（zoom 3 时 scale 已钉在 1.8）
+  const z3 = { ...view, zoom: 3 };
+  assert.equal(badgeAnchor(txt, z3, true).left - badgeAnchor(txt, z3).left, -10);
+});
+
+test("foldBadgesOf：选中集只影响被选中的那个头，签名必须变（否则 rAF 不重算让位）", () => {
+  const view = { zoom: 1, scrollX: 0, scrollY: 0, offsetLeft: 0, offsetTop: 0 };
+  const mk = (id, y) => text(id, y, { excaliToggle: { collapsed: false, memberIds: ["m"] } });
+  const els = [mk("h1", 100), mk("h2", 300)];
+  const plain = foldBadgesOf(els, view);
+  const one = foldBadgesOf(els, view, new Set(["h1"]));
+  assert.deepEqual(one.map((b) => b.selected), [true, false], "没选中的头不让位");
+  assert.equal(one[0].left, plain[0].left - 10);
+  assert.equal(one[1].left, plain[1].left);
+  assert.notEqual(foldBadgesSig(plain), foldBadgesSig(one), "选中态必须进签名");
+  // 不传选中集 = 全部未选中（老调用方不破）
+  assert.deepEqual(foldBadgesOf(els, view).map((b) => b.selected), [false, false]);
 });
 
 test("foldBadgesOf/foldBadgesSig：拖动折叠头后签名必须变（圆点跟着元素走）", () => {
