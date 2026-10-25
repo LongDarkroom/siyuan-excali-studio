@@ -343,8 +343,12 @@ export default class ExcaliStudioPlugin extends Plugin {
           void this.pickBoardRef(t("插入白板…"))
             .then((ref) => {
               if (!ref) return;
-              const lute = (window as unknown as { Lute?: { Md2BlockDOM?: (md: string) => string } }).Lute;
-              const dom = lute?.Md2BlockDOM?.(`![](${ref})`);
+              // Lute 的挂载点按环境不同：桌面客户端在 protyle.lute（实例），
+              // 网页端 window.Lute（bundle 里只做防御探测）。逐级回落。
+              const md = `![](${ref})`;
+              const plute = (protyle as unknown as { lute?: { Md2BlockDOM?: (m: string) => string } }).lute;
+              const wlute = (window as unknown as { Lute?: { Md2BlockDOM?: (m: string) => string } }).Lute;
+              const dom = plute?.Md2BlockDOM?.(md) ?? wlute?.Md2BlockDOM?.(md);
               if (!dom) {
                 showMessage(t("插入失败：Lute 不可用"), 7000, "error");
                 return;
