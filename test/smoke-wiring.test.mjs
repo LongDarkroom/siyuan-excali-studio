@@ -32,6 +32,7 @@ const TAB = stripComments(src("studio/tab.tsx"));
 const TAB_TYPE = stripComments(src("studio/tab-type.ts"));
 const LAZY = stripComments(src("studio/lazy.ts"));
 const BUILD_SCRIPT = stripComments(src("../scripts/build.mjs"));
+const COPY_DIST = stripComments(src("../scripts/copy-dist.mjs"));
 const I18N = stripComments(src("i18n.ts"));
 const ICONS = stripComments(src("studio/icons.ts"));
 const SCENE = stripComments(src("studio/scene.ts"));
@@ -348,10 +349,20 @@ test("契约·导出链路（第二十六轮 T1 重写）：预览与载荷分�
 test("契约·第二十六轮：分包加载 / 图片外置接线 / 嵌入图点击 / 图形跳文档", () => {
   // T3 分包：思源装载插件不是 Node 模块机制（loader.ts 把 index.js 文本包进
   // (function(require, module, exports){…}) 后 eval，require 是宿主注入的 requireFunc，
-  // 相对路径必炸 renderer_init）——引擎走 HTTP fetch + <script> 注入执行（loadEngineModule）
-  assert.match(INDEX, /loadEngineModule\(\): Promise/, "vendor 引擎经 engine.js 单文件懒加载（HTTP fetch + <script> 注入，绕过 WebKit eval 尺寸上限）");
-  assert.match(INDEX, /__exsEngineFactory=\(function\(require,module,exports\)/, "引擎包成 factory 经 <script> 注入执行，引擎内 require(siyuan) 才能解析");
-  assert.equal(INDEX.includes("window.eval("), false, "引擎不再用 window.eval 执行（WebKit 移动端对 eval 巨串有尺寸上限，会「画板引擎加载失败」）");
+  // 相对路径必炸 renderer_init）——引擎走同源静态脚本 engine.boot.js（loadEngineModule），
+  // 与思源加载 index.js 完全同机制：不碰 eval / blob / inline，移动端 CSP 无从拦起。
+  assert.match(INDEX, /loadEngineModule\(\): Promise/, "vendor 引擎经 engine.boot.js 单文件懒加载");
+  assert.match(INDEX, /engine\.boot\.js/, "引擎走同源 <script src>（与思源加载 index.js 同机制）");
+  assert.equal(INDEX.includes("window.eval("), false, "引擎不走 window.eval（移动端 CSP 可能禁 unsafe-eval）");
+  assert.equal(INDEX.includes("createObjectURL"), false, "引擎不走 blob 脚本（移动端 script-src 不一定放行 blob:）");
+  assert.match(COPY_DIST, /__exsEngineFactory=function\(require,module,exports\)/, "构建期把引擎包成 factory 静态脚本，引擎内 require(siyuan) 才能解析");
+  // 2026-10-24 移动端根因：vendor（React/Excalidraw）里有若干**无 typeof 守卫**的
+  // process.env.NODE_ENV 引用。桌面 Electron 有全局 process 所以不炸；手机浏览器没有
+  // ⇒ 引擎一执行就 "process is not defined" →「画板引擎加载失败」（真机截图实测）。
+  // 两层防护都上锁：① 构建期 define 直接替换字面量；② boot 工厂体首行注入 process 兜底。
+  assert.match(BUILD_SCRIPT, /"process\.env\.NODE_ENV": JSON\.stringify\("production"\)/, "构建期替换 NODE_ENV，消灭无守卫的 process 引用（移动端无 Node 全局）");
+  assert.match(COPY_DIST, /var process=typeof globalThis<"u"&&globalThis\.process\?globalThis\.process:/, "boot 工厂体注入 process 兜底（桌面沿用真 process，浏览器才用 stub）");
+  assert.match(COPY_DIST, /PROCESS_STUB/, "process 兜底与引擎代码一起写进 engine.boot.js");
   assert.match(INDEX, /this\.lazyEngine \?\?= this\.loadEngineModule\(\)/, "并发首开只装载一次");
   const staticVendorImports = INDEX.replace(/import type[^;]+;/g, "").match(/from "\.\/studio\/(svg|scene|tab)"|attachStudioTab,/);
   assert.equal(staticVendorImports, null, "vendor 模块不许静态 import 进主包（只有 import type）");

@@ -177,29 +177,29 @@ export default class ExcaliStudioPlugin extends Plugin {
   }
 
   /**
-   * 装载独立构建的引擎单文件（scripts/build.mjs 第二趟产物，位于插件根目录 engine.js）。
+   * 装载独立构建的引擎单文件（scripts/build.mjs 第二趟产物）。
    *
    * 为什么不能 require("./engine.js")：思源装载插件不是 Node 模块机制——
    * app/src/plugin/loader.ts 把 index.js 文本包进 (function(require, module, exports){…})
    * 后 eval，插件里的 require 是宿主注入的 requireFunc：相对路径按 Electron 宿主目录解析
-   * ⇒ 必炸（Cannot find module './engine.js'）。故这里同样不能走相对 require。
+   * ⇒ 必炸（Cannot find module './engine.js'）。
    *
-   * 2026-10-24 移动端修复：引擎 8MB+，iOS/iPadOS 的 WebKit 对 eval / new Function 的
-   * 「动态编译脚本尺寸」有上限（桌面 V8 无此限制）——直接 eval(code) 在移动端抛错、
-   * 表现为「画板引擎加载失败」。改走 HTTP fetch 引擎文本 + <script> 注入执行：
-   * 普通脚本不走该尺寸上限，桌面/移动通用。引擎代码包成 (function(require, module, exports){…})
-   * 赋给 window.__exsEngineFactory，脚本装载后用 require shim 调起；shim 喂
-   * require("siyuan")（url/util 被 typeof document 守卫、移动端永不触发），其余 key
-   * 回落原 window.require（桌面 Node 内置），引擎内 require(siyuan) 才能解析到宿主 API。
+   * 2026-10-24 移动端修复（第二版，改走同源静态脚本）：
+   * 前两版在移动端都不可靠——window.eval 依赖 CSP 的 unsafe-eval；fetch 文本 + blob/inline
+   * <script> 依赖 script-src 白名单，且 blob: 脚本的 document.currentScript.src 是 blob: URL，
+   * 会污染引擎内部的 base 解析。同源 <script src> 与思源自己加载 index.js **完全同机制**，
+   * 浏览器无条件放行，是唯一稳的路。
+   * 产物 engine.boot.js 由 copy-dist 在构建期把 engine.js 包成
+   * window.__exsEngineFactory=function(require,module,exports){…}，脚本加载后调起工厂。
    */
   private async loadEngineModule(): Promise<typeof import("./studio/lazy")> {
-    const url = new URL(`plugins/${PLUGIN_WEB_DIR}/engine.js`, `${location.origin}/`).href;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
-    const code = await res.text();
-
+    const url = new URL(`plugins/${PLUGIN_WEB_DIR}/engine.boot.js`, `${location.origin}/`).href;
     const moduleObj = { exports: {} as typeof import("./studio/lazy") };
-    await this.runEngineScript(code, this.makeEngineRequire(), moduleObj.exports);
+    await this.loadEngineScript(url, this.makeEngineRequire(), moduleObj);
+    const exported = moduleObj.exports as unknown as { attachStudioTab?: unknown };
+    if (typeof exported?.attachStudioTab !== "function") {
+      throw new Error(`引擎脚本已加载但未导出 attachStudioTab [${url}]`);
+    }
     return moduleObj.exports;
   }
 
@@ -215,71 +215,55 @@ export default class ExcaliStudioPlugin extends Plugin {
   }
 
   /**
-   * 通过 <script> 注入执行引擎代码，绕过 WebKit 的 eval 尺寸上限。
-   * 引擎以 (function(require, module, exports){ … }) 形态给出；这里包一层赋值到
-   * window.__exsEngineFactory，脚本装载后用 shim 调起，等价于原来的
-   * window.eval + factory(require, module, exports)。
+   * 用同源 <script src> 拉起引擎静态脚本，再调起它注册的工厂。
    *
-   * 优先用 Blob <script src>（不进 DOM 文本、最干净）；若被 CSP 拦截（onerror）则
-   * 回落 inline <script> textContent——两者都不走 eval 尺寸上限，只是 CSP 来源要求不同
-   * （unsafe-inline 通常与 unsafe-eval 成对出现，而 blob: 不一定在白名单里）。
+   * 不 fetch、不 eval、不造 blob / inline —— 这三种都要过 CSP（unsafe-eval /
+   * unsafe-inline / script-src blob:），移动端 WebView 的放行情况各不相同，这也是
+   * 「桌面能用、手机不行」的根源。同源脚本是页面自身的加载方式，无条件放行。
    */
-  private runEngineScript(
-    code: string,
+  private loadEngineScript(
+    url: string,
     requireShim: (id: string) => unknown,
-    exportsObj: typeof import("./studio/lazy"),
+    moduleObj: { exports: typeof import("./studio/lazy") },
   ): Promise<void> {
     return new Promise((resolve, reject) => {
-      const source = `window.__exsEngineFactory=(function(require,module,exports){\n${code}\n});\n//# sourceURL=plugins/${PLUGIN_WEB_DIR}/engine.js`;
-
-      const finish = (): void => {
+      const script = document.createElement("script");
+      script.type = "text/javascript";
+      script.async = true;
+      script.src = url;
+      script.onload = () => {
+        script.remove();
         try {
           const win = window as unknown as {
             __exsEngineFactory?: (r: unknown, m: { exports: unknown }, e: unknown) => void;
           };
           const factory = win.__exsEngineFactory;
           delete win.__exsEngineFactory;
-          if (typeof factory !== "function") throw new Error("引擎未导出工厂函数");
-          factory(requireShim, { exports: exportsObj }, exportsObj);
+          if (typeof factory !== "function") throw new Error("引擎脚本没有注册工厂函数");
+          // module 传同一引用：引擎里若有 module.exports=… 整赋值，也能回写到 moduleObj
+          factory(requireShim, moduleObj, moduleObj.exports);
           resolve();
         } catch (e) {
           reject(e instanceof Error ? e : new Error(String(e)));
         }
       };
-
-      const tryInline = (): void => {
-        try {
-          const script = document.createElement("script");
-          script.type = "text/javascript";
-          script.textContent = source;
-          document.head.appendChild(script); // 内联脚本同步执行：append 后即已跑完
-          finish();
-        } catch (e) {
-          reject(e instanceof Error ? e : new Error(String(e)));
-        }
-      };
-
-      let objectUrl: string | null = null;
-      try {
-        const blob = new Blob([source], { type: "text/javascript" });
-        objectUrl = URL.createObjectURL(blob);
-      } catch (e) {
-        tryInline();
-        return;
-      }
-      const script = document.createElement("script");
-      script.type = "text/javascript";
-      script.src = objectUrl;
-      script.onload = () => {
-        if (objectUrl) URL.revokeObjectURL(objectUrl);
-        finish();
-      };
       script.onerror = () => {
-        if (objectUrl) URL.revokeObjectURL(objectUrl);
-        tryInline();
+        script.remove();
+        reject(new Error("脚本加载被拒绝：HTTP 错误 / 证书不受信 / CSP 拦截"));
       };
       document.head.appendChild(script);
     });
+  }
+
+  /**
+   * 错误转纯文本（message + 栈前 4 行）。
+   * 绝不把 Error 对象直接交给 console：思源移动端的 devtools 浮层渲染日志对象时
+   * 会自己抛 Illegal invocation 崩掉，真错误反被掩盖（2026-10-24 真机实测）。
+   */
+  private errDetail(e: unknown): string {
+    if (!(e instanceof Error)) return String(e);
+    const frames = e.stack?.split("\n").slice(1, 5).join(" | ") ?? "";
+    return frames ? `${e.message}（${frames}）` : e.message;
   }
 
   async onload() {
@@ -682,9 +666,10 @@ export default class ExcaliStudioPlugin extends Plugin {
             this.tabs.set(custom, m.attachStudioTab(custom, host));
           })
           .catch((e) => {
-            console.error("[excali-studio] 画板引擎加载失败", e);
+            const detail = this.errDetail(e);
+            console.error(`[excali-studio] 画板引擎加载失败：${detail}`);
             el.innerHTML = `<div class="exs-loaderror"><div>${t("画板引擎加载失败：{msg}", {
-              msg: e instanceof Error ? e.message : String(e),
+              msg: detail,
             })}</div></div>`;
           });
       },
@@ -1970,10 +1955,10 @@ export default class ExcaliStudioPlugin extends Plugin {
       })
       .catch((e) => {
         if (shell.isClosed()) return;
-        console.error("[excali-studio] 画板引擎加载失败", e);
-        shell.showError(
-          t("画板引擎加载失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }),
-        );
+        // 移动端很难开 DevTools：阶段 + 调用栈前几行直接印在错误框里，便于截图定位
+        const detail = this.errDetail(e);
+        console.error(`[excali-studio] 画板引擎加载失败：${detail}`);
+        shell.showError(t("画板引擎加载失败：{msg}", { msg: detail }));
       });
   }
 

@@ -43,6 +43,11 @@ function config(entry, outDir, fileName) {
     base: "./",
     define: {
       __EXCALI_PLUGIN_VERSION__: JSON.stringify(PLUGIN_VERSION),
+      // 2026-10-24 移动端：vendor（React/Excalidraw 等）里有 17 处无守卫的
+      // process.env.NODE_ENV，桌面 Electron 有全局 process 所以不炸，手机浏览器
+      // 没有 ⇒ 一执行就 ReferenceError/TypeError「process is not defined」。
+      // 构建期直接替换成字面量，让 dev 分支被 minify 掉，移动端零依赖 Node 全局。
+      "process.env.NODE_ENV": JSON.stringify("production"),
     },
     build: {
       target: "esnext",

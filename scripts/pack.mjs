@@ -21,6 +21,7 @@ const FILES = [
   "index.js",
   "index.css",
   "engine.js",
+  "engine.boot.js",
   "kernel.js",
   "icon.png",
   "preview.png",
@@ -36,7 +37,8 @@ const DIRS = ["i18n", "fonts", "embed", "demo"];
 let failed = false;
 for (const f of FILES) {
   if (!existsSync(join(ROOT, f))) {
-    const built = f.startsWith("index.") || f === "engine.js" || f === "kernel.js" || f === "lib-import.js";
+    const built = f.startsWith("index.") || f === "engine.js" || f === "engine.boot.js"
+      || f === "kernel.js" || f === "lib-import.js";
     console.error(`[pack] 缺 ${f}${built ? "：先跑 npm run build" : ""}`);
     failed = true;
   }

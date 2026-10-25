@@ -49,6 +49,36 @@ console.log("[copy-dist] dist/index.js -> index.js");
 copyFileSync(resolve(ROOT, resolve("dist-engine", "engine.js")), resolve(ROOT, "engine.js"));
 console.log("[copy-dist] dist-engine/engine.js -> engine.js");
 
+// 2026-10-24 移动端：再落一份「同源静态脚本」形态 engine.boot.js。
+// 引擎是 CJS（顶层 Object.defineProperty(exports…) + exports.xxx=），不能直接当全局脚本
+// 加载两次（顶层 const 会重复声明，第二次 SyntaxError），所以构建期就包成
+//   window.__exsEngineFactory=function(require,module,exports){ … };
+// 运行时用同源 <script src> 拉起——这条路与思源自己加载 index.js 完全同机制，
+// 不碰 fetch / eval / blob / inline 任一环节（移动端 WebView 上这四种都可能被拦）。
+//
+// 工厂函数体首行注入 process 兜底：vendor（React 等）里有若干**无 typeof 守卫**的
+// process.env.NODE_ENV / process.argv 引用。桌面 Electron 有全局 process 所以不炸；
+// 手机浏览器没有 ⇒ 引擎一执行就 "process is not defined"（真机截图实测）。
+// 构建期 define 已把 NODE_ENV 替换掉，这里再兜一层：桌面沿用真 process，
+// 浏览器（globalThis.process 缺失）才注入最小 stub，绝不覆盖桌面行为。
+const PROCESS_STUB = [
+  'var process=typeof globalThis<"u"&&globalThis.process?globalThis.process:{',
+  'env:{NODE_ENV:"production"},browser:true,platform:"browser",version:"",',
+  'argv:[],argv0:"",versions:{},pid:1,',
+  'cwd:function(){return"/"},',
+  'nextTick:function(f){Promise.resolve().then(f)},',
+  'emit:function(){return false},on:function(){},once:function(){},',
+  'removeListener:function(){},off:function(){},exit:function(){}};',
+].join("");
+{
+  const engineCode = readFileSync(resolve(ROOT, "dist-engine", "engine.js"), "utf8");
+  writeFileSync(
+    resolve(ROOT, "engine.boot.js"),
+    `window.__exsEngineFactory=function(require,module,exports){\n${PROCESS_STUB}\n${engineCode}\n};\n`,
+  );
+  console.log("[copy-dist] dist-engine/engine.js -> engine.boot.js（factory 包装 + process 兜底，供 <script src> 加载）");
+}
+
 // 2026-10-18 C：goja 内核脚本（plugin.json 的 kernels 字段加载插件根 kernel.js）
 copyFileSync(resolve(ROOT, resolve("dist-kernel", "kernel.js")), resolve(ROOT, "kernel.js"));
 console.log("[copy-dist] dist-kernel/kernel.js -> kernel.js");
