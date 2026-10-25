@@ -156,6 +156,14 @@
       }
 
       document.getElementById("refresh").addEventListener("click", render);
+      // 2026-10-25 交互框：「在思源中打开」不再走 href=_top 跳协议（桌面端行为不可靠），
+      // postMessage 给父页（Excali 画板，同源），由插件 openTab 右侧分屏打开——双页阅读。
+      document.getElementById("open").addEventListener("click", function (e) {
+        e.preventDefault();
+        try {
+          parent.postMessage({ type: "exs-open-block", blockId: blockId }, window.location.origin);
+        } catch (err) { /* 父页不在（如导出预览）就静默 */ }
+      });
       render();
     })();
   </script>

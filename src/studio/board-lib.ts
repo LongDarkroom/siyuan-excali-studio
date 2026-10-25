@@ -216,6 +216,16 @@ export function docIdFromLink(link: unknown): string | null {
   return m ? (m[1] ?? null) : null;
 }
 
+/**
+ * 2026-10-25 交互框：`siyuan:block/<块ID>` —— 画布嵌入框的跳转链接形态。
+ * 与 doc 形态分开：块 ID 精确校验（14-7 形状），openTab 收到子块 ID 会打开其所在文档。
+ */
+export function blockIdFromLink(link: unknown): string | null {
+  if (typeof link !== "string") return null;
+  const m = /^siyuan:(?:\/\/)?block\/([0-9]{14}-[0-9a-zA-Z]{7})$/.exec(link.trim());
+  return m ? (m[1] ?? null) : null;
+}
+
 /* ---------------- 第四十轮：白板链接（画布上的卡片） ----------------
  * 一条链接 = 一块白板的引用。三种形态各管一段路：
  *   ref   `assets/excali/x.svg`——人读、写进拖拽载荷、卡片副标题显示；

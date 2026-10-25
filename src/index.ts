@@ -56,6 +56,7 @@ import {
 import { MEDIA_DIR, bytesToDataURL, mediaFileName, parseDataUrl } from "./studio/media-ref";
 import { readSiyuanAccent } from "./studio/theme";
 import {
+  blockIdFromLink,
   boardDocPath,
   boardDisplayName,
   boardPathFromLink,
@@ -89,6 +90,7 @@ import {
   svgAssetPathOf,
   trackEditor,
 } from "./siyuan/doc";
+import { decorateBoardBlocks } from "./studio/board-block-decorate";
 import { pickBoardFile } from "./siyuan/board-picker";
 import { createDockPanel, type DockHost } from "./siyuan/ExcaliDock";
 // 第五十二轮：版本更新弹窗。判定/切片/渲染都是纯函数（siyuan/changelog.ts，node 里能直接跑单测），
@@ -325,6 +327,21 @@ export default class ExcaliStudioPlugin extends Plugin {
       },
     });
 
+    /* 2026-10-25 交互框（B1）：敲 / 选「插入白板…」→ 挑一张库内白板插进当前文档。
+       落地形态与建档插图同构：![](assets/excali/x.svg)——SVG 自带场景预览，
+       所见即所得；悬停 ↗ / 图片右键可跳进画板（board-block-decorate）。 */
+    this.protyleSlash.push({
+      id: "excaliStudioInsertBoard",
+      filter: ["插入白板", "白板卡", "insert board"],
+      html: slashItemHtml(t("插入白板…")),
+      callback: (protyle: Protyle) => {
+        this.clearSlashHint(protyle);
+        void this.pickBoardRef().then((ref) => {
+          if (ref) protyle.insert(`![](${ref})`);
+        });
+      },
+    });
+
     this.addCommand({
       langKey: "openExcaliStudio",
       langText: t("打开白板"),
@@ -349,6 +366,8 @@ export default class ExcaliStudioPlugin extends Plugin {
     // 放在读盘前执行读到的恒是默认值，「AI 通道」面板关掉内置智能体也不生效。
     this.registerAgentCapabilities();
     this.registerBoardDocEvents();
+    // 2026-10-25 交互框（B2）：文档内白板图片块的悬停 ↗ / 徽标 / 图片右键
+    this.registerBoardDecorations();
     void this.refreshBoardLib();
     // S3：首次启用把内置脚本写进工作空间（已存在则跳过；异步不阻塞 onload）
     void installBuiltinScripts()
@@ -2052,6 +2071,19 @@ export default class ExcaliStudioPlugin extends Plugin {
       void this.openLinkedBoard(boardPath);
       return;
     }
+    // 2026-10-25 交互框：画布嵌入框的跳转形态——块/文档在右侧分屏打开（双页阅读）。
+    // openTab 收到子块 ID 会打开其所在文档；移动端 openTab 为空实现，走既有兜底。
+    const blockId = blockIdFromLink(link);
+    if (blockId) {
+      if (isMobileFrontend()) {
+        this.openDocumentById(blockId);
+        return;
+      }
+      void openTab({ app: this.app, doc: { id: blockId }, position: "right" }).catch((e) => {
+        showMessage(t("打开文档失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }), 7000);
+      });
+      return;
+    }
     const docId = docIdFromLink(link);
     if (!docId) {
       showMessage(t("无法识别的文档链接：{link}", { link }), 5000, "error");
@@ -2126,6 +2158,59 @@ export default class ExcaliStudioPlugin extends Plugin {
     this.eventBus.on("click-blockicon", ({ detail }) => {
       const path = svgAssetPathOf(detail.blockElements);
       if (!path) return;
+      detail.menu.addItem({
+        icon: STUDIO_ICON_ID,
+        label: t("用 Excali 白板打开"),
+        click: () => void this.openExisting(path),
+      });
+    });
+  }
+
+  /* ---------------- 2026-10-25 交互框（B2）：文档内白板图片块的三条入口 ---------------- */
+
+  /** 白板库内的资产引用（assets/excali/*.svg 形态）从任意 src 写法里提取；不是白板返回 null */
+  private boardAssetRefOf(ref: string): string | null {
+    const raw = String(ref ?? "").split("#")[0].split("?")[0];
+    const m = /\/?(assets\/[^\s]+?\.svg)$/i.exec(raw);
+    if (!m) return null;
+    const dir = this.settings.saveDir.replace(/\/+$/, "");
+    return m[1].startsWith(dir + "/") ? m[1] : null;
+  }
+
+  /** /data 数据路径是否落在白板保存目录里（图片右键入口的判定用） */
+  private isBoardDataPath(dataPath: string): boolean {
+    return dataPath.startsWith(toDataPath(this.settings.saveDir.replace(/\/+$/, "")));
+  }
+
+  /** 悬停 ↗ / 斜杠插入后的跳板：按资产引用打开画板页签 */
+  private openBoardAssetRef(ref: string): void {
+    const asset = this.boardAssetRefOf(ref);
+    if (asset) void this.openExisting(toDataPath(asset));
+  }
+
+  /**
+   * 悬停 ↗ 按钮 + Excali 徽标（board-block-decorate 注入）与图片右键菜单。
+   * 重扫时机 = switch-protyle / click-editorcontent（扫描幂等，去重靠注入标记）；
+   * 编辑器 DOM 由思源拥有，注入器找不到锚点就静默跳过，绝不抛错。
+   */
+  private registerBoardDecorations(): void {
+    const rescan = (protyle: { wysiwyg?: { element?: Element } } | undefined | null): void => {
+      const el = protyle?.wysiwyg?.element;
+      if (el instanceof Element && el.isConnected) {
+        decorateBoardBlocks(el, {
+          isBoardAsset: (ref) => this.boardAssetRefOf(ref) !== null,
+          openBoard: (ref) => this.openBoardAssetRef(ref),
+        });
+      }
+    };
+    this.eventBus.on("switch-protyle", ({ detail }) => rescan(detail?.protyle));
+    this.eventBus.on("click-editorcontent", ({ detail }) => rescan(detail?.protyle));
+    // 图片右键菜单（思源原生事件，detail.element 即图片元素）：块图标菜单对**所有**
+    // assets svg 开放，图片右键收敛到白板库
+    this.eventBus.on("open-menu-image", ({ detail }) => {
+      if (!(detail?.element instanceof HTMLElement)) return;
+      const path = svgAssetPathOf([detail.element]);
+      if (!path || !this.isBoardDataPath(path)) return;
       detail.menu.addItem({
         icon: STUDIO_ICON_ID,
         label: t("用 Excali 白板打开"),

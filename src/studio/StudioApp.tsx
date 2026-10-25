@@ -97,11 +97,15 @@ import { CARD_H, CARD_W, boardRefAtPoint as boardCardAt, insertBoardCard as make
 import {
   EMBED_DEFAULT_HEIGHT,
   EMBED_DEFAULT_WIDTH,
+  blockIdOfEmbedLink,
   embedPageLink,
+  hasSiYuanDrag,
   isEmbeddableAllowed,
   isPluginEmbedLink,
   makeEmbeddableElement,
   parseSiYuanBlockRef,
+  pluginEmbeddableAt,
+  siYuanDropIds,
 } from "./embeddable";
 import { fileNameOf, stampFileName } from "./storage";
 import type { BoardActions } from "./board-actions";
@@ -431,6 +435,8 @@ export function StudioApp(props: StudioProps) {
   modeRef.current = mode;
   const [dirty, setDirty] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  /** 2026-10-25 交互框：思源文档/块正拖在画布上（提示「松开以嵌入」） */
+  const [dropHint, setDropHint] = useState(false);
   const [importLibOpen, setImportLibOpen] = useState(false);
   // 第四十六轮 B2 批：对标 fork TrayMenu——选中只门控底栏中段 [🎨⧉🗑]（翻转才
   // setState，拖拽每帧零成本）；面板由 🎨 真开关控制（fork toggleTrayEditMenu 同构：
@@ -1373,6 +1379,44 @@ export function StudioApp(props: StudioProps) {
      第四十轮：白板库拖来的行（自定义 MIME）优先，落在指针处生成一张卡片。 */
   const onCanvasDrop = (e: React.DragEvent<HTMLDivElement>): void => {
     if (!api) return;
+    // 2026-10-25 交互框：思源文档树 / 正文块拖入 → 嵌入框。思源拖拽只带自定义 MIME
+    // （无 text/plain、无 files），与下面的白板卡 / 图片文件两条路互不侵占。
+    const types = e.dataTransfer?.types ?? [];
+    if (hasSiYuanDrag(types)) {
+      e.preventDefault();
+      e.stopPropagation();
+      setDropHint(false);
+      const ids = siYuanDropIds({
+        types,
+        getData: (type) => e.dataTransfer?.getData(type) ?? "",
+      });
+      if (ids.length === 0) {
+        notify(t("拖入的不是文档或块，已忽略"));
+        return;
+      }
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const at = clientToScene(api, rect, e.clientX, e.clientY);
+      const stamp = Date.now().toString(36);
+      const cols = Math.ceil(Math.sqrt(ids.length));
+      const els = ids.map((blockId, i) =>
+        makeEmbeddableElement({
+          id: `emb-${stamp}-${i}-${Math.random().toString(36).slice(2, 8)}`,
+          link: embedPageLink(blockId, mode),
+          x: at.x + (i % cols) * (EMBED_DEFAULT_WIDTH + 24),
+          y: at.y + Math.floor(i / cols) * (EMBED_DEFAULT_HEIGHT + 24),
+          width: EMBED_DEFAULT_WIDTH,
+          height: EMBED_DEFAULT_HEIGHT,
+          index: "a0",
+          seed: Math.floor(Math.random() * 2 ** 31),
+        }),
+      );
+      api.updateScene({
+        elements: [...api.getSceneElements(), ...(els as never[])],
+        appState: { selectedElementIds: Object.fromEntries(els.map((el) => [String(el.id), true])) },
+      });
+      notify(t("已嵌入 {n} 个思源块", { n: ids.length }));
+      return;
+    }
     const board = decodeBoardDrag(e.dataTransfer?.getData(BOARD_DRAG_MIME) ?? "");
     if (board) {
       e.preventDefault();
@@ -1862,14 +1906,38 @@ export function StudioApp(props: StudioProps) {
       if (!root || !root.contains(canvas)) return;
       const at = clientToScene(api, canvas.getBoundingClientRect(), event.clientX, event.clientY);
       const ref = boardCardAt(api.getSceneElements(), at);
-      if (!ref) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onOpenDocLink(boardLinkOf(ref));
+      if (ref) {
+        event.preventDefault();
+        event.stopPropagation();
+        onOpenDocLink(boardLinkOf(ref));
+        return;
+      }
+      // 2026-10-25 交互框：⌘/Ctrl+点思源嵌入框 = 分屏打开对应文档（与白板卡片同一手势）
+      const embedHit = pluginEmbeddableAt(api.getSceneElements(), at);
+      if (embedHit) {
+        const blockId = blockIdOfEmbedLink(embedHit.link);
+        if (!blockId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onOpenDocLink(`siyuan:block/${blockId}`);
+      }
     };
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
   }, [api, onOpenDocLink]);
+
+  /* 2026-10-25 交互框：嵌入渲染页右上「在思源中打开」→ postMessage 回本层。
+     渲染页与画板同源；origin 校验后转宿主 openDocLink（siyuan:block/ 形态 → 右侧分屏）。 */
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== location.origin) return;
+      const data = e.data as { type?: unknown; blockId?: unknown };
+      if (data?.type !== "exs-open-block" || typeof data.blockId !== "string") return;
+      onOpenDocLink(`siyuan:block/${data.blockId}`);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [onOpenDocLink]);
 
   // ⌘/Ctrl+S = 立即落盘（跳过防抖的强制保存）；⌘/Ctrl+Shift+E 导出。
   // window 捕获阶段先于一切（含 React 委托）拿到事件；只在焦点位于画板内时接管，
@@ -1977,10 +2045,17 @@ export function StudioApp(props: StudioProps) {
         .join(" ")}
       data-theme-mode={mode}
       ref={rootRef}
-      onDragOver={(e) => e.preventDefault()}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDropHint(hasSiYuanDrag(e.dataTransfer?.types ?? []));
+      }}
       onDragEnter={(e) => e.preventDefault()}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropHint(false);
+      }}
       onDrop={onCanvasDrop}
     >
+      {dropHint ? <div className="exs-drop-hint">{t("松开以嵌入思源块")}</div> : null}
       <div className="exs-canvas">
         <Excalidraw
           theme={mode}

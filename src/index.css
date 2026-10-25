@@ -2894,3 +2894,36 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   letter-spacing: 0.02em;
   color: rgba(255, 255, 255, 0.62);
 }
+
+/* ---------- 2026-10-25 交互框：拖拽提示条 ---------- */
+
+/* 思源文档/块拖到画布上时的顶部提示条（实底，同菜单 token） */
+.exs-root .exs-drop-hint {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: 6px 16px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 999px;
+  background: var(--exs-menu-solid);
+  box-shadow: var(--exs-menu-shadow);
+  color: var(--exs-text);
+  font-family: var(--exs-font-ui);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/* ---------- 2026-10-25 交互框：文档内白板图片块的徽标（悬停 ↗ 复用 .protyle-icon 原生样式） ---------- */
+
+.protyle-attr .exs-board-badge {
+  margin: 0 2px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--b3-theme-primary-lightest, rgba(53, 117, 240, 0.12));
+  color: var(--b3-theme-primary, #3575f0);
+  font-size: 10px;
+  line-height: 1.6;
+  user-select: none;
+}

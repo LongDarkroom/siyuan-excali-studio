@@ -94,6 +94,108 @@ export function isEmbeddableAllowed(link: unknown): boolean {
   return /^https?:\/\//i.test(link);
 }
 
+/* ---------------- 2026-10-25 交互框：思源拖拽协议解析 ----------------
+ * 三种来源（app/src/layout/dock/Files.ts、app/src/protyle/gutter/index.ts、constants.ts）：
+ * ① 文档树纯文档多选：application/siyuan-documents = JSON({ids:[...]})
+ * ② 文档树混选：application/siyuan-file = 逗号拼接 nodeId/path（path 形态 = 笔记本，按形状过滤）
+ * ③ 正文块条：动态 MIME application/siyuan-gutter<type>\u200b<subtype>\u200b<ids>\u200b<workspaceDir>，
+ *    块 ids 在第三段（零宽空格分隔）
+ * 全是思源内部协议（无兼容承诺），解析必须防御式：脏数据一律当没拖。
+ */
+
+export const SIYUAN_DROP_DOCUMENTS = "application/siyuan-documents";
+export const SIYUAN_DROP_FILE = "application/siyuan-file";
+export const SIYUAN_DROP_GUTTER_PREFIX = "application/siyuan-gutter";
+/** 零宽空格：gutter 动态 MIME 的字段分隔符 */
+const ZWSP = "\u200b";
+
+/** 思源块/文档 ID 的精确形状（14 位时间戳 + - + 7 位字母数字） */
+const SIYUAN_ID_EXACT = /^[0-9]{14}-[0-9a-zA-Z]{7}$/;
+
+/** dataTransfer 的最小形状（纯函数可测：测试喂假对象，不用真浏览器） */
+export type DropDataLike = { types: readonly string[]; getData(type: string): string };
+
+/** types 里是否带思源拖拽标记（dragover 阶段用——此时 getData 处于保护模式读不到内容，只能看 types） */
+export function hasSiYuanDrag(types: readonly string[]): boolean {
+  return (
+    Array.isArray(types) &&
+    types.some(
+      (t) => t === SIYUAN_DROP_DOCUMENTS || t === SIYUAN_DROP_FILE || t.startsWith(SIYUAN_DROP_GUTTER_PREFIX),
+    )
+  );
+}
+
+/** 从思源拖拽里解出块/文档 ID（drop 阶段用）。非思源拖拽 / 全是笔记本 / 脏数据 → []，绝不抛错 */
+export function siYuanDropIds(dt: DropDataLike): string[] {
+  // 显式标注：Array.isArray 对 readonly string[] 的收窄会落到 any[]，污染下游推断
+  const types: readonly string[] = Array.isArray(dt?.types) ? dt.types : [];
+  const read = (t: string): string => {
+    try {
+      return dt.getData(t) ?? "";
+    } catch {
+      return "";
+    }
+  };
+
+  if (types.includes(SIYUAN_DROP_DOCUMENTS)) {
+    try {
+      const ids = (JSON.parse(read(SIYUAN_DROP_DOCUMENTS)) as { ids?: unknown })?.ids;
+      if (Array.isArray(ids)) {
+        const hit = ids.filter((v): v is string => typeof v === "string" && SIYUAN_ID_EXACT.test(v));
+        if (hit.length > 0) return hit;
+      }
+    } catch {
+      /* 脏 JSON 当没拖 */
+    }
+  }
+
+  if (types.includes(SIYUAN_DROP_FILE)) {
+    const hit = read(SIYUAN_DROP_FILE)
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => SIYUAN_ID_EXACT.test(s));
+    if (hit.length > 0) return hit;
+  }
+
+  const gutter = types.find((t) => t.startsWith(SIYUAN_DROP_GUTTER_PREFIX));
+  if (gutter) {
+    const hit = (gutter.split(ZWSP)[2] ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => SIYUAN_ID_EXACT.test(s));
+    if (hit.length > 0) return hit;
+  }
+
+  return [];
+}
+
+/** 嵌入渲染页链接 → 块 ID（embedPageLink 的反向；链接不合法返回 null） */
+export function blockIdOfEmbedLink(link: unknown): string | null {
+  if (typeof link !== "string" || !isPluginEmbedLink(link)) return null;
+  const id = new URLSearchParams(link.split("?")[1] ?? "").get("blockId");
+  return typeof id === "string" && SIYUAN_ID_EXACT.test(id) ? id : null;
+}
+
+/**
+ * 场景坐标下最上层的思源嵌入元素（⌘/Ctrl+点击跳文档的命中测试）。
+ * 场景数组顺序即绘制顺序，后面的在上——倒序找第一个命中的。
+ */
+export function pluginEmbeddableAt(
+  elements: readonly { type?: unknown; x?: unknown; y?: unknown; width?: unknown; height?: unknown; link?: unknown }[],
+  at: { x: number; y: number },
+): { link: string } | null {
+  for (let i = elements.length - 1; i >= 0; i--) {
+    const el = elements[i];
+    if (el?.type !== "embeddable" || !isPluginEmbedLink(el.link)) continue;
+    const x = typeof el.x === "number" ? el.x : 0;
+    const y = typeof el.y === "number" ? el.y : 0;
+    const w = typeof el.width === "number" ? el.width : 0;
+    const h = typeof el.height === "number" ? el.height : 0;
+    if (at.x >= x && at.x <= x + w && at.y >= y && at.y <= y + h) return { link: el.link as string };
+  }
+  return null;
+}
+
 /**
  * 思源块 ID 的形状：14 位日期时间 + 连字符 + 7 位字母数字
  * （如 20240101120000-abcdefg；文档/块同理）。按这个形状从任意输入里提取，
