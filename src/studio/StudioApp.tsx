@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CaptureUpdateAction, Excalidraw, TTDDialog, hashElementsVersion } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Excalidraw, TTDDialog, convertToExcalidrawElements, hashElementsVersion } from "@excalidraw/excalidraw";
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { excalidrawLangCode, t } from "../i18n";
 import { themeBgForMode, readSiyuanThemeMode, readThemeBgSlots, watchSiyuanThemeMode, withThemeBgSlot, type ThemeMode } from "./theme";
@@ -95,9 +95,11 @@ import { clientToScene, viewportCenter, type Point } from "./scene-point";
 import { BOARD_DRAG_MIME, boardLinkOf, boardRefFromText, decodeBoardDrag } from "./board-lib.ts";
 import { CARD_H, CARD_W, boardRefAtPoint as boardCardAt, insertBoardCard as makeBoardCard } from "./board-card.ts";
 import {
+  BLOCK_LINK_FONT_SIZE,
   EMBED_DEFAULT_HEIGHT,
   EMBED_DEFAULT_WIDTH,
   blockIdOfEmbedLink,
+  blockLinkTextSkeleton,
   embedPageLink,
   hasSiYuanDrag,
   isEmbeddableAllowed,
@@ -150,6 +152,8 @@ export type StudioProps = {
   onNewBoard: () => void;
   /** 2026-10-15 阶段 A：重命名前问文件名；取消返回 null（新建的命名框在宿主侧 openNew） */
   promptFileName: (suggested: string, title: string) => Promise<string | null>;
+  /** 2026-10-25 紧凑文档链接：批量取块标题（宿主走内核 SQL，失败返回空映射） */
+  fetchBlockTitles: (ids: string[]) => Promise<Record<string, string>>;
   /** 2026-10-15 阶段 A：重命名（读旧写新删旧）；返回新 /data 路径 */
   onRename: (oldPath: string, newName: string) => Promise<string>;
   /** 2026-10-15 阶段 B：图库持久化（读写 assets/excali-library.json，宿主实现） */
@@ -252,6 +256,7 @@ export function StudioApp(props: StudioProps) {
     onSave,
     saveMedia,
     onOpenDocLink,
+    fetchBlockTitles,
     onDirtyChange,
     notify,
     showWelcome,
@@ -1379,7 +1384,8 @@ export function StudioApp(props: StudioProps) {
      第四十轮：白板库拖来的行（自定义 MIME）优先，落在指针处生成一张卡片。 */
   const onCanvasDrop = (e: React.DragEvent<HTMLDivElement>): void => {
     if (!api) return;
-    // 2026-10-25 交互框：思源文档树 / 正文块拖入 → 嵌入框。思源拖拽只带自定义 MIME
+    // 2026-10-25 交互框·二轮：拖入改为 Obsidian 式「名字 + 链接」的紧凑文字
+    // （拖 = 引用；完整嵌入大框留给 ☰「嵌入思源块…」）。思源拖拽只带自定义 MIME
     // （无 text/plain、无 files），与下面的白板卡 / 图片文件两条路互不侵占。
     const types = e.dataTransfer?.types ?? [];
     if (hasSiYuanDrag(types)) {
@@ -1396,25 +1402,30 @@ export function StudioApp(props: StudioProps) {
       }
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
       const at = clientToScene(api, rect, e.clientX, e.clientY);
-      const stamp = Date.now().toString(36);
-      const cols = Math.ceil(Math.sqrt(ids.length));
-      const els = ids.map((blockId, i) =>
-        makeEmbeddableElement({
-          id: `emb-${stamp}-${i}-${Math.random().toString(36).slice(2, 8)}`,
-          link: embedPageLink(blockId, mode),
-          x: at.x + (i % cols) * (EMBED_DEFAULT_WIDTH + 24),
-          y: at.y + Math.floor(i / cols) * (EMBED_DEFAULT_HEIGHT + 24),
-          width: EMBED_DEFAULT_WIDTH,
-          height: EMBED_DEFAULT_HEIGHT,
-          index: "a0",
-          seed: Math.floor(Math.random() * 2 ** 31),
-        }),
-      );
-      api.updateScene({
-        elements: [...api.getSceneElements(), ...(els as never[])],
-        appState: { selectedElementIds: Object.fromEntries(els.map((el) => [String(el.id), true])) },
-      });
-      notify(t("已嵌入 {n} 个思源块", { n: ids.length }));
+      // 文字用主题强调色（--exs-accent 两态）：上游不给链接文字着色，创建时自己上
+      const accent = mode === "dark" ? "#a8a5ff" : "#6965db";
+      void (async () => {
+        // 标题拿不到（SQL 挂/索引延迟）不挡插入：回退块号
+        const titles = await fetchBlockTitles(ids).catch(() => ({}) as Record<string, string>);
+        const cols = Math.ceil(Math.sqrt(ids.length));
+        const gapY = Math.round(BLOCK_LINK_FONT_SIZE * 1.25) + 28;
+        const skeletons = ids.map((blockId, i) =>
+          blockLinkTextSkeleton({
+            blockId,
+            title: titles[blockId],
+            x: at.x + (i % cols) * 460,
+            y: at.y + Math.floor(i / cols) * gapY,
+            accent,
+          }),
+        );
+        // vendor 公开 API：skeleton → 正规元素（量宽高/补默认），别手工拼字段
+        const els = convertToExcalidrawElements(skeletons as never[]) as { id: unknown }[];
+        api.updateScene({
+          elements: [...api.getSceneElements(), ...(els as never[])],
+          appState: { selectedElementIds: Object.fromEntries(els.map((el) => [String(el.id), true])) },
+        });
+        notify(t("已插入 {n} 个思源链接，单击打开对应文档", { n: ids.length }));
+      })();
       return;
     }
     const board = decodeBoardDrag(e.dataTransfer?.getData(BOARD_DRAG_MIME) ?? "");
@@ -2055,7 +2066,7 @@ export function StudioApp(props: StudioProps) {
       }}
       onDrop={onCanvasDrop}
     >
-      {dropHint ? <div className="exs-drop-hint">{t("松开以嵌入思源块")}</div> : null}
+      {dropHint ? <div className="exs-drop-hint">{t("松开以插入思源链接")}</div> : null}
       <div className="exs-canvas">
         <Excalidraw
           theme={mode}

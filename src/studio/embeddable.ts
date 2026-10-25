@@ -207,3 +207,74 @@ export function parseSiYuanBlockRef(input: string): string | null {
   const m = SIYUAN_BLOCK_ID_RE.exec(input.trim());
   return m ? m[0] : null;
 }
+
+/* ---------------- 2026-10-25 紧凑文档链接（拖拽默认形态） ----------------
+ * Obsidian 同款语义：拖 = 引用（一行「名字 + 链接」的文字），嵌入大框留给
+ * ☰「嵌入思源块…」。这里只出 **text skeleton**（vendor convertToExcalidrawElements
+ * 的入参形状）；量宽高/补默认字段由画布侧在浏览器里调 vendor 完成——本模块保持
+ * 零 vendor 依赖，node 单测直接跑。
+ */
+
+/** 链接文字的默认字号与标题截断上限 */
+export const BLOCK_LINK_FONT_SIZE = 20;
+export const BLOCK_LINK_MAX_CHARS = 32;
+
+/** 标题清洗 + 截断：压空白、超长加省略号；空标题返回空串（调用方回退块号） */
+export function truncateBlockTitle(title: unknown): string {
+  const clean = String(title ?? "").replace(/\s+/g, " ").trim();
+  if (clean.length <= BLOCK_LINK_MAX_CHARS) return clean;
+  return clean.slice(0, BLOCK_LINK_MAX_CHARS - 1) + "…";
+}
+
+export type BlockLinkSkeleton = {
+  type: "text";
+  x: number;
+  y: number;
+  text: string;
+  fontSize: number;
+  fontFamily: string;
+  textAlign: "left";
+  verticalAlign: "top";
+  strokeColor: string;
+  link: string;
+};
+
+/**
+ * 块 ID + 标题 → 紧凑链接文字骨架。strokeColor 由调用方按明暗主题给
+ * （StudioApp 传 --exs-accent 两态值）；link 用 siyuan:block/ 形态，单击由
+ * vendor 原生 onLinkOpen 触发（StudioApp 已拦截 siyuan: 前缀 → 右侧分屏）。
+ */
+export function blockLinkTextSkeleton(opts: {
+  blockId: string;
+  title: unknown;
+  x: number;
+  y: number;
+  accent: string;
+  fontSize?: number;
+}): BlockLinkSkeleton {
+  const text = truncateBlockTitle(opts.title) || `块 ${opts.blockId.slice(-6)}`;
+  return {
+    type: "text",
+    x: opts.x,
+    y: opts.y,
+    text,
+    fontSize: opts.fontSize ?? BLOCK_LINK_FONT_SIZE,
+    fontFamily: "1",
+    textAlign: "left",
+    verticalAlign: "top",
+    strokeColor: opts.accent,
+    link: `siyuan:block/${opts.blockId}`,
+  };
+}
+
+/**
+ * 批量取块标题的 SQL（纯函数，node 可测；IO 在 siyuan/doc.ts 的 fetchBlockTitles）。
+ * ids 已过形状校验，这里仍双保险：形状再验一遍 + 单引号转义（防注入）。
+ */
+export function blockTitlesSqlOf(ids: string[]): string {
+  const safe = ids
+    .filter((id) => /^[0-9]{14}-[0-9a-zA-Z]{7}$/.test(id))
+    .map((id) => `'${id.replace(/'/g, "''")}'`);
+  if (safe.length === 0) return "";
+  return `select id, content from blocks where id in (${safe.join(",")})`;
+}

@@ -9,6 +9,7 @@
  */
 
 import { getAllEditor, type IProtyle, type Plugin } from "siyuan";
+import { blockTitlesSqlOf } from "../studio/embeddable";
 import { t } from "../i18n";
 import { assetWebPath, fromAssetRef } from "../studio/storage.ts";
 
@@ -66,6 +67,27 @@ export async function createDocWithMd(notebook: string, path: string, markdown: 
 export async function querySql<T = Record<string, unknown>>(stmt: string): Promise<T[]> {
   const json = await kernelJson("/api/query/sql", { stmt });
   return Array.isArray(json.data) ? (json.data as T[]) : [];
+}
+
+/**
+ * 2026-10-25 紧凑文档链接：批量取块标题（IO 侧）。
+ * SQL 拼接的纯函数在 studio/embeddable.ts 的 blockTitlesSqlOf（node 可测）；
+ * 文档块的 content 就是标题，段落块的 content 是正文文本（画布侧截断显示）。
+ * 任何失败返回空映射——标题拿不到只影响显示文字（回退块号），绝不挡拖拽。
+ */
+export async function fetchBlockTitles(ids: string[]): Promise<Record<string, string>> {
+  const stmt = blockTitlesSqlOf(ids);
+  if (!stmt) return {};
+  try {
+    const rows = await querySql<{ id?: string; content?: string }>(stmt);
+    const out: Record<string, string> = {};
+    for (const r of rows) {
+      if (typeof r.id === "string" && typeof r.content === "string") out[r.id] = r.content;
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 /** 追加一个图片块到指定文档末尾；返回新块 id（拿不到时为空串） */

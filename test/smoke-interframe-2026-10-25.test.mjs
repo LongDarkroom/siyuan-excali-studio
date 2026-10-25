@@ -7,13 +7,17 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
+  BLOCK_LINK_MAX_CHARS,
   SIYUAN_DROP_DOCUMENTS,
   SIYUAN_DROP_FILE,
   blockIdOfEmbedLink,
+  blockLinkTextSkeleton,
+  blockTitlesSqlOf,
   embedPageLink,
   hasSiYuanDrag,
   pluginEmbeddableAt,
   siYuanDropIds,
+  truncateBlockTitle,
 } from "../src/studio/embeddable.ts";
 import { blockIdFromLink } from "../src/studio/board-lib.ts";
 
@@ -96,23 +100,51 @@ test("blockIdFromLink：siyuan:block/<块ID> 精确形状；doc/白板链接不�
 
 /* ---------------- 画布侧接线（StudioApp.tsx） ---------------- */
 
-test("onCanvasDrop：思源分支在最前（早于白板卡/图片文件），多块网格排布 + 选中", () => {
+test("onCanvasDrop：思源分支在最前，生成紧凑链接文字（二轮：拖 = 引用，嵌入大框留菜单）", () => {
   const app = read("src/studio/StudioApp.tsx");
   const drop = app.slice(app.indexOf("const onCanvasDrop"), app.indexOf("const board = decodeBoardDrag"));
   assert.ok(drop.includes("hasSiYuanDrag(types)"), "先判思源拖拽标记");
   assert.ok(drop.includes("siYuanDropIds("), "drop 阶段解析块 ID");
-  assert.ok(drop.includes("已嵌入 {n} 个思源块"), "结果要有数量反馈");
-  assert.ok(drop.includes("EMBED_DEFAULT_WIDTH + 24"), "多块按网格排布");
+  assert.ok(drop.includes("fetchBlockTitles("), "批量取标题（失败回退块号）");
+  assert.ok(drop.includes("blockLinkTextSkeleton("), "生成 text 骨架");
+  assert.ok(drop.includes("convertToExcalidrawElements("), "经 vendor 公开 API 正规化，不手工拼字段");
+  assert.ok(drop.includes('mode === "dark" ? "#a8a5ff" : "#6965db"'), "文字用主题强调色两态");
+  assert.ok(drop.includes("已插入 {n} 个思源链接，单击打开对应文档"), "结果反馈带用法提示");
   assert.ok(drop.includes("selectedElementIds"), "插入后选中");
+  assert.ok(!drop.includes("makeEmbeddableElement("), "拖拽不再生成 iframe 大框（那是 ☰ 菜单的事）");
   const siYuanAt = app.indexOf("hasSiYuanDrag(types)");
   // 锚点必须是调用处（decodeBoardDrag 在 import 行就出现，直接 indexOf 会误判）
   assert.ok(siYuanAt < app.indexOf("const board = decodeBoardDrag"), "思源分支在白板卡分支之前");
 });
 
+test("紧凑链接纯函数：截断 / 空标题回退块号 / link 形态（Obsidian 式「名字+链接」）", () => {
+  assert.equal(truncateBlockTitle("  前后空白\n压成一句  "), "前后空白 压成一句");
+  const long = "长".repeat(BLOCK_LINK_MAX_CHARS + 10);
+  const cut = truncateBlockTitle(long);
+  assert.ok(cut.length === BLOCK_LINK_MAX_CHARS && cut.endsWith("…"), "超长截断加省略号");
+  assert.equal(truncateBlockTitle(""), "");
+  const sk = blockLinkTextSkeleton({ blockId: ID_A, title: "英语考试复习计划", x: 10, y: 20, accent: "#6965db" });
+  assert.equal(sk.type, "text");
+  assert.equal(sk.text, "英语考试复习计划");
+  assert.equal(sk.link, `siyuan:block/${ID_A}`);
+  assert.equal(sk.strokeColor, "#6965db");
+  assert.equal(sk.textAlign, "left");
+  const fallback = blockLinkTextSkeleton({ blockId: ID_B, title: "", x: 0, y: 0, accent: "#a8a5ff" });
+  assert.ok(fallback.text.startsWith("块 "), "空标题回退块号");
+});
+
+test("blockTitlesSqlOf：in 子句拼接 + 形状双保险过滤（防注入）", () => {
+  const sql = blockTitlesSqlOf([ID_A, ID_B]);
+  assert.ok(sql.startsWith("select id, content from blocks where id in ("));
+  assert.ok(sql.includes(`'${ID_A}'`) && sql.includes(`'${ID_B}'`), "两个 id 各自成引号项");
+  assert.equal(blockTitlesSqlOf([]), "");
+  assert.equal(blockTitlesSqlOf(["'; drop table blocks;--"]), "", "非块形状的输入整体拒绝");
+});
+
 test("拖拽提示条：dragover 亮 / dragLeave 出界灭 / drop 收", () => {
   const app = read("src/studio/StudioApp.tsx");
   assert.match(app, /onDragOver=\{\(e\) => \{[\s\S]{0,120}setDropHint\(hasSiYuanDrag/, "dragover 检测思源标记");
-  assert.match(app, /松开以嵌入思源块/, "提示条文案");
+  assert.match(app, /松开以插入思源链接/, "提示条文案");
   const css = read("src/index.css");
   assert.ok(css.includes(".exs-root .exs-drop-hint"), "提示条样式");
 });
@@ -184,7 +216,7 @@ test("boardAssetRefOf：绝对地址 / 相对引用 / 查询串都能落到白�
 test("交互框词条双语齐备", () => {
   const zh = JSON.parse(read("i18n/zh_CN.json"));
   const en = JSON.parse(read("i18n/en_US.json"));
-  for (const k of ["插入白板…", "松开以嵌入思源块", "拖入的不是文档或块，已忽略", "已嵌入 {n} 个思源块"]) {
+  for (const k of ["插入白板…", "松开以插入思源链接", "拖入的不是文档或块，已忽略", "已插入 {n} 个思源链接，单击打开对应文档"]) {
     assert.ok(zh[k], `zh_CN 缺：${k}`);
     assert.ok(en[k], `en_US 缺：${k}`);
   }
