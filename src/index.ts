@@ -330,16 +330,32 @@ export default class ExcaliStudioPlugin extends Plugin {
 
     /* 2026-10-25 交互框（B1）：敲 / 选「插入白板…」→ 挑一张库内白板插进当前文档。
        落地形态与建档插图同构：![](assets/excali/x.svg)——SVG 自带场景预览，
-       所见即所得；悬停 ↗ / 图片右键可跳进画板（board-block-decorate）。 */
+       所见即所得；悬停 ↗ / 图片右键可跳进画板（board-block-decorate）。
+       注意 insert() 收 **HTML**（SiYuan insertHTML 零 markdown 转换）：
+       markdown 必须先过 window.Lute.Md2BlockDOM，再 isBlock=true 按块插入。 */
     this.protyleSlash.push({
       id: "excaliStudioInsertBoard",
       filter: ["插入白板", "白板卡", "insert board"],
       html: slashItemHtml(t("插入白板…")),
       callback: (protyle: Protyle) => {
-        this.clearSlashHint(protyle);
-        void this.pickBoardRef().then((ref) => {
-          if (ref) protyle.insert(`![](${ref})`);
-        });
+        try {
+          this.clearSlashHint(protyle);
+          void this.pickBoardRef()
+            .then((ref) => {
+              if (!ref) return;
+              const lute = (window as unknown as { Lute?: { Md2BlockDOM?: (md: string) => string } }).Lute;
+              const dom = lute?.Md2BlockDOM?.(`![](${ref})`);
+              if (!dom) {
+                showMessage(t("插入失败：Lute 不可用"), 7000, "error");
+                return;
+              }
+              protyle.insert(dom, true);
+              showMessage(t("已插入白板：{name}", { name: fileNameOf(ref) }), 3000);
+            })
+            .catch((e) => showMessage(t("插入失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }), 7000, "error"));
+        } catch (e) {
+          showMessage(t("插入失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }), 7000, "error");
+        }
       },
     });
 

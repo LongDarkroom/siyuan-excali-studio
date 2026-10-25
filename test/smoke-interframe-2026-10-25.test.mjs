@@ -182,11 +182,16 @@ test("openBoardDocLink：siyuan:block/ → openTab position right（双页阅读
   assert.ok(fn.indexOf("isMobileFrontend()") < fn.indexOf('position: "right"'), "移动端先兜底");
 });
 
-test("斜杠「插入白板…」：pickBoardRef 选库内白板 → protyle.insert(![]())", () => {
+test("斜杠「插入白板…」：pickBoardRef → Lute.Md2BlockDOM 转换 → insert(dom, true)", () => {
   const index = read("src/index.ts");
   const item = index.slice(index.indexOf('id: "excaliStudioInsertBoard"'));
-  assert.ok(item.slice(0, 700).includes("pickBoardRef()"), "复用白板选择器");
-  assert.ok(item.slice(0, 700).includes('protyle.insert(`![](${ref})`)'), "插入图片块（所见即所得）");
+  assert.ok(item.slice(0, 1400).includes("pickBoardRef()"), "复用白板选择器");
+  // 2026-10-25 修复：SiYuan 的 insert() 收 HTML 不收 markdown（insertHTML 零转换），
+  // 直接 insert("![](...)") 会插成一串纯文本——必须先过 Lute.Md2BlockDOM 再按块插入
+  assert.ok(item.slice(0, 1400).includes("Md2BlockDOM"), "markdown 先转 kramdown DOM");
+  assert.ok(item.slice(0, 1400).includes("protyle.insert(dom, true)"), "isBlock=true 按块插入");
+  assert.ok(!item.slice(0, 1400).includes('protyle.insert(`![]('), "不得再把 markdown 直接喂 insert()");
+  assert.ok(item.slice(0, 1400).includes("插入失败：{msg}"), "整条链路要有可见的失败反馈（曾表现为无反应）");
   assert.ok(index.indexOf('id: "excaliStudioInsertBoard"') > index.indexOf('id: "excaliStudio"'), "第二项在原「白板」项之后");
 });
 
@@ -216,7 +221,7 @@ test("boardAssetRefOf：绝对地址 / 相对引用 / 查询串都能落到白�
 test("交互框词条双语齐备", () => {
   const zh = JSON.parse(read("i18n/zh_CN.json"));
   const en = JSON.parse(read("i18n/en_US.json"));
-  for (const k of ["插入白板…", "松开以插入思源链接", "拖入的不是文档或块，已忽略", "已插入 {n} 个思源链接，单击打开对应文档"]) {
+  for (const k of ["插入白板…", "松开以插入思源链接", "拖入的不是文档或块，已忽略", "已插入 {n} 个思源链接，单击打开对应文档", "插入失败：{msg}", "已插入白板：{name}"]) {
     assert.ok(zh[k], `zh_CN 缺：${k}`);
     assert.ok(en[k], `en_US 缺：${k}`);
   }

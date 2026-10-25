@@ -397,5 +397,8 @@
   "插入白板…": "Insert whiteboard…",
   "拖入的不是文档或块，已忽略": "Not a SiYuan document or block; ignored",
   "松开以插入思源链接": "Drop to insert SiYuan links",
-  "已插入 {n} 个思源链接，单击打开对应文档": "Inserted {n} SiYuan link(s); click to open the document"
+  "已插入 {n} 个思源链接，单击打开对应文档": "Inserted {n} SiYuan link(s); click to open the document",
+  "插入失败：{msg}": "Insert failed: {msg}",
+  "插入失败：Lute 不可用": "Insert failed: Lute unavailable",
+  "已插入白板：{name}": "Whiteboard inserted: {name}"
 }
