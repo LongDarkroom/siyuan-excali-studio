@@ -353,6 +353,7 @@ test("契约·第二十六轮：分包加载 / 图片外置接线 / 嵌入图点
   assert.match(INDEX, /__exsEngineFactory=\(function\(require,module,exports\)/, "引擎包成 factory 经 <script> 注入执行，引擎内 require(siyuan) 才能解析");
   assert.equal(INDEX.includes("window.eval("), false, "引擎不再用 window.eval 执行（WebKit 移动端对 eval 巨串有尺寸上限，会「画板引擎加载失败」）");
   assert.match(INDEX, /this\.lazyEngine \?\?= this\.loadEngineModule\(\)/, "并发首开只装载一次");
+  assert.match(INDEX, /fetch\(url, \{ cache: "no-cache" \}\)/, "engine.js 每次校验新鲜度：插件更新后网页端不再用浏览器缓存里的旧引擎");
   const staticVendorImports = INDEX.replace(/import type[^;]+;/g, "").match(/from "\.\/studio\/(svg|scene|tab)"|attachStudioTab,/);
   assert.equal(staticVendorImports, null, "vendor 模块不许静态 import 进主包（只有 import type）");
   assert.match(BUILD_SCRIPT, /inlineDynamicImports: true/, "两趟构建都内联 vendor 内部动态导入（不炸哈希 chunk）");
