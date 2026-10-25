@@ -464,7 +464,7 @@ test("契约·「打开白板…」重构（第十三轮）：一次读好 + 已
   assert.ok(picker.length > 0, "pickBoardRef/openBoardPicker 切片锚点失效");
   assert.match(picker, /await listBoardEntries\(this\.settings\.saveDir\)/, "一次读好整份列表交给选择器，纯内存过滤");
   assert.match(picker, /s\.data\.dataPath/, "「已打开」集合从页签会话现取（dataPath 是归一过的 /data 路径）");
-  assert.match(picker, /await pickBoardFile\(entries, openPaths\)/, "选择器独立成模块（siyuan/board-picker.ts）");
+  assert.match(picker, /await pickBoardFile\(entries, openPaths(?:, title)?\)/, "选择器独立成模块（siyuan/board-picker.ts；2026-10-25 起可带场景标题）");
   assert.match(picker, /if \(picked\) void this\.openExisting\(picked\)/, "选中走原打开链路：已开的白板被去重逻辑直接聚焦");
   assert.match(picker, /读取目录失败：\{msg\}/, "读目录失败的 toast 仍在宿主");
   assert.match(picker, /目录里还没有白板文件/, "空目录短路，不弹空选择器");

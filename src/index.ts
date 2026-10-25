@@ -340,7 +340,7 @@ export default class ExcaliStudioPlugin extends Plugin {
       callback: (protyle: Protyle) => {
         try {
           this.clearSlashHint(protyle);
-          void this.pickBoardRef()
+          void this.pickBoardRef(t("插入白板…"))
             .then((ref) => {
               if (!ref) return;
               const lute = (window as unknown as { Lute?: { Md2BlockDOM?: (md: string) => string } }).Lute;
@@ -349,7 +349,10 @@ export default class ExcaliStudioPlugin extends Plugin {
                 showMessage(t("插入失败：Lute 不可用"), 7000, "error");
                 return;
               }
-              protyle.insert(dom, true);
+              // 第三参 useProtyleRange：选板弹窗把焦点带离编辑器，getEditorRange 拿到
+              // 的是失效选区 → 插入静默失败（此前「无反应」的真凶）。用 protyle 自己
+              // 跟踪的 toolbar.range（斜杠文本删除后收在原位）按块插入。
+              protyle.insert(dom, true, true);
               showMessage(t("已插入白板：{name}", { name: fileNameOf(ref) }), 3000);
             })
             .catch((e) => showMessage(t("插入失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }), 7000, "error"));
@@ -3001,7 +3004,7 @@ export default class ExcaliStudioPlugin extends Plugin {
    * 第四十轮：选择段抽成 pickBoardRef（返回库内引用），☰「插入白板卡片…」共用——
    * 两个入口只差拿到引用之后干什么。
    */
-  private async pickBoardRef(): Promise<string | null> {
+  private async pickBoardRef(title?: string): Promise<string | null> {
     let entries: BoardFileEntry[] = [];
     try {
       entries = await listBoardEntries(this.settings.saveDir);
@@ -3018,7 +3021,7 @@ export default class ExcaliStudioPlugin extends Plugin {
         .map((s) => s.data.dataPath)
         .filter((p): p is string => typeof p === "string"),
     );
-    return await pickBoardFile(entries, openPaths);
+    return await pickBoardFile(entries, openPaths, title);
   }
 
   private async openBoardPicker(): Promise<void> {

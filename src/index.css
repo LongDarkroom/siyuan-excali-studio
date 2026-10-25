@@ -207,41 +207,116 @@ body.exs-mobile-open {
   flex: none;
 }
 
+/* ---------- 白板选择器（2026-10-25 重绘：弹窗在 body 层，全部走思源 --b3-* 变量） ---------- */
+
+.exs-picker__search {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--b3-theme-surface, rgba(0, 0, 0, 0.03));
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.exs-picker__search:focus {
+  border-color: var(--b3-theme-primary, #1a8fff);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--b3-theme-primary, #1a8fff) 18%, transparent);
+  outline: none;
+}
+
 .exs-picker__list {
   max-height: min(46vh, 420px);
+  padding: 4px;
+  margin: -4px;
   overflow: auto;
+  border-radius: 10px;
+}
+
+.exs-picker__list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.exs-picker__list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--b3-scroll-color, rgba(0, 0, 0, 0.2));
 }
 
 .exs-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: 8px;
   cursor: pointer;
+  color: var(--b3-theme-on-background, #22252a);
+  font-size: 14px;
+  transition: background-color 100ms ease;
 }
 
-.exs-picker__item .b3-list-item__meta {
-  flex: 0 1 auto;
+.exs-picker__item:hover {
+  background: var(--b3-list-item-hover, rgba(0, 0, 0, 0.045));
+}
+
+.exs-picker__item.b3-list-item--focus {
+  background: color-mix(in srgb, var(--b3-theme-primary, #1a8fff) 12%, transparent);
+  color: var(--b3-theme-on-background, #22252a);
+}
+
+.exs-picker__item .b3-list-item__text {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  opacity: 0.72;
+}
+
+.exs-picker__icon {
+  flex: none;
+  display: inline-flex;
+  width: 17px;
+  height: 17px;
+  color: var(--b3-theme-on-surface, #5f6268);
+}
+
+.exs-picker__icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.exs-picker__item.b3-list-item--focus .exs-picker__icon {
+  color: var(--b3-theme-primary, #1a8fff);
+}
+
+.exs-picker__item .b3-list-item__meta {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--b3-theme-on-surface-light, #909296);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .exs-picker__empty {
-  padding: 12px 8px;
-  text-align: center;
-  opacity: 0.6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  color: var(--b3-theme-on-surface-light, #909296);
   font-size: 13px;
 }
 
 /* 2026-10-16 第十三轮：「打开白板…」行内「已打开」角标（与修改时间并排在 meta 里） */
 .exs-picker__badge {
   flex: none;
-  padding: 0 6px;
+  margin-right: 6px;
+  padding: 0 7px;
   border-radius: 999px;
   font-size: 11px;
-  line-height: 16px;
+  line-height: 17px;
   color: var(--b3-theme-primary, #1a8fff);
-  border: 0.5px solid var(--b3-theme-primary-light, #85b7eb);
+  background: color-mix(in srgb, var(--b3-theme-primary, #1a8fff) 12%, transparent);
 }
 
 /* 第四十一轮：脚本库里的「画布动作」小节标题（分组用，比说明块轻一档） */

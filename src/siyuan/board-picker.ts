@@ -25,7 +25,11 @@ function escapeHtml(s: string): string {
  * 弹框选白板文件；返回相对工作空间的路径（assets/x.svg 形式，调用方直接
  * openExisting），取消 / 关闭 / Esc / 点遮罩都回 null。
  */
-export function pickBoardFile(entries: BoardFileEntry[], openPaths: ReadonlySet<string>): Promise<string | null> {
+export function pickBoardFile(
+  entries: BoardFileEntry[],
+  openPaths: ReadonlySet<string>,
+  title: string = t("打开白板…"),
+): Promise<string | null> {
   return new Promise((resolve) => {
     let settled = false;
     let composing = false;
@@ -42,8 +46,8 @@ export function pickBoardFile(entries: BoardFileEntry[], openPaths: ReadonlySet<
     };
 
     const dialog = new Dialog({
-      title: t("打开白板…"),
-      width: "520px",
+      title,
+      width: "560px",
       content: `<div class="exs-picker">
   <input class="b3-text-field fn__block exs-picker__search" placeholder="${t("搜索文件名…")}" />
   <div class="exs-picker__list b3-list b3-list--background"></div>
@@ -65,7 +69,7 @@ export function pickBoardFile(entries: BoardFileEntry[], openPaths: ReadonlySet<
           const badge = openPaths.has(toDataPath(r.path)) ? `<span class="exs-picker__badge">${t("已打开")}</span>` : "";
           const time = boardTimeText(r.updated);
           const meta = badge || time ? `<span class="b3-list-item__meta">${badge}${escapeHtml(time)}</span>` : "";
-          return `<div class="${cls}" data-idx="${i}" title="${escapeHtml(r.path)}"><span class="b3-list-item__text">${escapeHtml(fileNameOf(r.path))}</span>${meta}</div>`;
+          return `<div class="${cls}" data-idx="${i}" title="${escapeHtml(r.path)}"><span class="exs-picker__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5"></rect><path d="M3.5 9h17M9 9v11.5"></path></svg></span><span class="b3-list-item__text">${escapeHtml(fileNameOf(r.path))}</span>${meta}</div>`;
         })
         .join("");
     };

@@ -185,11 +185,11 @@ test("openBoardDocLink：siyuan:block/ → openTab position right（双页阅读
 test("斜杠「插入白板…」：pickBoardRef → Lute.Md2BlockDOM 转换 → insert(dom, true)", () => {
   const index = read("src/index.ts");
   const item = index.slice(index.indexOf('id: "excaliStudioInsertBoard"'));
-  assert.ok(item.slice(0, 1400).includes("pickBoardRef()"), "复用白板选择器");
+  assert.ok(item.slice(0, 1400).includes("pickBoardRef(t(\"插入白板…\"))"), "复用白板选择器并带场景标题");
   // 2026-10-25 修复：SiYuan 的 insert() 收 HTML 不收 markdown（insertHTML 零转换），
   // 直接 insert("![](...)") 会插成一串纯文本——必须先过 Lute.Md2BlockDOM 再按块插入
   assert.ok(item.slice(0, 1400).includes("Md2BlockDOM"), "markdown 先转 kramdown DOM");
-  assert.ok(item.slice(0, 1400).includes("protyle.insert(dom, true)"), "isBlock=true 按块插入");
+  assert.ok(item.slice(0, 1400).includes("protyle.insert(dom, true, true)"), "isBlock + useProtolyteRange：弹窗会带走编辑器焦点，必须用 protyle 跟踪的 range 插入");
   assert.ok(!item.slice(0, 1400).includes('protyle.insert(`![]('), "不得再把 markdown 直接喂 insert()");
   assert.ok(item.slice(0, 1400).includes("插入失败：{msg}"), "整条链路要有可见的失败反馈（曾表现为无反应）");
   assert.ok(index.indexOf('id: "excaliStudioInsertBoard"') > index.indexOf('id: "excaliStudio"'), "第二项在原「白板」项之后");
