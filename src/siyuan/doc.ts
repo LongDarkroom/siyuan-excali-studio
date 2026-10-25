@@ -75,6 +75,18 @@ export async function querySql<T = Record<string, unknown>>(stmt: string): Promi
  * 文档块的 content 就是标题，段落块的 content 是正文文本（画布侧截断显示）。
  * 任何失败返回空映射——标题拿不到只影响显示文字（回退块号），绝不挡拖拽。
  */
+/**
+ * 2026-10-25 斜杠插入：从斜杠回调拿到的 Protyle 里解出 Lute。
+ * 层级实战勘误：斜杠回调参数是 Protyle **包装类**（public protyle: IProtyle），
+ * lute 挂在 IProtyle 上（思源自家 insertHTML 也走 protyle.lute.*）——
+ * 包装层、IProtyle、window（网页端 bundle）三级回落，哪层有算哪层。
+ */
+export function resolveLute(protyle: unknown): { Md2BlockDOM?: (md: string) => string } | null {
+  type LuteLike = { Md2BlockDOM?: (md: string) => string };
+  const p = protyle as { protyle?: { lute?: LuteLike }; lute?: LuteLike } | null;
+  return p?.protyle?.lute ?? p?.lute ?? (window as unknown as { Lute?: LuteLike }).Lute ?? null;
+}
+
 export async function fetchBlockTitles(ids: string[]): Promise<Record<string, string>> {
   const stmt = blockTitlesSqlOf(ids);
   if (!stmt) return {};

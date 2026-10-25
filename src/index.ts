@@ -90,6 +90,7 @@ import {
   svgAssetPathOf,
   trackEditor,
   fetchBlockTitles,
+  resolveLute,
 } from "./siyuan/doc";
 import { decorateBoardBlocks } from "./studio/board-block-decorate";
 import { pickBoardFile } from "./siyuan/board-picker";
@@ -343,12 +344,8 @@ export default class ExcaliStudioPlugin extends Plugin {
           void this.pickBoardRef(t("插入白板…"))
             .then((ref) => {
               if (!ref) return;
-              // Lute 的挂载点按环境不同：桌面客户端在 protyle.lute（实例），
-              // 网页端 window.Lute（bundle 里只做防御探测）。逐级回落。
               const md = `![](${ref})`;
-              const plute = (protyle as unknown as { lute?: { Md2BlockDOM?: (m: string) => string } }).lute;
-              const wlute = (window as unknown as { Lute?: { Md2BlockDOM?: (m: string) => string } }).Lute;
-              const dom = plute?.Md2BlockDOM?.(md) ?? wlute?.Md2BlockDOM?.(md);
+              const dom = resolveLute(protyle)?.Md2BlockDOM?.(md);
               if (!dom) {
                 showMessage(t("插入失败：Lute 不可用"), 7000, "error");
                 return;

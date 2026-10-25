@@ -189,8 +189,7 @@ test("斜杠「插入白板…」：pickBoardRef → Lute.Md2BlockDOM 转换 →
   // 2026-10-25 修复：SiYuan 的 insert() 收 HTML 不收 markdown（insertHTML 零转换），
   // 直接 insert("![](...)") 会插成一串纯文本——必须先过 Lute.Md2BlockDOM 再按块插入
   assert.ok(item.slice(0, 1400).includes("Md2BlockDOM"), "markdown 先转 kramdown DOM");
-  assert.ok(item.slice(0, 1400).includes("plute?.Md2BlockDOM?.(md)"), "桌面客户端 Lute 挂在 protyle.lute 实例上（window.Lute 只有网页端有）");
-  assert.ok(item.slice(0, 1400).includes("?? wlute?.Md2BlockDOM?.(md)"), "protyle.lute 缺失时回落 window.Lute");
+  assert.ok(item.slice(0, 1400).includes("resolveLute(protyle)"), "Lute 解析走三级回落 helper（斜杠回调是 Protyle 包装类，lute 在 .protyle.lute）");
   assert.ok(item.slice(0, 1400).includes("protyle.insert(dom, true, true)"), "isBlock + useProtolyteRange：弹窗会带走编辑器焦点，必须用 protyle 跟踪的 range 插入");
   assert.ok(!item.slice(0, 1400).includes('protyle.insert(`![]('), "不得再把 markdown 直接喂 insert()");
   assert.ok(item.slice(0, 1400).includes("插入失败：{msg}"), "整条链路要有可见的失败反馈（曾表现为无反应）");
