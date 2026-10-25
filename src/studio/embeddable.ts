@@ -63,9 +63,23 @@ export const EMBED_DEFAULT_HEIGHT = 420;
  * 渲染页链接（根相对路径；白板页签与内核同源 http://127.0.0.1:6806，浏览器按
  * origin 解析成 /plugins/…）。theme 带创建当时画布的明暗，iframe 按它选配色。
  */
+export const PLUGIN_EMBED_PREFIX = "/plugins/siyuan-excali-studio/embed/";
+
 export function embedPageLink(blockId: string, theme: string): string {
   const qs = new URLSearchParams({ blockId, theme });
-  return `/plugins/siyuan-excali-studio/embed/siyuan/index.html?${qs.toString()}`;
+  return `${PLUGIN_EMBED_PREFIX}siyuan/index.html?${qs.toString()}`;
+}
+
+/**
+ * 2026-10-25 大修：这个前缀的链接需要**自渲染 iframe**（StudioApp 的 renderEmbeddable）。
+ * vendor 0.18.1 给 embeddable iframe 强制 sandbox，且 allow-same-origin 只对九个合作域名
+ * （youtube/vimeo/figma/…，产物内 ydA 白名单）开放；generic 链接的 sandbox 不含
+ * allow-same-origin → iframe 是 opaque origin → 渲染页 fetch /api/block/getBlockDOM
+ * 带不上内核会话 cookie → 必然 Auth failed，画布上嵌入框永远显示「读取块失败」。
+ * 自渲染的 iframe 对自己的同源渲染页显式给 allow-same-origin。
+ */
+export function isPluginEmbedLink(link: unknown): boolean {
+  return typeof link === "string" && link.startsWith(PLUGIN_EMBED_PREFIX);
 }
 
 /**
@@ -76,7 +90,7 @@ export function embedPageLink(blockId: string, theme: string): string {
  */
 export function isEmbeddableAllowed(link: unknown): boolean {
   if (typeof link !== "string") return false;
-  if (link.startsWith("/plugins/siyuan-excali-studio/embed/")) return true;
+  if (isPluginEmbedLink(link)) return true;
   return /^https?:\/\//i.test(link);
 }
 

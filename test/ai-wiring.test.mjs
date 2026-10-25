@@ -45,11 +45,11 @@ function capability(name) {
   return INDEX.slice(at, end === -1 ? undefined : end);
 }
 
-test("A·能力注册：onload 内、await ready 之前、老版本静默跳过", () => {
-  assert.match(ONLOAD, /this\.setupSetting\(\);[\s\S]{0,200}this\.registerAgentCapabilities\(\);/, "注册要挂在 setupSetting 之后");
+test("A·能力注册：onload 内、await ready 之后（2026-10-25 大修：注册门要读用户设置）、老版本静默跳过", () => {
+  assert.match(ONLOAD, /this\.setupSetting\(\);[\s\S]{0,400}await this\.ready;[\s\S]{0,400}this\.registerAgentCapabilities\(\);/, "注册挂在 setupSetting 与设置读盘之后");
   const reg = ONLOAD.indexOf("this.registerAgentCapabilities()");
   const ready = ONLOAD.indexOf("await this.ready");
-  assert.ok(reg >= 0 && ready >= 0 && reg < ready, "注册不能等到 ready 之后（老内核/迁移失败会拖住能力上线）");
+  assert.ok(reg >= 0 && ready >= 0 && reg > ready, "注册必须在 await ready 之后：注册门读 aiChannels.agent，放早了恒读默认值（关了通道也照注册）");
   const impl = INDEX.slice(INDEX.indexOf("private registerAgentCapabilities"), INDEX.indexOf("private scriptPickerDialog"));
   assert.match(impl, /typeof this\.addAgentCapability !== "function"/, "老版本 SDK 没有该方法，必须能力探测");
   assert.match(impl, /try \{/, "降级路径要兜异常，不能把 onload 带崩");

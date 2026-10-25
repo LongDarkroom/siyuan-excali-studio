@@ -24,7 +24,7 @@ import { themeBgForMode, readSiyuanThemeMode, readThemeBgSlots, watchSiyuanTheme
 import { StudioMenu } from "./StudioMenu";
 import { ScriptRail, type ScriptRailItem } from "./ScriptRail";
 import { LineIcon } from "./line-icon";
-import { ICON_DELETE, ICON_DUPLICATE, ICON_MINUS, ICON_PALETTE, ICON_PLAY, ICON_PLUS, ICON_PRESENTATION, ICON_REDO, ICON_UNDO } from "./menu-icons";
+import { ICON_DELETE, ICON_DUPLICATE, ICON_MINUS, ICON_PALETTE, ICON_PLAY, ICON_PLUS, ICON_REDO, ICON_UNDO } from "./menu-icons";
 import { AiChannelsPanel } from "./AiChannelsPanel";
 import type { AiChannels, ChannelId } from "./ai/channels";
 import { IMAGE_TO_MATERIAL, INSERT_BOARD_CARD, OUTLINE_COLOR, PRESENTATION, railActionMount, railActionOf, type RailActionId, type RailActionMeta } from "./rail-actions.ts";
@@ -99,6 +99,7 @@ import {
   EMBED_DEFAULT_WIDTH,
   embedPageLink,
   isEmbeddableAllowed,
+  isPluginEmbedLink,
   makeEmbeddableElement,
   parseSiYuanBlockRef,
 } from "./embeddable";
@@ -1792,6 +1793,27 @@ export function StudioApp(props: StudioProps) {
   }, []);
 
   /**
+   * 2026-10-25 大修：思源块嵌入元素的自渲染。
+   * vendor 对 embeddable iframe 的 sandbox 不含 allow-same-origin（只对九个合作域名开），
+   * opaque origin 里渲染页拿不到内核会话 cookie，getBlockDOM 必然 Auth failed——
+   * 所以本插件 embed 前缀的链接绕开默认 iframe 自己渲染（详见 embeddable.ts 头注释）。
+   * 返回 null 交回 vendor 默认渲染（普通 http(s) 网页照旧）。
+   */
+  const renderPluginEmbeddable = useCallback((element: { link?: unknown }) => {
+    if (!isPluginEmbedLink(element.link)) return null;
+    return (
+      <iframe
+        className="excalidraw__embeddable exs-embeddable-frame"
+        src={element.link as string}
+        title={t("思源块")}
+        sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-downloads"
+        allowFullScreen
+        style={{ width: "100%", height: "100%", border: "none" }}
+      />
+    );
+  }, []);
+
+  /**
    * 第三十一轮：嵌入思源块——粘贴块链接/块 ID，在视口中心建 Embeddable 元素。
    * 输入框复用宿主的 promptFileName（单行文本对话框，取消返回 null）。
    * link 带创建当时的明暗主题（iframe 配色用）；插入后选中该元素，便于随手挪位。
@@ -1976,6 +1998,7 @@ export function StudioApp(props: StudioProps) {
           }}
           libraryReturnUrl={libraryImportUrl}
           validateEmbeddable={isEmbeddableAllowed}
+          renderEmbeddable={renderPluginEmbeddable}
           renderTopRightUI={renderTopRightUI}
           onLibraryChange={(items) => {
             void saveLibraryItems(items as unknown[])

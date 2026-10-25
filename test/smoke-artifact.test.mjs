@@ -130,9 +130,11 @@ test("根 index.js 带上了 ☰ 主菜单（自绘项文案 + 图标路径）",
   // 注意：别拿 json-export-button 判劫持是否还在——那是 vendor 自己的 Export 组件里的字符串，
   // 内联进产物就抹不掉。源码侧的断言在 menu.test.mjs / smoke-wiring.test.mjs。
   // 菜单项文案与图标路径都是写死的字面量：命中即 StudioMenu 整棵进了产物、没被 tree-shake。
-  for (const s of ["导出图片…", "重命名", "Excalidraw 链接", "缩放适应", "帮助", "L15.5,20.5A1,1"]) {
+  for (const s of ["导出图片…", "重命名", "嵌入思源块…", "缩放适应", "帮助", "L15.5,20.5A1,1"]) {
     assert.ok(code.includes(s), `没进产物：${s}`);
   }
+  // 2026-10-25 大修：社交组已删，产物里不应再有它的分组标题
+  assert.equal(code.includes("Excalidraw 链接"), false, "产物里还有社交组标题「Excalidraw 链接」：产物是旧的，重跑 npm run build");
   // 第七轮改名：「适应视图」→「缩放适应」，旧文案再出现说明产物是旧的
   assert.equal(
     code.includes("适应视图"),

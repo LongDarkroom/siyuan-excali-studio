@@ -58,7 +58,7 @@ export const CHANNEL_META: ChannelMeta[] = [
     desc: "列板 / 开板 / 按计划画图 / 生图插板，仅思源内置智能体可见",
     gate: "开关 = 注册门：关闭后不再注册四能力，需重载思源生效",
     badge: "excali_* ×4",
-    sample: "excali_list_boards · excali_read_board · excali_draw_board · excali_generate_image",
+    sample: "excali_list_boards · excali_open_board · excali_draw_board · excali_generate_image",
     icon: ICON_AGENT,
   },
   {

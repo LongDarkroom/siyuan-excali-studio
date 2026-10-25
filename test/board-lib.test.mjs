@@ -304,10 +304,12 @@ test("dock：单击开画板、右键行进宿主菜单、双击开文档，均�
 
 /* ------------------------------ 接线：批4 复制引用 + 体检 ------------------------------ */
 
-test("批4 ☰ 复制引用：docId 先取页签数据、缺了按 svg 反查；未建档只提示不静默", () => {
+test("批4 ☰ 复制引用：docId 先取页签数据、缺了按 svg 反查；未建档一键建档（2026-10-25 大修）", () => {
   assert.match(TAB, /onCopyBoardRef=\{\(\) => host\.copyBoardRef\(custom\)\}/, "渲染时闭包补 custom");
   assert.match(INDEX, /session\.data\.docId \?\? \(path \? this\.boardDocs\.find\(\(d\) => toDataPath\(d\.svg\) === path\)\?\.docId : undefined\)/, "旧会话恢复的页签没存 docId → 反查库缓存");
-  assert.match(INDEX, /还没建档，复制不了引用：在白板行右键「建档」/, "未建档给出可操作的提示");
+  assert.match(INDEX, /private async copyBoardRefFor[\s\S]*?adoptBoardFile\(item\)/, "未建档 → 复用右键建档全流程，一步到位");
+  assert.match(INDEX, /private async copyBoardRefFor[\s\S]*?inlineRef\(docId, title\)/, "复制物 = 行内块引用 ((id \"标题\"))，粘贴即用");
+  assert.equal(/private async copyBoardRefFor[\s\S]*?embedRef\(/.test(INDEX), false, "默认复制物不再是 ![[id]]（Obsidian 语法，思源正文粘贴不转换）");
 });
 
 test("批4 体检：防重入 + 先刷库 + fileExists 逐个查；只报断链（未建档不是问题）", () => {

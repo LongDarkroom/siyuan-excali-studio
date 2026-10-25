@@ -128,20 +128,17 @@ test("StudioMenu：走包导出的 MainMenu，九个独立自绘项，各带图�
   assert.equal(MENU.includes("插入文档卡"), false, "「插入文档卡…」已删");
 });
 
-test("StudioMenu：保留的内置项与刻意不放的四项", () => {
+test("StudioMenu：保留的内置项与刻意不放的项（2026-10-25 大修再删 Socials/Help/ToggleTheme）", () => {
   for (const keep of [
     "LoadScene",
     "SearchMenu",
-    "Help",
     "ClearCanvas",
-    "Socials",
-    "ToggleTheme",
     "ChangeCanvasBackground",
   ]) {
     assert.ok(MENU.includes(`MainMenu.DefaultItems.${keep}`), `内置项没了：${keep}`);
   }
-  assert.match(MENU, /<MainMenu\.Group title=\{t\("Excalidraw 链接"\)\}>/, "分组标题自己给中文（vendor 的 DefaultMainMenu 硬编码英文）");
-  for (const drop of ["Export", "SaveAsImage", "SaveToActiveFile"]) {
+  // 社交组/上游帮助/主题切换退场的理由见 StudioMenu.tsx 头注释与 docs/大修调研报告-2026-10-25.md
+  for (const drop of ["Export", "SaveAsImage", "SaveToActiveFile", "Socials", "Help", "ToggleTheme"]) {
     assert.equal(MENU.includes(`MainMenu.DefaultItems.${drop}`), false, `${drop} 不该回来（见 StudioMenu.tsx 顶部注释）`);
   }
 });

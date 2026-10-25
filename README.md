@@ -21,13 +21,13 @@
 - 三个入口进白板：左侧 dock 白板库、顶栏图标、文档右键「最近打开」
 - 新建即命名：先弹命名框，空画布自动建档并打开，从第一帧起就归属文件
 - 自动保存：停笔约 1 秒防抖落盘，`⌘/Ctrl+S` 立即强存，关页签自动冲刷不丢改动
-- 保存位置可自定义（默认 `data/assets/`），页签图标实时显示白板缩略图
+- 保存位置可自定义（默认 `data/assets/excali/`），页签图标实时显示白板缩略图
 - 页签布局记忆，重启思源后恢复原样
 
 ### 画布与兼容
 
 - Excalidraw 0.18.1 原生页签集成，跟随思源明暗主题，中文手写字体回落链开箱可用
-- 17 款字体：中文小赖体、霞鹜文楷、得意黑 + 多款拉丁手写体
+- 16 款字体：中文小赖体、霞鹜文楷、得意黑 + 多款拉丁手写体
 - 导出 PNG / JPEG / WebP / SVG；SVG 内嵌场景，任何时候都能再次编辑
 - 直接打开 Obsidian Excalidraw 格式文件（1v1 / 1v2 payload，压缩与空场景容错）
 - 图片拖放入画布、剪贴板粘贴；文档里的白板嵌入图点击即开
@@ -48,7 +48,7 @@
 
 ### 进阶：脚本引擎
 
-- 脚本即文档：`data/assets/excali-scripts/*.md`，`ea` API v1（约 40 个方法）
+- 脚本即文档：`data/assets/excali-scripts/*.md`，`ea` API v1（55+ 方法）
 - 文件头 `@excalidraw-onload` 的脚本在画布就绪时自动运行
 
 ## 快速开始
@@ -66,7 +66,7 @@ node scripts/excali-board.mjs append --workspace <WS> --board 标题 --plan plan
 
 ## 数据与保存
 
-- **保存即文件**：每张白板是 `data/assets/` 下的一份 SVG 文件（内嵌场景），重命名、同步都走普通文件
+- **保存即文件**：每张白板是 `data/assets/excali/` 下的一份 SVG 文件（内嵌场景），重命名、同步都走普通文件
 - **一块板一个文件**：第五十四轮起不再写 `.bak` 备份档；落盘前有「正文逐字 + 载荷语义」两道等价门，
   打开没动、只是 vendor 归一化或换主题背景造成的差异不会重写文件。误删/写坏靠思源自身的
   数据历史兜底；老用户库里的存量 `.bak*` 仍被列表排除、被重命名/删除带走，解码失败页的
@@ -84,7 +84,7 @@ node scripts/excali-board.mjs append --workspace <WS> --board 标题 --plan plan
 | Xiaolai 小赖体 | 中文手写体 | SIL OFL 1.1 · [lxgw/kose-font](https://github.com/lxgw/kose-font) |
 | LXGW WenKai Lite 霞鹜文楷 | 中文正文 | SIL OFL 1.1 · [lxgw/LxgwWenKai](https://github.com/lxgw/LxgwWenKai) |
 | Smiley Sans 得意黑 | 中文展示体 | SIL OFL 1.1 · [atelier-anchor/smiley-sans](https://github.com/atelier-anchor/smiley-sans) |
-| Caveat / Yusei Magic / Zen Kurenaido | 拉丁手写装饰 | SIL OFL 1.1 |
+| Caveat / Yusei Magic / Zen Kurenaido / Patrick Hand | 拉丁手写装饰 | SIL OFL 1.1 |
 | Comic Shanns | 拉丁手写体 | Excalidraw 生态免费字体 |
 
 Canvas 内核为 [Excalidraw](https://github.com/excalidraw/excalidraw)（MIT），本插件含其定制构建产物 `engine.js`（含中文文案补丁与扩展字体注册）。

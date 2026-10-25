@@ -29,13 +29,15 @@ test("右键菜单与下拉菜单的 Apple 覆盖进了根产物", () => {
     ".exs-root .excalidraw .context-menu-item{",
     ".exs-root .excalidraw .context-menu-item.checkmark:before",
     ".exs-root .excalidraw .context-menu-item-separator",
-    ".exs-root .excalidraw .dropdown-menu .Island.dropdown-menu-container{",
+    ".exs-root .excalidraw .dropdown-menu .dropdown-menu-container{",
     ".exs-root .excalidraw .dropdown-menu .dropdown-menu-item--selected",
     ".exs-root .excalidraw .dropdown-menu-container>div:not([class]){",
-    "backdrop-filter:blur(20px) saturate(180%)",
+    // 2026-10-25 大修：菜单背景从毛玻璃（rgba + backdrop-filter）改实底，不再透出画布
+    "background:var(--exs-menu-solid)",
   ];
   const missing = spots.filter((s) => !BUILT.includes(s));
   assert.deepEqual(missing, [], "Apple 菜单覆盖没进根 index.css：跑 npm run build（含 copy-dist）");
+  assert.equal(/(?:context-menu|dropdown-menu)[^{}]{0,120}\{[^}]*backdrop-filter/.test(BUILT), false, "菜单不得再走 backdrop-filter 毛玻璃（实底口径）");
 });
 
 test("Tooltip 与焦点态覆盖存在且 Tooltip 是 body 级（vendor 会把它挂到 body）", () => {
@@ -57,7 +59,7 @@ test("覆盖规则仍排在 vendor CSS 之前（构建顺序没变，必须靠�
   assert.ok(vendorMark > 0, "根 index.css 里找不到 vendor 拼接标记：copy-dist 口径变了");
   for (const s of [
     ".exs-root .excalidraw .context-menu{",
-    ".exs-root .excalidraw .dropdown-menu .Island.dropdown-menu-container{",
+    ".exs-root .excalidraw .dropdown-menu .dropdown-menu-container{padding:8px",
     "body .excalidraw-tooltip{",
   ]) {
     const at = BUILT.indexOf(s);

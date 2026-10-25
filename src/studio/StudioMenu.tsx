@@ -11,12 +11,15 @@
  *    图标尺寸不用传 size——第四十三轮起 index.css 把 `.dropdown-menu-item svg` 统一抬到 18px
  *    （vendor 原本压 1rem，15px 字配 16px 图标偏小），LineIcon 的 stroke 随缩放变粗一档，正合适。
  *
- * 刻意不放的四项：
+ * 刻意不放的项：
  * - `DefaultItems.Export`：就是原来 ☰ 里那个「保存到 …」（Excalidraw 的 JSON 导出），
  *   以前只能靠捕获阶段劫持它的 DOM 改道；现在换成我们自己的「导出图片…」；
  * - `DefaultItems.SaveAsImage`：Excalidraw 自己的导出框，和我们的导出对话框重复；
  * - `DefaultItems.SaveToActiveFile`：predicate 要 `appState.fileHandle`，embed 方式下恒 null、永不渲染；
- * - 只读 / 禅模式：画布右键菜单里 vendor 固定给了这两项（连同网格、吸附、统计），不必占菜单位置。
+ * - 只读 / 禅模式：画布右键菜单里 vendor 固定给了这两项（连同网格、吸附、统计），不必占菜单位置；
+ * - 2026-10-25 大修再删三项：`Socials`（GitHub/X/Discord 社交组——自建白板不带官方推广）、
+ *   上游 `Help`（打开 excalidraw.com 文档，与自建「帮助」快捷键速查重复）、`ToggleTheme`
+ *   （手动切主题会与「画布跟随思源主题」机制脱钩，主题统一走思源）。
  *
  * 第二十一轮：文件先行 + 防抖自动保存上线后，「保存」「保存副本…」两项删除——
  * 画板从第一帧起就归属文件，停手约 1 秒自动落盘，⌘S 强制落盘，菜单里不再有保存心智。
@@ -113,14 +116,8 @@ export function StudioMenu(props: StudioMenuProps) {
         {t("帮助")}
       </MainMenu.Item>
       <MainMenu.DefaultItems.SearchMenu />
-      <MainMenu.DefaultItems.Help />
       <MainMenu.DefaultItems.ClearCanvas />
       <MainMenu.Separator />
-      <MainMenu.Group title={t("Excalidraw 链接")}>
-        <MainMenu.DefaultItems.Socials />
-      </MainMenu.Group>
-      <MainMenu.Separator />
-      <MainMenu.DefaultItems.ToggleTheme />
       <MainMenu.DefaultItems.ChangeCanvasBackground />
     </MainMenu>
   );

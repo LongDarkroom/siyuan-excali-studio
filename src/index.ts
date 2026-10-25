@@ -341,11 +341,13 @@ export default class ExcaliStudioPlugin extends Plugin {
     this.registerBlockIconMenu();
     this.registerEmbedClick();
     this.setupSetting();
-    // 2026-10-18 A：思源 3.7+ 的内置智能体能力（只读列表/打开 + 写画布）；老版本静默跳过
-    this.registerAgentCapabilities();
 
     // 批2/批3：文档树/页签菜单注入与自动开画板都读库缓存；先等设置/迁移就绪再挂事件与首刷。
     await this.ready;
+    // 2026-10-18 A：思源 3.7+ 的内置智能体能力（只读列表/打开 + 写画布）；老版本静默跳过。
+    // 2026-10-25 大修：挪到 await this.ready 之后——注册门要读用户设置里的通道开关，
+    // 放在读盘前执行读到的恒是默认值，「AI 通道」面板关掉内置智能体也不生效。
+    this.registerAgentCapabilities();
     this.registerBoardDocEvents();
     void this.refreshBoardLib();
     // S3：首次启用把内置脚本写进工作空间（已存在则跳过；异步不阻塞 onload）
@@ -894,6 +896,11 @@ export default class ExcaliStudioPlugin extends Plugin {
   /* -------------------- 2026-10-18 A：思源内置智能体能力 -------------------- */
 
   private async agentRun(fn: () => Promise<AgentResult>): Promise<AgentResult> {
+    // 2026-10-25 大修：调用侧复查通道。注册门只在启动时看一眼，用户事后关了通道
+    // （面板注明需重载），已注册的能力在重载前也不该继续干活。
+    if (!this.settings.aiChannels.agent) {
+      return { error: t("通道已关闭：内置智能体") };
+    }
     try {
       return await fn();
     } catch (e) {
@@ -2493,21 +2500,31 @@ export default class ExcaliStudioPlugin extends Plugin {
   }
 
   /**
-   * 批4A：☰「复制此白板的引用」= 嵌入引用 `![[docId]]`（内核不支持给块嵌入定制显示
-   * 文本，只有行内 `((docId "标题"))` 能带别名——demo 里的 `![[id "标题"]]` 是假口径）。
-   * docId 优先取页签数据（首存/收编写入），旧会话恢复的页签没存过 docId 时按 svg 反查库缓存。
+   * 批4A（2026-10-25 大修重做）：☰「复制此白板的引用」——保证有档，然后复制行内引用。
+   * 此前两个坑：①未建档只弹提示让用户自己去白板库右键「建档」，入口太深；
+   * ②复制物是 `![[docId]]`——Obsidian 语法，思源正文粘贴不转换，贴出来是一串字面文本。
+   * 现在：未建档先一键建档（adoptBoardFile 全套：建文档 + 插图片 + 绑属性），
+   * 复制 `((docId "标题"))` 行内块引用——思源原生形态（工作区实测），粘贴进正文即成可点反链。
    */
-  private copyBoardRefFor(custom: Custom): void {
+  private async copyBoardRefFor(custom: Custom): Promise<void> {
     const session = this.tabs.get(custom);
     if (!session) return;
     const path = session.data.dataPath;
-    const docId =
+    let docId: string | undefined =
       session.data.docId ?? (path ? this.boardDocs.find((d) => toDataPath(d.svg) === path)?.docId : undefined);
+    if (!docId && path) {
+      const item = this.boardFiles.find((f) => f.dataPath === path);
+      if (item) {
+        docId = (await this.adoptBoardFile(item)) ?? undefined; // 成功/失败提示由它出
+        if (!docId) return;
+      }
+    }
     if (!docId) {
-      showMessage(t("还没建档，复制不了引用：在白板行右键「建档」"), 7000);
+      showMessage(t("还没有关联文档，复制不了引用"), 7000);
       return;
     }
-    this.copyText(embedRef(docId), t("已复制嵌入引用"));
+    const title = this.boardDocs.find((d) => d.docId === docId)?.title || (path ? fileNameOf(path) : "");
+    this.copyText(inlineRef(docId, title), t("已复制行内引用：粘贴到思源正文即成块引用"));
   }
 
   /** 第十八轮：白板体检——先全量刷新库，再查一件事：文档绑的 svg 文件已不存在（断链）。

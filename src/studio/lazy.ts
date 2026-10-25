@@ -11,6 +11,6 @@
  * 别把小文件也拖进大 chunk。
  */
 
-export { attachStudioTab, STUDIO_TAB_TYPE, parseTabData, type StudioTabData, type StudioTabHost, type StudioTabSession } from "./tab";
+export { attachStudioTab, STUDIO_TAB_TYPE, type StudioTabData, type StudioTabHost, type StudioTabSession } from "./tab";
 export { decodeSvgScene, type LoadedScene, type SceneFilesHydrate } from "./scene";
 export { sceneToSvgText, type ExportScene, type SaveMedia } from "./svg";

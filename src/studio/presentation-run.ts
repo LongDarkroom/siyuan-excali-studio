@@ -146,7 +146,7 @@ export function planPage(all: readonly RunElement[], frameId: string, reveal = t
  *
  * @param plan    当前页计划（成员与分条）
  * @param step    游标步（-1 = 整页一起出）
- * @param original 进片场时定格���原始 opacity（恢复用）
+ * @param original 进片场时定格时的原始 opacity（恢复用）
  */
 export function buildRunPatches(
   all: readonly RunElement[],

@@ -51,7 +51,7 @@ export type PresentationSettings = {
   autoAdvance: number;
   /**
    * 第七十六轮：全屏放映（Advanced Canvas 的 fullscreenPresentationEnabled）。
-   * 进片场时请求全屏；失败（浏览器拒绝/思源宿主限制）自动退��窗口模式。
+   * 进片场时请求全屏；失败（浏览器拒绝/思源宿主限制）自动退回窗口模式。
    */
   fullscreen: boolean;
   /**
