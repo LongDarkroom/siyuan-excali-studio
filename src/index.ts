@@ -57,16 +57,11 @@ import { MEDIA_DIR, bytesToDataURL, mediaFileName, parseDataUrl } from "./studio
 import { readSiyuanAccent } from "./studio/theme";
 import {
   blockIdFromLink,
-  boardDocPath,
   boardDisplayName,
   boardPathFromLink,
   deletePlanOf,
   docIdFromLink,
-  embedRef,
-  inlineRef,
-  toBoardDocItem,
   toBoardFileItems,
-  type BoardDocItem,
   type BoardFileItem,
 } from "./studio/board-lib";
 import {
@@ -77,16 +72,7 @@ import {
 } from "./studio/migration";
 import {
   activeProtyle,
-  appendImageBlock,
-  createDocWithMd,
-  currentNotebook,
-  firstNotebook,
-  getBlockAttrs,
-  listBoardDocs,
   refreshAssetImages,
-  removeDoc,
-  rewriteAssetRefs,
-  setBlockAttrs,
   svgAssetPathOf,
   trackEditor,
   fetchBlockTitles,
@@ -148,9 +134,7 @@ export default class ExcaliStudioPlugin extends Plugin {
   private dockRefresh: (() => void) | null = null;
   /* 2026-10-16 S3：onload 脚本防重入（每个页签只跑一轮） */
   private onloadRan = new Set<Custom>();
-  /* 2026-10-16 第十七轮·批2：白板库缓存（dock 列表 + 菜单注入都读这份，同步可用） */
-  private boardDocs: BoardDocItem[] = [];
-  /** 2026-10-17 第十八轮：文件形态的库列表（dock 面板主体）；文档只作存档徽标 */
+  /** 2026-10-17 第十八轮：文件形态的库列表（dock 面板主体；白板 = 纯文件，无文档绑定） */
   private boardFiles: BoardFileItem[] = [];
   /** 第二十五轮：旧 assets → assets/excali 迁移是否已完成（data.json 的 dirMigrated；
    *  部分失败会留 false，下次启动按同一套候选补搬） */
@@ -160,15 +144,14 @@ export default class ExcaliStudioPlugin extends Plugin {
   /** 第二十五轮：启动闸门（读设置 + 迁移）。页签读盘/库刷新都等它，
    *  避免布局恢复在搬文件的中途读到旧路径 */
   private ready: Promise<void> = Promise.resolve();
-  /** docId → 绑定的 svg 引用；空串 = 确认不是白板文档（负缓存，switch-protyle 免重查） */
-  private boardSvgByDocId = new Map<string, string>();
   private libLoading = false;
-  /* 批3：自动开画板的每会话去重（同一文档一次会话只自动开一回，关页签不重置） */
-  private autoOpenedDocs = new Set<string>();
-  /* 批4B：体检防重入（刷新+逐个 getFile 是异步的，连点只跑一轮） */
-  private checkupRunning = false;
   /* 第二十六轮 T5：文档里点白板嵌入图 → 开画板页签（capture 监听句柄，卸载摘除） */
   private embedClickHandler: ((event: MouseEvent) => void) | null = null;
+  /* 2026-10-27 装饰跟手：每个活跃编辑器一个 MutationObserver（块增删 → 防抖重扫，
+   * 插入白板图装饰立刻出现、删除图片孤儿装饰立刻清掉）。按 wysiwyg 元素持有，
+   * 重扫时顺手断开已脱离文档的 observer，onunload 全量断开。 */
+  private boardObservers = new Map<Element, MutationObserver>();
+  private boardRescanTimer: ReturnType<typeof setTimeout> | null = null;
   /* 第二十六轮 T3：引擎懒加载——首次开画板页签才装载 engine.js，插件启动不再解析
    * 8MB 级 vendor。装载方式见 loadEngineModule（不能直接 require("./engine.js")，
    * 思源的插件 require 解析不了相对路径）。 */
@@ -330,7 +313,7 @@ export default class ExcaliStudioPlugin extends Plugin {
     });
 
     /* 2026-10-25 交互框（B1）：敲 / 选「插入白板…」→ 挑一张库内白板插进当前文档。
-       落地形态与建档插图同构：![](assets/excali/x.svg)——SVG 自带场景预览，
+       落地形态是思源原生图片嵌入：![](assets/excali/x.svg)——SVG 自带场景预览，
        所见即所得；悬停 ↗ / 图片右键可跳进画板（board-block-decorate）。
        注意 insert() 收 **HTML**（SiYuan insertHTML 零 markdown 转换）：
        markdown 必须先过 window.Lute.Md2BlockDOM，再 isBlock=true 按块插入。 */
@@ -354,6 +337,15 @@ export default class ExcaliStudioPlugin extends Plugin {
               // 的是失效选区 → 插入静默失败（此前「无反应」的真凶）。用 protyle 自己
               // 跟踪的 toolbar.range（斜杠文本删除后收在原位）按块插入。
               protyle.insert(dom, true, true);
+              // 2026-10-27：插入后立即装饰（挂 observer + 扫一轮），不等下一次
+              // switch-protyle/点击——新插入的白板图马上就有 ↗ 和徽标。
+              // 层级勘误同 resolveLute：斜杠回调的 Protyle 是包装类，IProtyle 在 .protyle 下。
+              const wysiwyg = (protyle as unknown as { protyle?: { wysiwyg?: { element?: Element } } })
+                .protyle?.wysiwyg?.element;
+              if (wysiwyg instanceof Element && wysiwyg.isConnected) {
+                this.observeBoardDom(wysiwyg);
+                this.decorateProtyle(wysiwyg);
+              }
               showMessage(t("已插入白板：{name}", { name: fileNameOf(ref) }), 3000);
             })
             .catch((e) => showMessage(t("插入失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }), 7000, "error"));
@@ -386,7 +378,6 @@ export default class ExcaliStudioPlugin extends Plugin {
     // 2026-10-25 大修：挪到 await this.ready 之后——注册门要读用户设置里的通道开关，
     // 放在读盘前执行读到的恒是默认值，「AI 通道」面板关掉内置智能体也不生效。
     this.registerAgentCapabilities();
-    this.registerBoardDocEvents();
     // 2026-10-25 交互框（B2）：文档内白板图片块的悬停 ↗ / 徽标 / 图片右键
     this.registerBoardDecorations();
     void this.refreshBoardLib();
@@ -424,6 +415,12 @@ export default class ExcaliStudioPlugin extends Plugin {
     if (this.embedClickHandler) {
       document.removeEventListener("click", this.embedClickHandler, true);
       this.embedClickHandler = null;
+    }
+    for (const observer of this.boardObservers.values()) observer.disconnect();
+    this.boardObservers.clear();
+    if (this.boardRescanTimer !== null) {
+      clearTimeout(this.boardRescanTimer);
+      this.boardRescanTimer = null;
     }
     if (open.length > 0) showMessage(t("插件已卸载，画板未保存的改动会丢失"), 3000);
   }
@@ -500,9 +497,9 @@ export default class ExcaliStudioPlugin extends Plugin {
 
   /**
    * 把旧 assets 根目录里的白板一次性搬进专属目录（assets/excali）。
-   * 候选只认 migration.ts 列的四条真源，且只搬 assets 直下的 .svg——
+   * 候选只认 migration.ts 列的三条真源，且只搬 assets 直下的 .svg——
    * 公共 assets 里还有 drawio/别的 excalidraw 导出，不能整目录卷走。
-   * 搬完更新 recent、文档绑定与开着的页签；中途失败不置 dirMigrated，
+   * 搬完更新 recent 与开着的页签；中途失败不置 dirMigrated，
    * 下次启动按同一套候选继续补搬（已搬走的不再是候选）。
    */
   private async migrateLegacyBoards(): Promise<void> {
@@ -521,19 +518,12 @@ export default class ExcaliStudioPlugin extends Plugin {
         .map((e) => e.path)
         .filter((p) => isAutoNamedBoard(fileNameOf(p)));
     } catch (e) {
-      console.warn("[excali-studio] 迁移：读取旧保存目录失败（按近期/绑定继续）", e);
-    }
-    let docRows: Array<{ id: string; svg: string }> = [];
-    try {
-      docRows = await listBoardDocs();
-    } catch (e) {
-      console.warn("[excali-studio] 迁移：查询白板文档失败（按近期/命名继续）", e);
+      console.warn("[excali-studio] 迁移：读取旧保存目录失败（按近期/命名继续）", e);
     }
 
     const candidates = migrationCandidates({
       recent: this.recent,
       registry: this.legacyBoards,
-      docSvgs: docRows.map((d) => d.svg),
       autoNamed,
     });
     const remap = new Map<string, string>();
@@ -542,12 +532,6 @@ export default class ExcaliStudioPlugin extends Plugin {
       try {
         const saved = await renameSvg(old, await uniqueTargetPath(DEDICATED_BOARD_DIR, fileNameOf(old)));
         remap.set(old, toDataPath(saved));
-        // 建档文档里的图片块盯着旧路径：文件搬了，正文引用一起改
-        try {
-          await rewriteAssetRefs(toAssetRef(old), toAssetRef(saved));
-        } catch (e) {
-          console.warn("[excali-studio] 迁移后更新正文资源引用失败", old, e);
-        }
       } catch (e) {
         console.warn("[excali-studio] 迁移白板失败", old, e);
         failed.push(old);
@@ -557,15 +541,6 @@ export default class ExcaliStudioPlugin extends Plugin {
 
     if (remap.size > 0) {
       this.recent = remapPaths(this.recent, remap);
-      for (const d of docRows) {
-        const next = remap.get(toDataPath(d.svg));
-        if (!next) continue;
-        try {
-          await setBlockAttrs(d.id, { "custom-excali-svg": toAssetRef(next) });
-        } catch (e) {
-          console.warn("[excali-studio] 迁移后更新文档绑定失败", d.id, e);
-        }
-      }
       for (const s of this.tabs.values()) {
         const next = remap.get(toDataPath(s.data.dataPath ?? ""));
         if (!next) continue;
@@ -1084,7 +1059,6 @@ export default class ExcaliStudioPlugin extends Plugin {
     }
 
     let target: { path: string; title: string };
-    let docId: string | undefined;
     let created = false;
     if (existing) {
       target = existing;
@@ -1095,12 +1069,11 @@ export default class ExcaliStudioPlugin extends Plugin {
         (typeof planTitle === "string" && planTitle.trim()) ||
         t("AI 白板");
       const made = await this.createBoardFile(name);
-      docId = made.docId;
       target = { path: made.path, title: fileNameOf(made.path).replace(/\.svg$/i, "") };
       created = true;
     }
 
-    await this.openStudioTab(target.path, docId);
+    await this.openStudioTab(target.path);
     const actions = await this.waitForAgentActions(target.path);
     const handle = actions?.getEaHandle();
     if (!actions || !handle) {
@@ -1200,19 +1173,17 @@ export default class ExcaliStudioPlugin extends Plugin {
     }
 
     let target: { path: string; title: string };
-    let docId: string | undefined;
     let created = false;
     if (existing) {
       target = existing;
     } else {
       const name = (typeof args.title === "string" && args.title.trim()) || t("AI 图片");
       const made = await this.createBoardFile(name);
-      docId = made.docId;
       target = { path: made.path, title: fileNameOf(made.path).replace(/\.svg$/i, "") };
       created = true;
     }
 
-    await this.openStudioTab(target.path, docId);
+    await this.openStudioTab(target.path);
     const actions = await this.waitForAgentActions(target.path);
     const handle = actions?.getEaHandle();
     if (!actions || !handle) {
@@ -1879,8 +1850,7 @@ export default class ExcaliStudioPlugin extends Plugin {
         return { files: plugin.boardFiles, opened };
       },
       refreshBoardLib: () => void plugin.refreshBoardLib(),
-      openBoardFile: (item) => void plugin.openStudioTab(item.dataPath, item.docId || undefined),
-      openDocOf: (docId) => plugin.openDocumentById(docId),
+      openBoardFile: (item) => void plugin.openStudioTab(item.dataPath),
       // 第二十二轮：行内悬停按钮与右键菜单共用同两条宿主链路（弹命名框 / 二次确认后删）
       renameBoardFile: (item) => void plugin.renameFromDock(item),
       deleteBoardFile: (item) => void plugin.deleteBoardFile(item),
@@ -1944,7 +1914,7 @@ export default class ExcaliStudioPlugin extends Plugin {
    * 新建（dataPath 为 null）不走去重，且要 openNewTab 绕开思源「data 深比命中
    * 就复用旧页签」的合并——它会把第二张新白板并进第一张。
    */
-  private async openStudioTab(dataPath: string | null, docId?: string): Promise<void> {
+  private async openStudioTab(dataPath: string | null): Promise<void> {
     const target = dataPath ? toDataPath(dataPath) : null;
     if (target) {
       const opened = [...this.tabs.values()].find((s) => s.data.dataPath === target);
@@ -1956,7 +1926,7 @@ export default class ExcaliStudioPlugin extends Plugin {
     // 移动端（iPad/手机）没有自定义页签：openTab 是空函数，继续走桌面链路
     // 就会出现「文件建好了、画板永远不出现」。改挂宿主自己的全屏浮层。
     if (isMobileFrontend()) {
-      this.openMobileStudio(target, docId);
+      this.openMobileStudio(target);
       return;
     }
     const before = new Set(this.tabs.values());
@@ -1967,7 +1937,7 @@ export default class ExcaliStudioPlugin extends Plugin {
         id: this.name + STUDIO_TAB_TYPE,
         icon: STUDIO_ICON_ID,
         title: target ? fileNameOf(target) : t("未命名白板"),
-        data: { dataPath: target, docId } satisfies StudioTabData,
+        data: { dataPath: target } satisfies StudioTabData,
       },
     });
     // openTab 的返回值在去重/新建两条路径上类型不一致，索性不依赖它：
@@ -1981,8 +1951,8 @@ export default class ExcaliStudioPlugin extends Plugin {
    * 引擎装载期间先放一个占位会话进 tabs，去重/关闭/卸载都能照常工作；
    * 装载完成后换成真会话，失败就地显示错误（不弹第二层窗）。
    */
-  private openMobileStudio(dataPath: string | null, docId?: string): void {
-    const data: StudioTabData = { dataPath, docId };
+  private openMobileStudio(dataPath: string | null): void {
+    const data: StudioTabData = { dataPath };
     const holder: { custom: Custom | null } = { custom: null };
     const shell = createMobileStudioShell({
       data,
@@ -2213,17 +2183,17 @@ export default class ExcaliStudioPlugin extends Plugin {
 
   /**
    * 悬停 ↗ 按钮 + Excali 徽标（board-block-decorate 注入）与图片右键菜单。
-   * 重扫时机 = switch-protyle / click-editorcontent（扫描幂等，去重靠注入标记）；
+   * 重扫时机 = switch-protyle / click-editorcontent + 每个活跃编辑器的
+   * MutationObserver（2026-10-27：块增删防抖重扫，装饰跟手——插入即现、
+   * 删图即清；扫描本身双向幂等，board-block-decorate 内加腿补缺、扫腿清孤儿）。
    * 编辑器 DOM 由思源拥有，注入器找不到锚点就静默跳过，绝不抛错。
    */
   private registerBoardDecorations(): void {
     const rescan = (protyle: { wysiwyg?: { element?: Element } } | undefined | null): void => {
       const el = protyle?.wysiwyg?.element;
       if (el instanceof Element && el.isConnected) {
-        decorateBoardBlocks(el, {
-          isBoardAsset: (ref) => this.boardAssetRefOf(ref) !== null,
-          openBoard: (ref) => this.openBoardAssetRef(ref),
-        });
+        this.observeBoardDom(el);
+        this.decorateProtyle(el);
       }
     };
     this.eventBus.on("switch-protyle", ({ detail }) => rescan(detail?.protyle));
@@ -2242,167 +2212,62 @@ export default class ExcaliStudioPlugin extends Plugin {
     });
   }
 
+  /** 对单个编辑器跑一轮装饰扫描（加腿 + 清扫腿） */
+  private decorateProtyle(el: Element): void {
+    decorateBoardBlocks(el, {
+      isBoardAsset: (ref) => this.boardAssetRefOf(ref) !== null,
+      openBoard: (ref) => this.openBoardAssetRef(ref),
+    });
+  }
+
+  /** 编辑器首次见到时挂 MutationObserver（子树增删 → 防抖重扫）；重复调用是 no-op */
+  private observeBoardDom(el: Element): void {
+    if (this.boardObservers.has(el)) return;
+    const observer = new MutationObserver(() => this.scheduleBoardRescan());
+    observer.observe(el, { childList: true, subtree: true });
+    this.boardObservers.set(el, observer);
+  }
+
+  /** 突发渲染合并成一次重扫（150ms 尾沿）；顺带断开已脱离文档的 observer 防泄漏 */
+  private scheduleBoardRescan(): void {
+    if (this.boardRescanTimer !== null) return;
+    this.boardRescanTimer = setTimeout(() => {
+      this.boardRescanTimer = null;
+      for (const [el, observer] of [...this.boardObservers]) {
+        if (!el.isConnected) {
+          observer.disconnect();
+          this.boardObservers.delete(el);
+          continue;
+        }
+        this.decorateProtyle(el);
+      }
+    }, 150);
+  }
+
   /**
-   * 第二十五轮：重跑 SQL + readDir 刷新白板库缓存。
-   * 列表的**唯一真源**是保存目录（默认 assets/excali）里的 .svg——目录本身就是
-   * 白板库，登记表退役；SQL 结果只用来给文件配存档文档（徽标 + 右键动作 +
-   * 菜单注入反查）。第二十四轮的分段容错保留：SQL 挂只丢徽标层，
-   * readDir 挂按原承诺保留上一次列表，两条互不牵连。
+   * 第二十五轮：readDir 刷新白板库缓存。列表的唯一真源是保存目录（默认 assets/excali）
+   * 里的 .svg——目录本身就是白板库。读挂了按原承诺保留上一次列表。
+   * （2026-10-27：建档/文档绑定移除，原 SQL 绑定层随之退役。）
    */
   private async refreshBoardLib(): Promise<void> {
     if (this.libLoading) return;
     this.libLoading = true;
-    let docs: BoardDocItem[] = [];
     try {
       await this.ready;
-      try {
-        docs = (await listBoardDocs()).map(toBoardDocItem);
-        this.boardDocs = docs;
-        this.boardSvgByDocId = new Map(docs.map((d) => [d.docId, d.svg]));
-      } catch (e) {
-        // 查询挂了不空手而归：沿用上一次缓存的绑定，徽标不至于整批闪失
-        docs = this.boardDocs;
-        console.warn("[excali-studio] 白板文档查询失败（沿用上次绑定）", e);
-      }
       let entries: BoardFileEntry[] | null = null;
       try {
         entries = await listBoardEntries(this.settings.saveDir);
       } catch (e) {
         console.warn("[excali-studio] 白板库读保存目录失败", e);
       }
-      if (entries) this.boardFiles = toBoardFileItems(entries, docs);
+      if (entries) this.boardFiles = toBoardFileItems(entries);
     } finally {
       this.libLoading = false;
     }
     this.dockRefresh?.();
   }
 
-  /**
-   * 新建文档（建档）直接记账进缓存：内核 SQL 索引有延迟，建完立刻反查会闪出又消失；
-   * ⟳ 与下次保存自然全量同步。文件列表同步补上「已建档」徽标。
-   */
-  private rememberBoardDoc(docId: string, title: string, svgRef: string): void {
-    this.boardSvgByDocId.set(docId, svgRef);
-    const item: BoardDocItem = {
-      docId,
-      title: title || t("无标题"),
-      hpath: "",
-      svg: svgRef,
-      updated: Date.now(),
-      refs: 0,
-    };
-    this.boardDocs = [item, ...this.boardDocs.filter((d) => d.docId !== docId)];
-    const dataPath = toDataPath(svgRef);
-    this.boardFiles = this.boardFiles.map((f) =>
-      f.dataPath === dataPath ? { ...f, docId, docTitle: title || t("无标题") } : f,
-    );
-  }
-
-  /** 第十八轮：白板行右键「建档」——建文档 + 插图片块 + 绑属性（纯文件 → 存档文档）。
-   *  不开画板页签（用户在看库，不一定想开）；已开着的页签补上 docId 供复制引用。
-   *  第二十一轮：返回值给新建链路用（autoCreateDoc 开着时创建即建档，docId 随页签 data
-   *  落库，重启恢复后复制引用照样有）。失败/已建档/无笔记本都返回 null。 */
-  private async adoptBoardFile(item: BoardFileItem): Promise<string | null> {
-    if (item.docId) return null;
-    const notebook = (await currentNotebook()) ?? (await firstNotebook());
-    if (!notebook) {
-      showMessage(t("找不到笔记本，无法建档"), 7000, "error");
-      return null;
-    }
-    const title = item.name.replace(/\.svg$/i, "") || item.name;
-    try {
-      const docId = await createDocWithMd(notebook, boardDocPath(this.settings.boardDir, title), "");
-      const ref = toAssetRef(item.dataPath);
-      await appendImageBlock(docId, ref, title);
-      await setBlockAttrs(docId, { "custom-excali-svg": ref });
-      this.rememberBoardDoc(docId, title, ref);
-      const opened = [...this.tabs.values()].find((s) => s.data.dataPath === item.dataPath);
-      if (opened && !opened.data.docId) opened.data.docId = docId;
-      showMessage(t("已建档《{title}》", { title }), 5000);
-      this.dockRefresh?.();
-      return docId;
-    } catch (e) {
-      showMessage(t("建档失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }), 10000, "error");
-      return null;
-    }
-  }
-
-  /**
-   * 批3：切到白板文档自动开对应画板页签。三条守卫：
-   * ①设置总开关；②每会话每文档只自动开一次（先占位——查失败/非白板也不再重来）；
-   * ③openStudioTab 自身去重，已开只聚焦，绝不出现双页签。
-   */
-  private async autoOpenBoardForDoc(rootID: string): Promise<void> {
-    if (!this.settings.autoOpenBoard) return;
-    if (this.autoOpenedDocs.has(rootID)) return;
-    this.autoOpenedDocs.add(rootID);
-    let svg = this.boardSvgByDocId.get(rootID);
-    if (svg === undefined) {
-      try {
-        svg = (await getBlockAttrs(rootID))["custom-excali-svg"] || "";
-      } catch {
-        svg = "";
-      }
-      this.boardSvgByDocId.set(rootID, svg);
-    }
-    if (!svg) return;
-    await this.openStudioTab(svg, rootID);
-  }
-
-  /** 批2/批3：白板库事件接线（在 loadState 之后调用，设置要读得到） */
-  private registerBoardDocEvents(): void {
-    this.eventBus.on("switch-protyle", ({ detail }) => {
-      const rootID = detail?.protyle?.block?.rootID;
-      if (typeof rootID === "string" && rootID !== "") void this.autoOpenBoardForDoc(rootID);
-    });
-
-    // 文档树右键：菜单项必须同步建，只查缓存。判型走元素属性
-    // data-type==="navigation-file"（实测值，不是 doc）+ data-node-id；
-    // detail.type 在多选/空白场景不可靠（re-todo B94 的教训）。
-    this.eventBus.on("open-menu-doctree", ({ detail }) => {
-      const el = detail.elements?.[0];
-      if (!el || el.getAttribute("data-type") !== "navigation-file") return;
-      const docId = el.getAttribute("data-node-id") || "";
-      const svg = docId ? this.boardSvgByDocId.get(docId) : undefined;
-      if (!svg) return;
-      detail.menu.addItem({
-        icon: STUDIO_ICON_ID,
-        label: t("在画板中打开"),
-        click: () => void this.openStudioTab(svg, docId),
-      });
-    });
-
-    // 文件页签右键：open-menu-filetab 不在 siyuan.d.ts 的映射里，照 reword 先例
-    // 强转挂上；整体 try/catch——detail 形态变了不能连带崩别的订阅者。
-    (this.eventBus as unknown as { on: (name: string, cb: (e: unknown) => void) => void }).on(
-      "open-menu-filetab",
-      (event) => {
-        try {
-          const detail = (
-            event as {
-              detail?: {
-                menu?: subMenu;
-                protyle?: { protyle?: { block?: { rootID?: string } }; block?: { rootID?: string } };
-              };
-            }
-          ).detail;
-          const rootID = detail?.protyle?.protyle?.block?.rootID || detail?.protyle?.block?.rootID || "";
-          if (!rootID) return;
-          const svg = this.boardSvgByDocId.get(rootID);
-          if (!svg) return;
-          detail?.menu?.addItem({
-            icon: STUDIO_ICON_ID,
-            label: t("在画板中打开"),
-            click: () => void this.openStudioTab(svg, rootID),
-          });
-        } catch (e) {
-          console.warn("[excali-studio] 文件页签菜单注入失败", e);
-        }
-      },
-    );
-  }
-
-  /* ---------------- 批4：复制白板引用 + 体检 ---------------- */
+  /* ---------------- 批4：复制白板引用 ---------------- */
 
   /** 复制文本 → 成功提示。navigator.clipboard 在 http/无权限环境会 reject 或干脆没有，
    *  照 reword 先例回落 execCommand("copy") */
@@ -2437,37 +2302,33 @@ export default class ExcaliStudioPlugin extends Plugin {
   }
 
   /**
-   * 2026-10-17 第十八轮：白板行右键菜单（建档 / 打开文档 / 复制引用 / 重命名 / 删除）。
+   * 2026-10-17 第十八轮：白板行右键菜单（打开 / 插入 / 复制引用 / 重命名 / 删除）。
    * 菜单建在宿主——ExcaliDock 面板零 siyuan import（board-lib 测试断言）。
+   * 2026-10-27：建档移除，「复制图片引用」= 复制思源原生图片嵌入 markdown，
+   * 粘贴进正文即插入白板（白板 = 图片资源口径）。
    */
   private openFileMenu(item: BoardFileItem, x: number, y: number): void {
     const menu = new Menu("excali-file-menu");
     menu.addItem({ icon: "iconEdit", label: t("在画板中打开"), click: () => void this.openBoardFile(item) });
     menu.addItem({ icon: "iconRight", label: t("插入到当前画布"), click: () => this.insertBoardCardToActive(item) });
-    if (item.docId) {
-      menu.addItem({ icon: "iconFile", label: t("打开存档文档"), click: () => this.openDocOf(item.docId) });
-      menu.addItem({
-        icon: "iconCopy",
-        label: t("复制嵌入引用"),
-        click: () => this.copyText(embedRef(item.docId), t("已复制嵌入引用")),
-      });
-      menu.addItem({
-        icon: "iconCopy",
-        label: t("复制行内引用"),
-        click: () => this.copyText(inlineRef(item.docId, item.docTitle), t("已复制行内引用")),
-      });
-    } else {
-      menu.addItem({ icon: "iconAdd", label: t("建档"), click: () => void this.adoptBoardFile(item) });
-    }
+    menu.addItem({
+      icon: "iconCopy",
+      label: t("复制图片引用"),
+      click: () =>
+        this.copyText(
+          `![${boardDisplayName(item)}](${toAssetRef(item.dataPath)})`,
+          t("已复制图片引用：粘贴到思源正文即插入白板"),
+        ),
+    });
     menu.addItem({ icon: "iconRename", label: t("重命名"), click: () => void this.renameFromDock(item) });
     menu.addSeparator();
     menu.addItem({ icon: "iconTrash", label: t("删除…"), click: () => void this.deleteBoardFile(item) });
     menu.open({ x, y });
   }
 
-  /** 行右键「在画板中打开」：未建档的板也照开（docId 空 = 没有存档文档可绑） */
+  /** 行右键「在画板中打开」 */
   private openBoardFile(item: BoardFileItem): Promise<void> {
-    return this.openStudioTab(item.dataPath, item.docId || undefined);
+    return this.openStudioTab(item.dataPath);
   }
 
   /**
@@ -2511,19 +2372,17 @@ export default class ExcaliStudioPlugin extends Plugin {
   }
 
   /**
-   * 第十八轮：删除一块白板 = 工程文件 + 覆盖备份（如有）+ 存档文档（如有）。
+   * 第十八轮：删除一块白板 = 工程文件 + 覆盖备份（如有）。
    * 顺序有讲究：先关页签再删文件——关页签的 dispose 会冲刷落盘，
    * 落了再删会被写回；skipDisposeFlush 让这次关闭不冲刷（文件紧接着就没）。
    * 思源删除没有回收站，确认框在宿主侧列清删什么（deletePlanOf 纯函数）。
    */
   private async deleteBoardFile(item: BoardFileItem): Promise<void> {
     const plan = deletePlanOf(item);
-    const docNote = plan.doc ? `，以及存档文档《${plan.doc.title}》` : "";
     confirm(
       t("删除白板"),
-      t("将删除白板文件 {name} 及其备份（如存在）{doc}。删除不可恢复；白板开着时，画布上未保存的改动也会一并丢弃。", {
+      t("将删除白板文件 {name} 及其备份（如存在）。删除不可恢复；白板开着时，画布上未保存的改动也会一并丢弃。", {
         name: item.name,
-        doc: docNote,
       }),
       () => {
         void (async () => {
@@ -2533,8 +2392,7 @@ export default class ExcaliStudioPlugin extends Plugin {
             }
             await removeSvg(plan.svgPath);
             // 备份链第五十四轮退役，但老用户库里还有存量档：删除逐档走——档数不固定
-            // （从没覆盖过就一档都没有），每档都可能不存在，所以逐档 try/catch、
-            // 失败不挡后面的档和删文档
+            // （从没覆盖过就一档都没有），每档都可能不存在，所以逐档 try/catch
             for (const bak of plan.bakPaths) {
               try {
                 await removeSvg(bak);
@@ -2542,16 +2400,7 @@ export default class ExcaliStudioPlugin extends Plugin {
                 // 这一档不存在，忽略
               }
             }
-            if (plan.doc) {
-              try {
-                await removeDoc(plan.doc.id);
-              } catch (e) {
-                console.warn("[excali-studio] 删除存档文档失败（文件已删）", plan.doc.id, e);
-              }
-            }
             this.boardFiles = this.boardFiles.filter((f) => f.dataPath !== item.dataPath);
-            this.boardDocs = this.boardDocs.filter((d) => d.docId !== plan.doc?.id);
-            if (plan.doc) this.boardSvgByDocId.delete(plan.doc.id);
             this.recent = this.recent.filter((p) => p !== item.dataPath);
             this.persist();
             this.dockRefresh?.();
@@ -2584,7 +2433,7 @@ export default class ExcaliStudioPlugin extends Plugin {
     void this.deleteBoardFile(item);
   }
 
-  /** 行右键「重命名」：问个新名字 → renameBoard（文件读旧写新删旧 + 绑定同步）→ 开着的页签跟位 */
+  /** 行右键「重命名」：问个新名字 → renameBoard（文件读旧写新删旧）→ 开着的页签跟位 */
   private async renameFromDock(item: BoardFileItem): Promise<void> {
     const newName = await this.promptFileName(item.name, t("重命名白板"));
     if (!newName) return;
@@ -2608,69 +2457,20 @@ export default class ExcaliStudioPlugin extends Plugin {
   }
 
   /**
-   * 批4A（2026-10-25 大修重做）：☰「复制此白板的引用」——保证有档，然后复制行内引用。
-   * 此前两个坑：①未建档只弹提示让用户自己去白板库右键「建档」，入口太深；
-   * ②复制物是 `![[docId]]`——Obsidian 语法，思源正文粘贴不转换，贴出来是一串字面文本。
-   * 现在：未建档先一键建档（adoptBoardFile 全套：建文档 + 插图片 + 绑属性），
-   * 复制 `((docId "标题"))` 行内块引用——思源原生形态（工作区实测），粘贴进正文即成可点反链。
+   * ☰「复制此白板的引用」→ 复制图片嵌入引用 ![标题](assets/excali/x.svg)。
+   * 思源原生图片语法，粘贴进正文即插入白板（SVG 自带场景预览，点开即回画板）。
+   * 2026-10-27：建档（白板↔文档绑定）移除——引用不再经过文档 id，白板 = 图片资源。
    */
-  private async copyBoardRefFor(custom: Custom): Promise<void> {
+  private copyBoardRefFor(custom: Custom): void {
     const session = this.tabs.get(custom);
     if (!session) return;
     const path = session.data.dataPath;
-    let docId: string | undefined =
-      session.data.docId ?? (path ? this.boardDocs.find((d) => toDataPath(d.svg) === path)?.docId : undefined);
-    if (!docId && path) {
-      const item = this.boardFiles.find((f) => f.dataPath === path);
-      if (item) {
-        docId = (await this.adoptBoardFile(item)) ?? undefined; // 成功/失败提示由它出
-        if (!docId) return;
-      }
-    }
-    if (!docId) {
-      showMessage(t("还没有关联文档，复制不了引用"), 7000);
+    if (!path) {
+      showMessage(t("白板还没保存，保存后才能复制引用"), 7000);
       return;
     }
-    const title = this.boardDocs.find((d) => d.docId === docId)?.title || (path ? fileNameOf(path) : "");
-    this.copyText(inlineRef(docId, title), t("已复制行内引用：粘贴到思源正文即成块引用"));
-  }
-
-  /** 第十八轮：白板体检——先全量刷新库，再查一件事：文档绑的 svg 文件已不存在（断链）。
-   *  文件即白板，没有「孤儿 SVG」一说了（未建档是正常状态，不是问题）。 */
-  private async runCheckup(): Promise<void> {
-    if (this.checkupRunning) return;
-    this.checkupRunning = true;
-    try {
-      await this.refreshBoardLib();
-      const missing: BoardDocItem[] = [];
-      for (const d of this.boardDocs) {
-        if (!(await fileExists(toDataPath(d.svg)))) missing.push(d);
-      }
-      if (missing.length === 0) {
-        showMessage(t("体检完成：没有断链的白板文档"), 5000);
-        return;
-      }
-      const rows = (items: Array<{ name: string; sub: string; tip: string }>): string =>
-        items.length === 0
-          ? `<p class="exs-check__none">${t("没有")}</p>`
-          : items
-              .map(
-                (r) =>
-                  `<div class="exs-check__row" title="${escapeAttr(r.tip)}"><span class="exs-check__name">${escapeHtml(r.name)}</span><code class="exs-check__path">${escapeHtml(r.sub)}</code></div>`,
-              )
-              .join("");
-      new Dialog({
-        title: t("白板体检"),
-        width: "560px",
-        content: `<div class="exs-check">
-          <div class="exs-check__group">${t("断链文档：{n}", { n: missing.length })}</div>
-          ${rows(missing.map((d) => ({ name: d.title, sub: fileNameOf(d.svg), tip: toDataPath(d.svg) })))}
-          <p class="exs-check__hint">${t("断链文档需手动重新保存或删除；未建档的白板文件是正常状态，不用处理")}</p>
-        </div>`,
-      });
-    } finally {
-      this.checkupRunning = false;
-    }
+    const title = fileNameOf(path).replace(/\.svg$/i, "");
+    this.copyText(`![${title}](${toAssetRef(path)})`, t("已复制图片引用：粘贴到思源正文即插入白板"));
   }
 
   private promptOpenPath(): void {
@@ -2721,8 +2521,8 @@ export default class ExcaliStudioPlugin extends Plugin {
     const name = await this.promptFileName(t("未命名白板"), t("新建白板"));
     if (!name) return;
     try {
-      const { path, docId } = await this.createBoardFile(name);
-      await this.openStudioTab(path, docId);
+      const { path } = await this.createBoardFile(name);
+      await this.openStudioTab(path);
     } catch (e) {
       showMessage(t("创建白板失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }), 7000, "error");
     }
@@ -2737,20 +2537,9 @@ export default class ExcaliStudioPlugin extends Plugin {
    * sanitize + 避重（撞名滚 `_0`/`_1`，不静默覆盖别人的板）→ 落一份**空 scene**的
    * SVG（elements 显式空数组，解码侧第二十一轮起按合法空画板解）→ 即时进库缓存 +
    * 最近列表（保存 → 库中立即可见 → 点条目再次进入的闭环，创建即成立）。
-   * autoCreateDoc 开着时顺带建一篇存档文档（建档语义从「首次保存时」变为「新建时」）。
    */
-  private async createBoardFile(name: string): Promise<{ path: string; docId?: string }> {
+  private async createBoardFile(name: string): Promise<{ path: string }> {
     const target = await uniqueTargetPath(this.settings.saveDir, sanitizeFileName(name, t("未命名白板")));
-    const docId = this.settings.autoCreateDoc
-      ? await this.adoptBoardFile({
-          dataPath: target,
-          name: fileNameOf(target),
-          docId: "",
-          docTitle: "",
-          updated: Date.now(),
-        })
-      : null;
-    // 建档只插文档块、不落 SVG——文件在它之后写（建档失败也不该挡住创建）
     const { sceneToSvgText } = await this.lazyMod();
     await putSvg(
       target,
@@ -2758,14 +2547,14 @@ export default class ExcaliStudioPlugin extends Plugin {
     );
     refreshAssetImages(target);
     this.rememberRecent(target);
-    this.rememberBoardFile(target, docId ?? undefined, fileNameOf(target).replace(/\.svg$/i, ""));
+    this.rememberBoardFile(target);
     void this.refreshBoardLib();
-    return { path: target, docId: docId ?? undefined };
+    return { path: target };
   }
 
   /**
    * 第二十一轮：覆盖保存——画板侧防抖自动保存 / ⌘S / ea 脚本的唯一落盘通道。
-   * 只覆盖已有文件：新建走 createBoardFile（空 scene + 可选建档在那条链路）。
+   * 只覆盖已有文件：新建走 createBoardFile（空 scene 在那条链路）。
    * 第五十四轮：备份链退役——白板库一个目录里每块板只留一个文件，写坏的兜底
    * 交给思源自己的历史/数据快照。落盘前两道等价判定（正文逐字、载荷语义），
    * 归一化带来的字节差不再刷 mtime、不再惊动同步。
@@ -2789,16 +2578,14 @@ export default class ExcaliStudioPlugin extends Plugin {
     return { path: saved };
   }
 
-  /** 第二十轮：保存落盘后把新文件补进库缓存（已存在则不动；docId/标题来自可选的建档分支） */
-  private rememberBoardFile(dataPath: string, docId?: string, docTitle?: string): void {
+  /** 第二十轮：保存落盘后把新文件补进库缓存（已存在则不动） */
+  private rememberBoardFile(dataPath: string): void {
     const normalized = toDataPath(dataPath);
     if (this.boardFiles.some((f) => f.dataPath === normalized)) return;
     this.boardFiles = [
       {
         dataPath: normalized,
         name: fileNameOf(normalized),
-        docId: docId ?? "",
-        docTitle: docTitle ?? "",
         updated: Date.now(),
       },
       ...this.boardFiles,
@@ -2813,29 +2600,6 @@ export default class ExcaliStudioPlugin extends Plugin {
     const target = await uniqueTargetPath(this.settings.saveDir, sanitizeFileName(newName), oldData);
     if (toDataPath(target) === oldData) return oldData; // 名字没变，什么都不做
     const saved = await renameSvg(oldData, target);
-    // 第二十五轮：建档文档里的图片块还盯着旧路径，改名后正文引用一起改
-    try {
-      await rewriteAssetRefs(toAssetRef(oldData), toAssetRef(saved));
-    } catch (e) {
-      console.warn("[excali-studio] 重命名后更新正文资源引用失败", e);
-    }
-    // 第十七轮·批2：改了名要把绑定旧文件的文档属性一起搬走，否则列表/自动开板
-    // 还指向已经不存在的 svg。失败只留日志（文件已经改名成功，不能回滚）。
-    const bound = this.boardDocs.filter((d) => toDataPath(d.svg) === oldData);
-    if (bound.length > 0) {
-      const ref = toAssetRef(saved);
-      for (const d of bound) {
-        try {
-          await setBlockAttrs(d.docId, { "custom-excali-svg": ref });
-        } catch (e) {
-          console.warn("[excali-studio] 重命名后同步白板绑定失败", d.docId, e);
-        }
-      }
-      this.boardDocs = this.boardDocs.map((d) =>
-        bound.some((b) => b.docId === d.docId) ? { ...d, svg: toAssetRef(saved) } : d,
-      );
-      this.boardSvgByDocId = new Map(this.boardDocs.map((d) => [d.docId, d.svg]));
-    }
     void this.refreshBoardLib();
     // 最近列表：新路径置顶、旧路径移除（会话表里的 data.dataPath 由页签侧 wrapper 更新）
     this.recent = [saved, ...this.recent.filter((p) => p !== oldData && p !== saved)];
@@ -3049,9 +2813,6 @@ export default class ExcaliStudioPlugin extends Plugin {
     let accentEl: HTMLInputElement | null = null;
     let welcomeEl: HTMLInputElement | null = null;
     let gridEl: HTMLInputElement | null = null;
-    let boardDirEl: HTMLInputElement | null = null;
-    let autoOpenEl: HTMLInputElement | null = null;
-    let autoCreateDocEl: HTMLInputElement | null = null;
     let imageBaseUrlEl: HTMLInputElement | null = null;
     let imageModelEl: HTMLInputElement | null = null;
     let imageApiKeyEl: HTMLInputElement | null = null;
@@ -3066,9 +2827,6 @@ export default class ExcaliStudioPlugin extends Plugin {
           accentStroke: accentEl?.checked ?? this.settings.accentStroke,
           showWelcome: welcomeEl?.checked ?? this.settings.showWelcome,
           gridModeEnabled: gridEl?.checked ?? this.settings.gridModeEnabled,
-          boardDir: boardDirEl?.value ?? this.settings.boardDir,
-          autoOpenBoard: autoOpenEl?.checked ?? this.settings.autoOpenBoard,
-          autoCreateDoc: autoCreateDocEl?.checked ?? this.settings.autoCreateDoc,
           imageBaseUrl: imageBaseUrlEl?.value ?? this.settings.imageBaseUrl,
           imageModel: imageModelEl?.value ?? this.settings.imageModel,
           imageApiKey: imageApiKeyEl?.value ?? this.settings.imageApiKey,
@@ -3234,76 +2992,9 @@ export default class ExcaliStudioPlugin extends Plugin {
       },
     });
 
-    /* 2026-10-16 第十七轮·批1/批3：白板即文档的落点与自动开板 */
-    this.setting.addItem({
-      title: t("白板文档目录"),
-      description: t("白板建档的落点（当前笔记本内的路径，默认 /Excali 白板）。只影响「建档」动作，SVG 工程文件不受它影响，仍存上面的保存目录。"),
-      createActionElement: () => {
-        const el = document.createElement("input");
-        el.type = "text";
-        el.className = "b3-text-field fn__block";
-        el.value = this.settings.boardDir;
-        el.placeholder = DEFAULT_SETTINGS.boardDir;
-        el.addEventListener("change", () => {
-          this.settings = { ...this.settings, boardDir: el.value };
-          this.persist();
-        });
-        boardDirEl = el;
-        return el;
-      },
-    });
-
-    /* 2026-10-17 第十八轮 → 第二十一轮：建档从「首存必建」改成可选开关（默认关）；
-       语义随文件先行改为「新建时建档」 */
-    this.setting.addItem({
-      title: t("新建时自动建档"),
-      description: t(
-        "关：新建只落 SVG 工程文件，白板库按文件列，文档树保持干净。开：新建白板时顺带建一篇文档绑定（可反链、可搜索、可文档树管理）。关着也能补建——Dock 白板行右键「建档」。",
-      ),
-      createActionElement: () => {
-        const el = document.createElement("input");
-        el.type = "checkbox";
-        el.className = "b3-switch fn__flex-center";
-        el.checked = this.settings.autoCreateDoc;
-        el.addEventListener("change", () => {
-          this.settings = { ...this.settings, autoCreateDoc: el.checked };
-          this.persist();
-        });
-        autoCreateDocEl = el;
-        return el;
-      },
-    });
-
-    this.setting.addItem({
-      title: t("打开白板文档时自动进入画板"),
-      description: t("切到绑定了白板的文档会自动打开对应画板页签；每篇文档每次会话只自动开一次，已开着则直接聚焦。"),
-      createActionElement: () => {
-        const el = document.createElement("input");
-        el.type = "checkbox";
-        el.className = "b3-switch fn__flex-center";
-        el.checked = this.settings.autoOpenBoard;
-        el.addEventListener("change", () => {
-          this.settings = { ...this.settings, autoOpenBoard: el.checked };
-          this.persist();
-        });
-        autoOpenEl = el;
-        return el;
-      },
-    });
-
-    /* 批4B：体检 = 只读检查（刷新库 + 逐文档查 svg 存在性），不修任何东西 */
-    this.setting.addItem({
-      title: t("白板体检"),
-      description: t("检查存档文档绑定的工程文件是否还存在（断链）。白板文件本身即白板，未建档是正常状态，不用处理。"),
-      createActionElement: () => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "b3-button b3-button--outline fn__flex-center";
-        btn.textContent = t("开始体检");
-        btn.addEventListener("click", () => void this.runCheckup());
-        return btn;
-      },
-    });
+    /* 2026-10-27：建档（白板↔文档绑定）功能整体移除——原「白板文档目录 /
+       新建时自动建档 / 打开白板文档时自动进入画板 / 白板体检」四个设置项随之退役，
+       白板回归纯文件（保存目录里的 .svg），文档树零痕迹。 */
   }
 
   private async loadState(): Promise<void> {

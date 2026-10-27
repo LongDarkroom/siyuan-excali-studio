@@ -10,11 +10,12 @@
  *   ③ 搜索框按用户拍板整个删除（kmind-zen 也没有）：查询词状态与 board-lib 里的
  *      内存过滤函数一并退役，库里找人靠滚动或思源全局搜索。
  * 行内保留两个悬停动作（重命名 / 删除…）——复用右键菜单同一条宿主链路，
- * 只是入口从「右键」多一个按钮；右键菜单本身不动（建档/开文档/复制引用还在）。
+ * 只是入口从「右键」多一个按钮；右键菜单本身不动（打开/插入/复制引用/重命名/删除）。
+ * 2026-10-27：建档（白板↔文档绑定）移除——「已建档」徽标与双击开存档文档一并退役。
  *
  * 通信：本文件只认 DockHost 窄接口（宿主 index.ts 实现），不直接碰页签/画布。
  * 面板零 siyuan import（board-lib 测试断言）——右键菜单、删除确认都在宿主建。
- * 刷新只由结构事件触发（开/关页签、保存、删除、重命名、建档、⟳）：没有每帧路径。
+ * 刷新只由结构事件触发（开/关页签、保存、删除、重命名、⟳）：没有每帧路径。
  */
 
 import { t } from "../i18n";
@@ -39,13 +40,11 @@ export type DockHost = {
   refreshBoardLib: () => void;
   /** 单击列表项：开画板页签（已开则聚焦，宿主去重） */
   openBoardFile: (item: BoardFileItem) => void;
-  /** 双击列表项：开绑定文档本体（未建档时无动作） */
-  openDocOf: (docId: string) => void;
   /** 第二十二轮：行内「重命名」按钮——与右键菜单同一条宿主链路（弹命名框） */
   renameBoardFile: (item: BoardFileItem) => void;
   /** 第二十二轮：行内「删除…」按钮——与右键菜单同一条宿主链路（二次确认后删） */
   deleteBoardFile: (item: BoardFileItem) => void;
-  /** 行右键：宿主用 siyuan Menu 弹「建档 / 打开文档 / 复制引用 / 重命名 / 删除」。
+  /** 行右键：宿主用 siyuan Menu 弹「打开 / 插入 / 复制引用 / 重命名 / 删除」。
    *  面板零 siyuan import（board-lib 测试断言），菜单只能在宿主建 */
   openFileMenu: (item: BoardFileItem, x: number, y: number) => void;
   /** 当前有没有打开着的白板——头部删除按钮的置灰态；只随结构事件（开关页签）变 */
@@ -99,13 +98,10 @@ export function createDockPanel(host: DockHost): { element: HTMLElement; refresh
     libListEl.innerHTML = view.files
       .map((f) => {
         const open = view.opened.has(f.dataPath);
-        const bound = f.docId !== "";
         // meta 只放修改时间：单行排版里「时间 · 文件名」会把名字挤没（实测名字被压到
         // 一个字），文件名在行 tooltip（完整 /data 路径）与重命名框里都拿得到
         const meta = boardTimeText(f.updated);
-        const badges =
-          (open ? `<span class="exs-lib__badge">${t("已打开")}</span>` : "") +
-          (bound ? `<span class="exs-lib__badge exs-lib__badge--doc">${t("已建档")}</span>` : "");
+        const badges = open ? `<span class="exs-lib__badge">${t("已打开")}</span>` : "";
         return `<li class="b3-list-item b3-list-item--narrow b3-list-item--hide-action exs-lib__item${open ? " is-open" : ""}" data-file="${esc(f.dataPath)}" title="${esc(f.dataPath)}" draggable="true">
           <button class="b3-list-item__text exs-lib__text" type="button">${esc(boardDisplayName(f))}</button>${badges}
           <span class="fn__space"></span>
@@ -162,15 +158,6 @@ export function createDockPanel(host: DockHost): { element: HTMLElement; refresh
       const file = libFiles.find((f) => f.dataPath === row.dataset.file);
       if (file) host.openBoardFile(file);
     }
-  });
-
-  // 双击开绑定文档本体（未建档的行没有文档可开，无动作）。
-  // 注意双击前会先落两次单击（开画板）——与第十七轮同款接受度。
-  element.addEventListener("dblclick", (e) => {
-    const row = (e.target as HTMLElement).closest<HTMLElement>(".exs-lib__item");
-    if (!row) return;
-    const docId = libFiles.find((f) => f.dataPath === row.dataset.file)?.docId;
-    if (docId) host.openDocOf(docId);
   });
 
   /**

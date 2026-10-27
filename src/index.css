@@ -1509,7 +1509,7 @@ body.exs-mobile-open {
 .exs-lib__item.is-open .exs-lib__text {
   color: var(--b3-theme-primary, #3575f0);
 }
-/* 已打开 / 已建档：小描边 chip，跟在被截断的名字后面（flex:none，名字先让位） */
+/* 已打开：小描边 chip，跟在被截断的名字后面（flex:none，名字先让位） */
 .exs-lib__badge {
   flex: none;
   margin-left: 6px;
@@ -1521,12 +1521,7 @@ body.exs-mobile-open {
   border: 0.5px solid var(--b3-theme-primary, #3575f0);
   color: var(--b3-theme-primary, #3575f0);
 }
-/* 「已建档」用成功色，与「已打开」的主色区分 */
-.exs-lib__badge--doc {
-  border-color: var(--b3-theme-success, #3f9300);
-  color: var(--b3-theme-success, #3f9300);
-}
-/* 右侧 meta（修改时间；建档的板再带上文件名）——原生 b3-list-item__meta 同款右置灰字 */
+/* 右侧 meta（修改时间）——原生 b3-list-item__meta 同款右置灰字 */
 .exs-lib__meta {
   flex: none;
   font-size: 11px;
@@ -1536,46 +1531,6 @@ body.exs-mobile-open {
 /* 行内删除按钮悬停转错误色（原生 action 悬停只有底色，这里补危险色） */
 .exs-lib__act--danger:hover {
   color: var(--b3-theme-error, #d23f31);
-}
-/* 批4B：体检报告（Dialog 内只读列表），行式排版照 exs-help__row */
-.exs-check {
-  font-size: 13px;
-  padding: 4px 0;
-}
-.exs-check__group {
-  font-size: 11px;
-  color: var(--b3-theme-on-surface-light, #888);
-  padding: 8px 0 4px;
-}
-.exs-check__row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 0;
-  min-width: 0;
-  border-bottom: 0.5px solid var(--b3-border-color, rgba(0, 0, 0, 0.08));
-}
-.exs-check__name {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-.exs-check__path {
-  flex: none;
-  margin-left: auto;
-  font-family: var(--b3-font-family-monospace, monospace);
-  font-size: 12px;
-  color: var(--b3-theme-on-surface-light, #888);
-}
-.exs-check__none {
-  color: var(--b3-theme-on-surface-light, #888);
-  padding: 4px 0;
-}
-.exs-check__hint {
-  font-size: 12px;
-  color: var(--b3-theme-on-surface-light, #888);
-  padding-top: 10px;
 }
 .exs-help__row {
   display: flex;

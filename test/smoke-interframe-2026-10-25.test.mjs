@@ -185,14 +185,17 @@ test("openBoardDocLink：siyuan:block/ → openTab position right（双页阅读
 test("斜杠「插入白板…」：pickBoardRef → Lute.Md2BlockDOM 转换 → insert(dom, true)", () => {
   const index = read("src/index.ts");
   const item = index.slice(index.indexOf('id: "excaliStudioInsertBoard"'));
-  assert.ok(item.slice(0, 1400).includes("pickBoardRef(t(\"插入白板…\"))"), "复用白板选择器并带场景标题");
+  // 2026-10-27 起回调里多了插入后立即装饰的接线，窗口放宽到 2000
+  const body = item.slice(0, 2000);
+  assert.ok(body.includes('pickBoardRef(t("插入白板…"))'), "复用白板选择器并带场景标题");
   // 2026-10-25 修复：SiYuan 的 insert() 收 HTML 不收 markdown（insertHTML 零转换），
   // 直接 insert("![](...)") 会插成一串纯文本——必须先过 Lute.Md2BlockDOM 再按块插入
-  assert.ok(item.slice(0, 1400).includes("Md2BlockDOM"), "markdown 先转 kramdown DOM");
-  assert.ok(item.slice(0, 1400).includes("resolveLute(protyle)"), "Lute 解析走三级回落 helper（斜杠回调是 Protyle 包装类，lute 在 .protyle.lute）");
-  assert.ok(item.slice(0, 1400).includes("protyle.insert(dom, true, true)"), "isBlock + useProtolyteRange：弹窗会带走编辑器焦点，必须用 protyle 跟踪的 range 插入");
-  assert.ok(!item.slice(0, 1400).includes('protyle.insert(`![]('), "不得再把 markdown 直接喂 insert()");
-  assert.ok(item.slice(0, 1400).includes("插入失败：{msg}"), "整条链路要有可见的失败反馈（曾表现为无反应）");
+  assert.ok(body.includes("Md2BlockDOM"), "markdown 先转 kramdown DOM");
+  assert.ok(body.includes("resolveLute(protyle)"), "Lute 解析走三级回落 helper（斜杠回调是 Protyle 包装类，lute 在 .protyle.lute）");
+  assert.ok(body.includes("protyle.insert(dom, true, true)"), "isBlock + useProtolyteRange：弹窗会带走编辑器焦点，必须用 protyle 跟踪的 range 插入");
+  assert.ok(!body.includes('protyle.insert(`![]('), "不得再把 markdown 直接喂 insert()");
+  assert.ok(body.includes("插入失败：{msg}"), "整条链路要有可见的失败反馈（曾表现为无反应）");
+  assert.ok(body.includes("this.observeBoardDom(wysiwyg);"), "插入后立即装饰（不等切页签）");
   assert.ok(index.indexOf('id: "excaliStudioInsertBoard"') > index.indexOf('id: "excaliStudio"'), "第二项在原「白板」项之后");
 });
 
@@ -205,6 +208,20 @@ test("registerBoardDecorations：switch-protyle / click-editorcontent 重扫 + o
   assert.ok(fn.includes("svgAssetPathOf([detail.element])"), "图片右键用 detail.element 取路径");
   assert.ok(fn.includes("isBoardDataPath"), "右键入口只对白板库内的 svg 开放");
   assert.ok(index.includes("this.registerBoardDecorations();"), "onload 里接线");
+});
+
+test("2026-10-27 装饰跟手：MutationObserver 重扫 + 清扫腿（删图后 ↗/徽标不再残留）", () => {
+  const index = read("src/index.ts");
+  assert.ok(index.includes("private boardObservers = new Map<Element, MutationObserver>();"), "observer 按编辑器持有");
+  assert.ok(index.includes("observer.observe(el, { childList: true, subtree: true });"), "子树增删监听");
+  assert.ok(index.includes("private scheduleBoardRescan()"), "防抖重扫入口");
+  assert.ok(/boardRescanTimer !== null\)\s*\{\s*clearTimeout/.test(index), "onunload 清防抖定时器");
+  assert.ok(/for \(const observer of this\.boardObservers\.values\(\)\) observer\.disconnect\(\);/.test(index), "onunload 断开全部 observer");
+  assert.ok(index.includes("this.observeBoardDom(wysiwyg);"), "斜杠插入后立即挂 observer（不等切页签）");
+  const src = read("src/studio/board-block-decorate.ts");
+  assert.ok(src.includes("export function sweepBoardDecorations"), "清扫腿独立可测");
+  assert.ok(src.includes("sweepBoardDecorations(container, actions);"), "decorate 一轮内先加后扫");
+  assert.ok(src.includes("blockHasBoardImg(node, actions)"), "清扫判据与加腿同一套 ref 归一");
 });
 
 test("boardAssetRefOf：绝对地址 / 相对引用 / 查询串都能落到白板目录；库外返回 null", () => {

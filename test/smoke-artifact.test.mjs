@@ -71,14 +71,15 @@ test("两个产物里都没有残留的动态 import（locales/subset/chunk 都�
   assert.ok(engine.includes("打开白板") || engine.includes("画布与形状属性"), "zh-CN 语言包没内联进引擎产物（界面会退回英文）");
 });
 
-test("产物分工：主包带壳（字体基址/落盘/存档层），引擎带画布（scene 标记/脏点）", () => {
+test("产物分工：主包带壳（字体基址/落盘），引擎带画布（scene 标记/脏点）", () => {
   const main = readFileSync(JS, "utf8");
   assert.ok(main.includes("EXCALIDRAW_ASSET_PATH"), "字体基址赋值被 tree-shake 掉了");
   assert.ok(main.includes("siyuan-excali-studio"), "插件目录名不在主包里，拼出的基址会指错位置");
   assert.ok(main.includes("/api/file/putFile"), "落盘调用没进主包");
-  assert.ok(main.includes("custom-excali-svg"), "存档层（建档/绑定/SQL）没进主包");
-  assert.ok(main.includes("/api/block/appendBlock"), "建档插图调用没进主包");
-  assert.ok(main.includes("已建档《"), "建档成功提示的文案没进主包");
+  // 2026-10-27：建档（白板↔文档绑定）移除——存档层不应再进产物
+  assert.equal(main.includes("custom-excali-svg"), false, "建档绑定属性已移除，产物里不应再有（还在=构建没重跑）");
+  assert.equal(main.includes("/api/block/appendBlock"), false, "建档插图调用已移除，产物里不应再有");
+  assert.equal(main.includes("已建档《"), false, "建档成功提示已移除，产物里不应再有");
   const engine = readFileSync(ENGINE, "utf8");
   assert.ok(engine.includes("svg-source:excalidraw"), "scene 标记校验不在引擎产物里");
   assert.ok(engine.includes("exs-tab-dirty"), "页签脏点的类名不在引擎产物里");
@@ -88,11 +89,12 @@ test("根 index.js 带上第二十四/二十五轮白板库修复（SQL 无 b.re
   const code = readFileSync(JS, "utf8");
   // b.refs 是本回归的元凶：当前内核 blocks 表没有这列，SQL 带上它整条查询就炸，库永不刷新
   assert.equal(code.includes("b.refs"), false, "产物 SQL 还带着不存在的 b.refs 列——白板消失 bug 原样复发");
-  assert.ok(code.includes("a.name = 'custom-excali-svg'"), "绑定查询没进产物");
+  assert.equal(code.includes("custom-excali-svg"), false, "建档绑定查询已随功能移除（2026-10-27），产物里不应再有");
   assert.ok(code.includes("assets/excali"), "专属目录默认值没进产物（新建仍会落回公共 assets）");
   assert.ok(code.includes("已把 {n} 块白板迁入 {dir}"), "旧白板迁移的入口/提示没进产物（存量板会留在 assets 里隐身）");
-  assert.ok(code.includes("/api/block/getBlockKramdown"), "迁移/改名后改正文图片引用的通道没进产物（建档文档会断图）");
-  assert.ok(code.includes("白板文档查询失败"), "SQL 分段容错的告警文案没进产物（失败会吞整库的旧结构复发？）");
+  // getBlockKramdown 有独立合法消费方（AI 通道 getDocMarkdown + 只读白名单），不能作为建档判据
+  assert.equal(code.includes("rewriteAssetRefs"), false, "建档正文引用改写通道已随功能移除，产物里不应再有");
+  assert.equal(code.includes("白板文档查询失败"), false, "建档 SQL 分段容错文案已随功能移除，产物里不应再有");
 });
 
 test("根 index.js 带上了 zh-CN 汉化补丁（快捷键列表/右键菜单不再回落英文）", () => {
@@ -172,16 +174,17 @@ test("根 index.css 里没有右下角 FAB 残留（第十一轮删掉，它会�
   assert.match(css, /\.exs-root\s*\{[^}]*position:\s*relative/, "exs-root 丢了 position:relative，导出遮罩会盖不住画板");
 });
 
-test("根 index.js / index.css 带上第十二轮手感修复 + 第二十一轮文件先行（未命名白板 / 新建建档）", () => {
+test("根 index.js / index.css 带上第十二轮手感修复 + 第二十一轮文件先行（未命名白板）", () => {
   const code = readFileSync(JS, "utf8");
   // 文案都是写死的字面量（函数名会被压缩器重命名，不查函数名）：命中即整条链路进了产物
   for (const s of [
     "未命名白板", // openNew 默认名 + 页签标题兜底
-    "新建时自动建档", // 设置项（第二十一轮从「首次保存时」改名）
     "创建白板失败：{msg}", // 新建链路失败提示
   ]) {
     assert.ok(code.includes(s), `没进产物：${s}`);
   }
+  // 建档设置项已随功能移除（2026-10-27），产物里不应再有
+  assert.equal(code.includes("新建时自动建档"), false, "建档设置项已移除，产物里还有说明构建没重跑");
   // 旧口径「切换页签时自动保存」「60 秒自动保存设置项」不该再出现在任何文案里
   assert.equal(code.includes("切换页签时自动保存"), false, "旧的自动保存口径还留在产物文案里");
   assert.equal(code.includes("每 60 秒、窗口失焦"), false, "自动保存设置项描述已删（第二十一轮：防抖成为唯一形态），产物里还有说明构建没重跑");

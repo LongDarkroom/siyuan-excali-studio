@@ -39,7 +39,7 @@ test("分流：移动端必须在 openTab 之前走浮层", () => {
   const desktop = body.indexOf("await openTab(");
   assert.ok(branch > 0, "openStudioTab 缺移动端分流");
   assert.ok(desktop > branch, "必须先分流；移动端走到 openTab 就是静默失败");
-  assert.match(body.slice(branch, branch + 160), /this\.openMobileStudio\(target, docId\);/, "分流后调移动浮层");
+  assert.match(body.slice(branch, branch + 160), /this\.openMobileStudio\(target\);/, "分流后调移动浮层");
 });
 
 test("浮层复用 attachStudioTab，且保留页签会话语义", () => {

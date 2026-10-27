@@ -119,26 +119,6 @@ export interface StudioSettings {
    */
   gridModeEnabled: boolean;
   /**
-   * 2026-10-16 第十七轮·批1：白板文档默认存放的 hpath（固定目录）。
-   * 形态 1 口径：一篇 .sy（H1 + 图片块）+ assets/excali-<时间戳>.svg 工程文件，
-   * 用块属性 custom-excali-svg 绑定；显示名取文档标题，SVG 文件名永不改。
-   * 默认 /Excali 白板，设置项可改。
-   */
-  boardDir: string;
-  /**
-   * 2026-10-16 第十七轮·批3：打开白板文档时自动进画板。
-   * 第十八轮起默认关——文档树弱化为存档层后，切文档只该安安静静看文档；
-   * 设置项保留，想「点存档文档直接进画板」的用户自己开。
-   */
-  autoOpenBoard: boolean;
-  /**
-   * 2026-10-17 第十八轮：首次保存时自动建档（默认关）。
-   * 关：首存只写 SVG 工程文件，白板库按文件列，文档树保持干净；
-   * 开：首存顺带在 boardDir 建一篇文档绑定 custom-excali-svg（可反链/可搜索）。
-   * 关着也能补建——dock 白板行右键「建档」。
-   */
-  autoCreateDoc: boolean;
-  /**
    * 第三十轮：图形模板库一次性迁移标记。
    * 旧单文件 <保存目录>/excali-library.json → excali-libraries/local.excalidrawlib，
    * 只在首次加载组件库时尝试一次（成功失败都置位，失败时旧文件还在、兜底可读）。
@@ -209,9 +189,6 @@ export const DEFAULT_SETTINGS: StudioSettings = {
   accentStroke: true,
   showWelcome: true,
   gridModeEnabled: false,
-  boardDir: "/Excali 白板",
-  autoOpenBoard: false,
-  autoCreateDoc: false,
   stencilMigrated: false,
   pinnedScripts: [],
   pinnedActions: [...DEFAULT_PINNED_ACTIONS],
@@ -232,8 +209,6 @@ export function normalizeSettings(raw: unknown): StudioSettings {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<Record<keyof StudioSettings, unknown>>;
   const dirRef = typeof r.saveDir === "string" ? normalizeDirRef(r.saveDir) : "";
   const dir = dirRef !== "" ? dirRef : DEFAULT_SETTINGS.saveDir;
-  const boardDir =
-    typeof r.boardDir === "string" && r.boardDir.trim() !== "" ? r.boardDir.trim() : DEFAULT_SETTINGS.boardDir;
   // P2：脚本设置分桶归一（结构校验 + 限量；类型精校验在宿主按 SPECS 做）
   const scriptSettings: Record<string, Record<string, string | number | boolean>> = {};
   if (r.scriptSettings && typeof r.scriptSettings === "object") {
@@ -259,9 +234,6 @@ export function normalizeSettings(raw: unknown): StudioSettings {
     showWelcome: typeof r.showWelcome === "boolean" ? r.showWelcome : DEFAULT_SETTINGS.showWelcome,
     gridModeEnabled:
       typeof r.gridModeEnabled === "boolean" ? r.gridModeEnabled : DEFAULT_SETTINGS.gridModeEnabled,
-    boardDir,
-    autoOpenBoard: typeof r.autoOpenBoard === "boolean" ? r.autoOpenBoard : DEFAULT_SETTINGS.autoOpenBoard,
-    autoCreateDoc: typeof r.autoCreateDoc === "boolean" ? r.autoCreateDoc : DEFAULT_SETTINGS.autoCreateDoc,
     stencilMigrated: typeof r.stencilMigrated === "boolean" ? r.stencilMigrated : DEFAULT_SETTINGS.stencilMigrated,
     pinnedScripts: Array.isArray(r.pinnedScripts)
       ? r.pinnedScripts.filter((x): x is string => typeof x === "string" && x !== "")

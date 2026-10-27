@@ -97,7 +97,7 @@ test("A·draw：计划解析 → 找板/建板 → 共享渲染 → 句柄绘制
   assert.match(DRAW_IMPL, /const existing = append \? await this\.resolveAgentBoard\(args\) : null/);
   assert.match(DRAW_IMPL, /if \(append && named && !existing\)[\s\S]{0,120}不自动改新建/, "点名了却找不到板要报错，不能偷偷新建");
   assert.match(DRAW_IMPL, /await this\.createBoardFile\(name\)/, "新建走宿主既有文件先行链路");
-  assert.match(DRAW_IMPL, /await this\.openStudioTab\(target\.path, docId\)/);
+  assert.match(DRAW_IMPL, /await this\.openStudioTab\(target\.path\)/);
   assert.match(DRAW_IMPL, /const handle = actions\?\.getEaHandle\(\)/);
   assert.match(DRAW_IMPL, /const origin = created \? \{ x: 0, y: 0 \} : this\.agentDrawOrigin\(handle\)/);
   assert.match(DRAW_IMPL, /const packs = await this\.loadAgentStyles\(\)/, "绘图前重读风格包目录（包是用户手改的 JSON）");
@@ -226,7 +226,7 @@ test("D·生图实现：先生成再开板、共享 generateImage + 浏览器代
   const genAt = IMAGE_IMPL.indexOf("await generateImage(");
   const createAt = IMAGE_IMPL.indexOf("await this.createBoardFile(name)");
   assert.ok(genAt >= 0 && createAt > genAt, "先生成再建板：API 失败不能留下空板");
-  assert.match(IMAGE_IMPL, /await this\.openStudioTab\(target\.path, docId\)/);
+  assert.match(IMAGE_IMPL, /await this\.openStudioTab\(target\.path\)/);
   assert.match(IMAGE_IMPL, /handle\.addImage\(image\.dataURL, \{ \.\.\.origin, width, height \}\)/, "位图走画布原生 addImage");
   assert.match(IMAGE_IMPL, /handle\.selectElements\(\[imageId\]\)/);
   assert.match(IMAGE_IMPL, /handle\.scrollToElement\(imageId\)/);

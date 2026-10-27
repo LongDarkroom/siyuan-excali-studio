@@ -34,7 +34,7 @@ export type MobileStudioShell = {
   isClosed: () => boolean;
 };
 
-export type MobileStudioData = { dataPath: string | null; docId?: string };
+export type MobileStudioData = { dataPath: string | null };
 
 /**
  * 建一个全屏浮层并返回可交给 attachStudioTab 的替身。

@@ -33,7 +33,7 @@ test("parentDirOf / isDirectChildOf：只认旧目录直下，子目录/../../ �
   assert.equal(isDirectChildOf("/data/assets/excali/x.svg", "assets"), false, "已在专属目录的不重复搬");
 });
 
-test("migrationCandidates：四路来源去重保序；非白板/备份/子目录/已迁走的一律丢掉", () => {
+test("migrationCandidates：三路来源去重保序；非白板/备份/子目录/已迁走的一律丢掉", () => {
   const out = migrationCandidates({
     recent: [
       "/data/assets/测试.svg",
@@ -43,15 +43,13 @@ test("migrationCandidates：四路来源去重保序；非白板/备份/子目�
       "/data/assets/x.svg.bak.svg",
     ],
     registry: ["/data/assets/测试.svg", "/data/assets/mine-old.svg", 42, ""],
-    docSvgs: ["assets/测试 1.svg", "/data/assets/excali/already.svg"],
     autoNamed: ["/data/assets/excali-20261017-080239.svg"],
   });
   assert.deepEqual(out, [
     "/data/assets/测试.svg",
     "/data/assets/mine-old.svg",
-    "/data/assets/测试 1.svg",
     "/data/assets/excali-20261017-080239.svg",
-  ], "recent 优先保序；重复只留一份；脏值不抛");
+  ], "recent 优先保序；重复只留一份；脏值不抛（文档绑定来源已随建档移除）");
   assert.equal(out.some((p) => p.includes("excali/already")), false, "已在专属目录的不是候选");
   assert.equal(out.some((p) => p.includes("/sub/")), false, "子目录不搬");
   assert.equal(out.some((p) => p.endsWith(".bak.svg")), false, "备份由 renameSvg 随主文件搬");

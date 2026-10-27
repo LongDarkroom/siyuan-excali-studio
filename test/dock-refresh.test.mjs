@@ -3,8 +3,9 @@
 // 背景（对照第十四~十八轮的演进）：dock 曾经带「活动画布状态行 + 背景色板」，
 // vendor 的 onChange 拖拽时每帧回调，于是有了 sameDockState 同值跳过 + 合帧两套机制。
 // 第二十轮把画布操作区整块删掉后，dock 只剩「白板库列表 + －删除置灰态」——
-// 两者都只随**结构事件**变（开/关页签、保存、删除、重命名、建档、⟳、搜索过滤），
+// 两者都只随**结构事件**变（开/关页签、保存、删除、重命名、⟳、搜索过滤），
 // 每帧路径整个消失，合帧与状态比较随 dock-state.ts 一起退役。
+// （2026-10-27：建档移除——「已建档」徽标不再参与刷新判定。）
 //
 // 必须钉住的不变量：
 //   ① onBoardActive 每帧进来只更新活动位，不触发任何刷新（没有每帧呈现的内容）；
@@ -60,7 +61,7 @@ test("宿主：结构事件（注册/注销/关页签）保持立即刷新", () 
 /* ------------------------------ 创建/保存即入库（闭环） ------------------------------ */
 
 test("宿主：创建/保存落盘后新文件即时进库缓存 + 全量对齐", () => {
-  assert.match(INDEX, /this\.rememberBoardFile\(target, docId \?\? undefined/, "createBoardFile 建文件即补缓存（第二十一轮文件先行）：库里立即可见");
+  assert.match(INDEX, /this\.rememberBoardFile\(target\);/, "createBoardFile 建文件即补缓存（第二十一轮文件先行）：库里立即可见");
   assert.match(INDEX, /this\.rememberBoardFile\(saved\);/, "saveSvg 覆盖保存时项已在，空操作");
   assert.match(INDEX, /void this\.refreshBoardLib\(\);/, "再跑全量对齐（libLoading 在途时跳过也不怕，缓存已补）");
   const at = INDEX.indexOf("private rememberBoardFile");

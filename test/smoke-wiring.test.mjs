@@ -156,10 +156,10 @@ test("契约·保存入口：☰ 无保存项（第二十一轮），⌘/Ctrl+S 
 test("契约·新建链路（第二十一轮文件先行）：命名 → 建空文件 → 带着路径进画布", () => {
   assert.match(INDEX, /const name = await this\.promptFileName\(t\("未命名白板"\), t\("新建白板"\)\);/, "openNew 先问名（默认未命名白板）");
   assert.match(INDEX, /if \(!name\) return;/, "取消命名 = 什么都不做，文件都不建");
-  assert.match(INDEX, /const \{ path, docId \} = await this\.createBoardFile\(name\);/, "创建落盘拿路径（+ 可选建档的 docId）");
-  assert.match(INDEX, /await this\.openStudioTab\(path, docId\);/, "页签带着路径开：画布从第一帧起就归属文件");
+  assert.match(INDEX, /const \{ path \} = await this\.createBoardFile\(name\);/, "创建落盘拿路径（文件先行，建档已移除）");
+  assert.match(INDEX, /await this\.openStudioTab\(path\);/, "页签带着路径开：画布从第一帧起就归属文件");
   assert.match(INDEX, /sceneToSvgText\(\{ elements: \[\], appState: \{\}, files: \{\} \}\)/, "落一份空 scene 的 SVG（创建即文件）");
-  assert.match(INDEX, /this\.rememberBoardFile\(target, docId \?\? undefined/, "新文件即时进库缓存：库里立即可见");
+  assert.match(INDEX, /this\.rememberBoardFile\(target\);/, "新文件即时进库缓存：库里立即可见");
   assert.match(INDEX, /创建白板失败：\{msg\}/, "创建失败给可见提示，不静默");
   // 画板侧：路径开页签时就带好，saveFlow/saveAsFlow 整套删除
   assert.equal(APP.includes("saveFlow"), false, "首存分支删除：文件先行后没有「第一次保存」");
@@ -192,27 +192,23 @@ test("契约·M2 文档内入口：块图标菜单只对 assets/*.svg 出现", (
   assert.match(DOC, /\/assets\//, "只对工作空间 assets 下的资源出现，外链图不能拦");
 });
 
-test("契约·M2 存档层：建档 = appendBlock 落文档根 + 绑属性（第二十一轮：建档在 adoptBoardFile，新建/右键共用）", () => {
-  assert.match(DOC, /api\/block\/appendBlock/, "建档时图片块走 appendBlock");
-  assert.match(DOC, /parentID:\s*rootID/, "appendBlock 必须给文档根 id");
-  assert.match(DOC, /dataType:\s*"markdown",\s*data:\s*markdown/, "走 markdown 图片块，让思源自己转成 DOM");
-  assert.equal(DOC.includes("insertBlock"), false, "旧「插到光标块之后」的路已删干净，别留半截");
-  assert.match(DOC, /export function sq/, "SQL 字面量转义要独立成函数，用户输入不许直插 SQL");
-  assert.match(INDEX, /const ref = toAssetRef\(item\.dataPath\);/, "建档前把 /data 路径转成文档引用的 assets/ 相对路径");
-  assert.match(INDEX, /await appendImageBlock\(docId, ref, title\);/, "图片块落进新建的存档文档（adoptBoardFile，创建/右键共用）");
-  assert.match(INDEX, /await setBlockAttrs\(docId, \{ "custom-excali-svg": ref \}\);/, "绑定属性：文档树菜单/自动开板/复制引用都靠它");
-  assert.match(INDEX, /return docId;[\s\S]{0,200}catch \(e\) \{[\s\S]*?建档失败：\{msg\}/, "adoptBoardFile 成功回 docId（新建链路要用），失败只提示");
+test("契约·建档已移除（2026-10-27）：白板 = 纯文件，无文档绑定层", () => {
+  assert.equal(DOC.includes("appendBlock"), false, "建档插图通道整个退役");
+  assert.equal(DOC.includes("custom-excali-svg"), false, "绑定属性读写退役");
+  assert.equal(INDEX.includes("adoptBoardFile"), false, "建档动作删除");
+  assert.equal(INDEX.includes("appendImageBlock"), false, "插图调用删除");
+  assert.equal(INDEX.includes("custom-excali-svg"), false, "绑定属性删除");
+  assert.equal(INDEX.includes("建档"), false, "建档相关文案删除");
   assert.equal(INDEX.includes("docHasAsset"), false, "「保存到文档」的同文档去重已随功能删除");
   assert.equal(INDEX.includes("insertToDoc"), false, "insertToDoc 通道已删");
   assert.equal(INDEX.includes("insertImageBlock"), false, "旧入口已删：插入落点不再由「当前光标」猜");
   assert.equal(APP.includes("insertToDoc"), false, "画板侧也不留插入文档的回调");
 });
 
-test("契约·「当前文档」推算：聚焦编辑器事件 + 断连回退（建档选址用）", () => {
+test("契约·「当前文档」推算：聚焦编辑器事件 + 断连回退", () => {
   assert.match(DOC, /switch-protyle/, "要跟最后停留的页签，getAllEditor 顺序不保证等于当前文档");
   assert.match(DOC, /click-editorcontent/, "点亮别的页签后要更新");
   assert.match(DOC, /isConnected/, "页签关了要判定断连再回退 getAllEditor");
-  assert.match(DOC, /const p = activeProtyle\(\);[\s\S]{0,120}p\?\.block\?\.rootID/, "「当前文档」从活跃编辑器取，不猜");
 });
 
 test("契约·M2 覆盖后破缓存：只改 img.src 不碰 markdown", () => {
@@ -270,8 +266,8 @@ test("契约·页签打开：addTab 注册 + openTab 带稳定 id/图标/数据"
   assert.match(INDEX, /await openTab\(\{/, "打开页签走思源导出的 openTab");
   assert.match(
     INDEX,
-    /data:\s*\{\s*dataPath:\s*target,\s*docId\s*\}\s*satisfies\s+StudioTabData/,
-    "data 放可 JSON 化的 dataPath + docId（layout.json 会持久化它）",
+    /data:\s*\{\s*dataPath:\s*target\s*\}\s*satisfies\s+StudioTabData/,
+    "data 放可 JSON 化的 dataPath（layout.json 会持久化它；docId 已随建档移除）",
   );
   assert.match(INDEX, /openNewTab:\s*true/, "两张新白板的 data 相同，不绕开思源按 data 深比的复用就会把第二张并进第一张");
 });

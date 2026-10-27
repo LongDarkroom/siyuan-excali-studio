@@ -1,8 +1,10 @@
 /**
- * 2026-10-17 第十八轮：白板库（文件形态）+ 建档门控 + 删除链路。
- * 纯函数（文件↔文档绑定/显示名/指纹/删除计划）在 studio/board-lib.ts 真断言；
- * 宿主与 dock 的接线（门控、菜单、缓存、删除顺序）照本仓惯例文本扫描。
+ * 2026-10-17 第十八轮：白板库（文件形态）+ 删除链路。
+ * 纯函数（显示名/指纹/删除计划）在 studio/board-lib.ts 真断言；
+ * 宿主与 dock 的接线（菜单、缓存、删除顺序）照本仓惯例文本扫描。
  * 2026-10-17 第二十二轮：dock 搜索框删除，filterBoardFiles（内存过滤）随之退役。
+ * 2026-10-27：建档（白板↔文档绑定）整体移除——白板回归纯文件，本文件改为断言
+ * 「建档已移除」的源码契约与纯文件口径。
  */
 
 import { test } from "node:test";
@@ -12,14 +14,8 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   boardDisplayName,
-  boardDocPath,
-  countBacklinks,
   deletePlanOf,
-  embedRef,
   fileLibViewKey,
-  inlineRef,
-  parseSiyuanStamp,
-  toBoardDocItem,
   toBoardFileItems,
 } from "../src/studio/board-lib.ts";
 import { DEFAULT_SETTINGS, normalizeSettings } from "../src/studio/settings.ts";
@@ -36,64 +32,19 @@ const IO = stripComments(read("src/kernel/io.ts"));
 
 /* ------------------------------ 行为：纯函数 ------------------------------ */
 
-test("parseSiyuanStamp：14 位给时刻、8 位给零点、其余归 0", () => {
-  const full = parseSiyuanStamp(20261016123045);
-  const d = new Date(full);
-  assert.equal(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`, "20261016");
-  assert.equal(d.getHours(), 12);
-  assert.equal(d.getMinutes(), 30);
-  const day = parseSiyuanStamp(20261016);
-  const dd = new Date(day);
-  assert.equal(dd.getDate(), 16);
-  assert.equal(dd.getHours(), 0);
-  // epoch 毫秒误传、0、NaN 都不算号
-  assert.equal(parseSiyuanStamp(1760000000000), 0);
-  assert.equal(parseSiyuanStamp(0), 0);
-  assert.equal(parseSiyuanStamp(Number.NaN), 0);
-});
-
-test("countBacklinks：按去重 root_id 计，脏输入一律 0", () => {
-  const same = JSON.stringify({ blocks: { a: { root_id: "r1" }, b: { root_id: "r1" } } });
-  assert.equal(countBacklinks(same), 1, "同一篇文档引三个块也只算一篇");
-  const two = JSON.stringify({ blocks: { a: { root_id: "r1" }, b: { root_id: "r2" } } });
-  assert.equal(countBacklinks(two), 2);
-  assert.equal(countBacklinks(""), 0);
-  assert.equal(countBacklinks("{oops"), 0);
-  assert.equal(countBacklinks(JSON.stringify({ blocks: { a: {} } })), 0, "缺 root_id 不计");
-});
-
-test("toBoardDocItem：标题回落、时间解析、引用数换算一步到位", () => {
-  const item = toBoardDocItem({
-    id: "doc1",
-    content: "",
-    hpath: "/Excali 白板/架构",
-    updated: 20261016123045,
-    refs: JSON.stringify({ blocks: { a: { root_id: "x" } } }),
-    svg: "assets/excali-1.svg",
-  });
-  assert.equal(item.docId, "doc1");
-  assert.equal(item.title, "无标题");
-  assert.equal(item.refs, 1);
-  assert.ok(item.updated > 0);
-});
-
-test("toBoardFileItems：按 /data 归一路径配文档，保序；未绑定 docId 为空", () => {
+test("toBoardFileItems：/data 归一路径 + 剥 .svg 文件名，保序", () => {
   const entries = [
     { path: "assets/a.svg", updated: 3 },
     { path: "assets/b.svg", updated: 2 },
     { path: "/data/assets/c.svg", updated: 1 },
   ];
-  const docs = [
-    { docId: "d1", title: "架构图", hpath: "", svg: "assets/a.svg", updated: 0, refs: 0 },
-    { docId: "d2", title: "丢了", hpath: "", svg: "assets/gone.svg", updated: 0, refs: 0 },
-  ];
-  const items = toBoardFileItems(entries, docs);
+  const items = toBoardFileItems(entries);
   assert.deepEqual(
-    items.map((x) => [x.dataPath, x.docId, x.docTitle]),
+    items.map((x) => [x.dataPath, x.name]),
     [
-      ["/data/assets/a.svg", "d1", "架构图"],
-      ["/data/assets/b.svg", "", ""],
-      ["/data/assets/c.svg", "", ""],
+      ["/data/assets/a.svg", "a.svg"],
+      ["/data/assets/b.svg", "b.svg"],
+      ["/data/assets/c.svg", "c.svg"],
     ],
   );
   assert.deepEqual(
@@ -101,26 +52,21 @@ test("toBoardFileItems：按 /data 归一路径配文档，保序；未绑定 do
     [3, 2, 1],
     "保持 readDir 的新→旧序，不做二次排序",
   );
-  // 绑定失效（文档在、文件不在）不该把文件从库里抹掉
-  assert.equal(items.length, 3);
+  assert.equal("docId" in items[0], false, "建档移除：文件项不再带文档绑定字段");
 });
 
-test("boardDisplayName：已建档用文档标题，未建档剥 .svg 用文件名", () => {
+test("boardDisplayName：剥 .svg 用文件名（白板 = 纯文件，无文档标题）", () => {
   assert.equal(
-    boardDisplayName({ dataPath: "/data/assets/a.svg", name: "a.svg", docId: "d", docTitle: "架构 总览", updated: 0 }),
-    "架构 总览",
-  );
-  assert.equal(
-    boardDisplayName({ dataPath: "/data/assets/b.svg", name: "excali-1016.svg", docId: "", docTitle: "", updated: 0 }),
+    boardDisplayName({ dataPath: "/data/assets/b.svg", name: "excali-1016.svg", updated: 0 }),
     "excali-1016",
   );
+  assert.equal(boardDisplayName({ dataPath: "/data/assets/excali/a.svg", name: "a.svg", updated: 0 }), "a");
 });
 
-test("fileLibViewKey：打开态/绑定/时间任一变化都要变；同名不同路径不撞", () => {
-  const item = { dataPath: "/data/assets/a.svg", name: "a.svg", docId: "", docTitle: "", updated: 1 };
+test("fileLibViewKey：打开态/时间任一变化都要变；同名不同路径不撞", () => {
+  const item = { dataPath: "/data/assets/a.svg", name: "a.svg", updated: 1 };
   const k1 = fileLibViewKey([item], new Set());
   assert.notEqual(k1, fileLibViewKey([item], new Set(["/data/assets/a.svg"])), "已打开徽标翻转必须触发重渲染");
-  assert.notEqual(k1, fileLibViewKey([{ ...item, docId: "d1" }], new Set()), "建档徽标翻转也要变");
   assert.notEqual(k1, fileLibViewKey([{ ...item, updated: 2 }], new Set()), "修改时间变化也要变");
   assert.notEqual(
     fileLibViewKey([item], new Set()),
@@ -129,94 +75,103 @@ test("fileLibViewKey：打开态/绑定/时间任一变化都要变；同名不�
   );
 });
 
-test("boardDocPath：目录写法归一；空标题回落未命名白板", () => {
-  assert.equal(boardDocPath("/Excali 白板", "架构"), "/Excali 白板/架构");
-  assert.equal(boardDocPath("Excali 白板/", "架构"), "/Excali 白板/架构");
-  assert.equal(boardDocPath("", "架构"), "/架构");
-  assert.equal(boardDocPath("/Excali 白板", "  "), "/Excali 白板/未命名白板");
-});
-
-test("deletePlanOf：删文件 + 备份 + 绑定文档；未建档没有文档项", () => {
-  const bound = deletePlanOf({
-    dataPath: "/data/assets/a.svg",
-    name: "a.svg",
-    docId: "d1",
-    docTitle: "架构图",
-    updated: 0,
-  });
-  assert.equal(bound.svgPath, "/data/assets/a.svg");
+test("deletePlanOf：删文件 + 备份链；白板 = 纯文件，不牵连文档树", () => {
+  const plan = deletePlanOf({ dataPath: "/data/assets/a.svg", name: "a.svg", updated: 0 });
+  assert.equal(plan.svgPath, "/data/assets/a.svg");
   assert.deepEqual(
-    bound.bakPaths,
+    plan.bakPaths,
     ["/data/assets/a.svg.bak.svg", "/data/assets/a.svg.bak2.svg", "/data/assets/a.svg.bak3.svg"],
     "第十九轮：备份滚动三份，删除计划列全链条",
   );
-  assert.deepEqual(bound.doc, { id: "d1", title: "架构图" });
-  const loose = deletePlanOf({ dataPath: "/data/assets/b.svg", name: "b.svg", docId: "", docTitle: "", updated: 0 });
-  assert.equal(loose.doc, null, "未建档的板只删文件，不动文档树");
-});
-
-test("embedRef/inlineRef：嵌入只能裸 id，别名只进行内引用且剥引号换行", () => {
-  // 内核事实：块嵌入 ![[块ID]] 不支持自定义显示文本（demo 里 ![[id "标题"]] 是假口径）
-  assert.equal(embedRef("20261016123045-abc123"), "![[20261016123045-abc123]]");
-  assert.equal(inlineRef("doc1", "架构 总览"), '((doc1 "架构 总览"))');
-  assert.equal(inlineRef("doc1", '带"引号\n和换行'), '((doc1 "带 引号 和换行"))', "别名里的引号/换行会截断 md 解析，必须先洗掉");
-  assert.equal(inlineRef("doc1", ""), '((doc1 ""))');
-  assert.ok(!embedRef("x").includes("x "), "嵌入形式不带任何多余字符");
+  assert.equal("doc" in plan, false, "建档移除：删除只碰文件与备份，不动文档树");
 });
 
 /* ------------------------------ 行为：设置默认值 ------------------------------ */
 
-test("第十八轮默认值：建档关、自动开板关（文档树弱化为存档层）", () => {
-  assert.equal(DEFAULT_SETTINGS.autoCreateDoc, false, "首存不再自动建文档，文档树零痕迹");
-  assert.equal(DEFAULT_SETTINGS.autoOpenBoard, false, "切文档安安静静看文档，不弹画板页签");
-  assert.equal(normalizeSettings({}).autoCreateDoc, false, "脏数据/空数据都归一到关");
-  assert.equal(normalizeSettings({ autoCreateDoc: true }).autoCreateDoc, true, "用户开过就尊重");
-  assert.equal(normalizeSettings({ autoOpenBoard: true }).autoOpenBoard, true, "老用户存过的 true 不被默认值覆盖");
+test("2026-10-27：建档设置项随功能移除（白名单归一，旧档里的键被静默丢弃）", () => {
+  assert.equal("autoCreateDoc" in DEFAULT_SETTINGS, false);
+  assert.equal("autoOpenBoard" in DEFAULT_SETTINGS, false);
+  assert.equal("boardDir" in DEFAULT_SETTINGS, false);
+  assert.equal("autoCreateDoc" in normalizeSettings({ autoCreateDoc: true }), false, "旧档的开关键不再进入设置");
+  assert.equal("boardDir" in normalizeSettings({ boardDir: "/Excali 白板" }), false, "建档落点设置退役");
+  assert.equal(normalizeSettings({}).saveDir, "assets/excali", "保存目录归一口径不变");
+});
+
+/* ------------------------------ 接线：建档已移除（源码契约） ------------------------------ */
+
+test("2026-10-27：建档（白板↔文档绑定）已整体移除，无死代码残留", () => {
+  for (const gone of [
+    "adoptBoardFile",
+    "rememberBoardDoc",
+    "boardSvgByDocId",
+    "boardDocs",
+    "autoOpenedDocs",
+    "autoCreateDoc",
+    "autoOpenBoard",
+    "createDocWithMd",
+    "appendImageBlock",
+    "setBlockAttrs",
+    // getBlockAttrs 不在清单：index.ts 的 AI 只读白名单含 block/getBlockAttrs 端点，属合法保留
+    "removeDoc",
+    "rewriteAssetRefs",
+    "listBoardDocs",
+    "currentNotebook",
+    "firstNotebook",
+    "boardDocPath",
+    "embedRef",
+    "inlineRef",
+    "toBoardDocItem",
+    "BoardDocItem",
+    "custom-excali-svg",
+    "checkupRunning",
+    "runCheckup",
+    "registerBoardDocEvents",
+    "open-menu-doctree",
+    "open-menu-filetab",
+    "新建时自动建档",
+    "打开存档文档",
+    "已建档",
+    "白板体检",
+  ]) {
+    assert.equal(INDEX.includes(gone), false, `index.ts 不再有：${gone}`);
+  }
+  for (const gone of ["createDocWithMd", "appendImageBlock", "setBlockAttrs", "rewriteAssetRefs", "removeDoc", "listBoardDocs", "getBlockAttrs", "firstNotebook", "currentNotebook", "custom-excali-svg"]) {
+    assert.equal(DOC.includes(gone), false, `doc.ts 不再有：${gone}`);
+  }
+  for (const gone of ["boardDocPath", "embedRef", "inlineRef", "toBoardDocItem", "countBacklinks", "BoardDocItem", "parseSiyuanStamp"]) {
+    assert.equal(read("src/studio/board-lib.ts").includes(gone), false, `board-lib.ts 不再有：${gone}`);
+  }
 });
 
 /* ------------------------------ 接线：宿主 ------------------------------ */
 
-test("宿主：库缓存两条腿——SQL 取绑定、readDir 取文件，合并喂 dock；两段容错互不牵连", () => {
-  assert.match(DOC, /a\.name = 'custom-excali-svg'/, "listBoardDocs 走 attributes JOIN");
-  assert.match(DOC, /b\.type = 'd'/, "只取文档块");
-  assert.equal(/b\.refs/.test(DOC), false, "第二十四轮回归锁：当前内核 blocks 没有 refs 列，SQL 带上它整条查询就炸，白板库从此不刷新（真机日志实锤 ×19）");
-  assert.match(INDEX, /docs = \(await listBoardDocs\(\)\)\.map\(toBoardDocItem\);/, "SQL 行 → 文档项在纯模块做");
+test("宿主：库列表唯一真源 = 保存目录 readDir；读挂保留上一次列表", () => {
   assert.match(INDEX, /entries = await listBoardEntries\(this\.settings\.saveDir\);/, "文件列表读保存目录");
-  assert.match(INDEX, /this\.boardFiles = toBoardFileItems\(entries, docs\);/, "目录扫描结果 + 绑定 = 库列表（第二十五轮：目录即库，无登记表）");
-  assert.match(INDEX, /this\.boardSvgByDocId = new Map\(docs\.map\(\(d\) => \[d\.docId, d\.svg\]\)\);/, "文档→svg 反查表同步重建");
-  // 容错分层：SQL 挂只伤徽标层，readDir 挂保留上一次列表——两者都不许再打死整条刷新
+  assert.match(INDEX, /this\.boardFiles = toBoardFileItems\(entries\);/, "目录扫描结果 = 库列表（第二十五轮：目录即库）");
   const at = INDEX.indexOf("private async refreshBoardLib");
   assert.ok(at > 0, "refreshBoardLib 入口存在");
-  const body = INDEX.slice(at, at + 1600);
-  assert.match(body, /白板文档查询失败[\s\S]*?白板库读保存目录失败/, "两段各有 catch，顺序：先 SQL 后 readDir");
-  assert.match(body, /docs = this\.boardDocs;/, "SQL 挂就沿用上次绑定，不是清空");
-  assert.match(body, /if \(entries\) this\.boardFiles =/, "readDir 挂就不动列表（entries 为 null 不赋值）");
+  const body = INDEX.slice(at, at + 1200);
+  assert.match(body, /白板库读保存目录失败/, "读挂有告警，不静默");
+  assert.match(body, /if \(entries\) this\.boardFiles =/, "读挂就不动列表（entries 为 null 不赋值）");
   assert.match(body, /finally \{\s*this\.libLoading = false;/, "防重入标志整轮结束才复位");
 });
 
-test("宿主：新建建档受 autoCreateDoc 门控（默认关 = 只落空文件）", () => {
-  assert.match(INDEX, /this\.settings\.autoCreateDoc\s*\n?\s*\? await this\.adoptBoardFile\(\{/, "createBoardFile 里按开关走 adoptBoardFile（第二十一轮：建档语义从首存变新建）");
-  assert.match(INDEX, /const title = item\.name\.replace\(\/\\\.svg\$\/i, ""\)/, "文档标题从文件名剥 .svg（避重后缀一并带上，与文件名成对）");
-  assert.match(INDEX, /boardDocPath\(this\.settings\.boardDir, title\)/);
-  assert.match(INDEX, /currentNotebook\(\)\) \?\? \(await firstNotebook\(\)\)/, "当前文档查不到就回落第一个笔记本");
-  assert.match(INDEX, /建档失败：\{msg\}/, "建档失败只提示，不崩创建流程（文件照样落盘）");
+test("宿主：新建 = 文件先行，createBoardFile 只落空文件返回路径（建档分支已删）", () => {
+  assert.match(INDEX, /private async createBoardFile\(name: string\): Promise<\{ path: string \}>\s*\{/, "返回值只剩 path");
+  assert.match(INDEX, /const \{ path \} = await this\.createBoardFile\(name\);/, "新建链路只拿路径");
+  assert.match(INDEX, /await this\.openStudioTab\(path\);/, "页签带着路径开：画布从第一帧起就归属文件");
+  assert.match(INDEX, /this\.rememberBoardFile\(target\);/, "新文件即时进库缓存：库里立即可见");
+  assert.match(INDEX, /sceneToSvgText\(\{ elements: \[\], appState: \{\}, files: \{\} \}\)/, "落一份空 scene 的 SVG（创建即文件）");
+  assert.match(INDEX, /创建白板失败：\{msg\}/, "创建失败给可见提示，不静默");
 });
 
-test("宿主：建档手工记账进缓存，文件项同步补「已建档」", () => {
-  assert.match(INDEX, /rememberBoardDoc\(docId, title, ref\);/, "建档后记账（不等即时 SQL）");
-  assert.match(INDEX, /f\.dataPath === dataPath \? \{ \.\.\.f, docId, docTitle: title \|\| t\("无标题"\) \} : f/, "文件项补绑定，徽标即时可见");
-});
-
-test("宿主：删除链路 = 先关页签（不冲刷）→ 删文件/备份/文档 → 缓存出账", () => {
+test("宿主：删除链路 = 先关页签（不冲刷）→ 删文件/备份 → 缓存出账", () => {
   assert.match(INDEX, /if \(s\.data\.dataPath === item\.dataPath\) s\.closeForDelete\(\);/, "开着的页签先关，且不等冲刷");
   assert.match(INDEX, /await removeSvg\(plan\.svgPath\);/, "删工程文件");
   assert.match(INDEX, /for \(const bak of plan\.bakPaths\)[\s\S]{0,120}await removeSvg\(bak\);/, "第十九轮：备份逐档删，每档都可能不存在");
-  assert.match(INDEX, /await removeDoc\(plan\.doc\.id\);/, "有绑定文档时连文档一起删");
   assert.match(INDEX, /this\.boardFiles = this\.boardFiles\.filter\(\(f\) => f\.dataPath !== item\.dataPath\);/, "文件列表出账");
-  assert.match(INDEX, /this\.boardDocs = this\.boardDocs\.filter\(\(d\) => d\.docId !== plan\.doc\?\.id\);/, "文档列表出账");
   assert.match(INDEX, /deletePlanOf\(item\)/, "确认框列单走纯函数，删前列全");
   assert.match(INDEX, /删除不可恢复/, "确认框明示不可恢复");
-  assert.match(DOC, /export async function removeDoc/, "removeDoc 封装在 doc.ts");
 });
 
 test("宿主：页签侧 closeForDelete 不冲刷、不弹确认（删除已确认过）", () => {
@@ -234,43 +189,21 @@ test("宿主：deleteActiveBoard 只对活动画布有意义，其余现刷库�
 test("宿主：行右键菜单 = siyuan Menu 全套动作，面板零 siyuan import", () => {
   assert.match(INDEX, /import \{[^}]*\bMenu\b[^}]*\} from "siyuan"/, "Menu 从 siyuan 导入");
   assert.match(INDEX, /new Menu\("excali-file-menu"\)/);
-  assert.match(INDEX, /label: t\("建档"\), click: \(\) => void this\.adoptBoardFile\(item\)/, "未建档给建档");
-  assert.match(INDEX, /label: t\("打开存档文档"\)/, "已建档给打开文档");
-  assert.match(INDEX, /embedRef\(item\.docId\)/, "嵌入项复制裸 ![[id]]");
-  assert.match(INDEX, /inlineRef\(item\.docId, item\.docTitle\)/, "行内项带标题别名");
+  assert.match(INDEX, /label: t\("复制图片引用"\)/, "复制引用 = 图片嵌入 markdown（建档已移除）");
+  assert.match(
+    INDEX,
+    /!\[\$\{boardDisplayName\(item\)\}\]\(\$\{toAssetRef\(item\.dataPath\)\}\)/,
+    "复制物 = ![标题](assets/excali/x.svg)，思源原生图片语法粘贴即用",
+  );
   assert.match(INDEX, /label: t\("删除…"\), click: \(\) => void this\.deleteBoardFile\(item\)/, "删除走确认框");
   assert.equal(DOCK.includes('from "siyuan"'), false, "库数据与菜单全走 DockHost 接口，面板不 import 思源 API");
 });
 
-test("宿主：重命名后同步 custom-excali-svg + 开着的页签会话跟位", () => {
-  assert.match(INDEX, /renameBoard[\s\S]*?重命名后同步白板绑定失败/, "renameBoard 里有 setBlockAttrs 兜同步");
+test("宿主：重命名后开着的页签会话跟位（绑定同步随建档退役）", () => {
   assert.match(INDEX, /renameBoard[\s\S]*?void this\.refreshBoardLib\(\);/, "改名后全量重同步列表");
   assert.match(INDEX, /private applyRenameToSession\(oldPath: string, newPath: string\): void \{/, "dock 发起改名要自己接住会话");
   assert.match(INDEX, /s\.data\.dataPath = newPath;[\s\S]{0,80}s\.tab\.updateTitle\(fileNameOf\(newPath\)\);/, "页签 data/标题跟上，去重才继续成立");
-});
-
-test("批3 守卫：总开关 + 每会话一次（先占位）+ 负缓存", () => {
-  assert.match(INDEX, /if \(!this\.settings\.autoOpenBoard\) return;/, "守卫①设置开关");
-  assert.match(INDEX, /if \(this\.autoOpenedDocs\.has\(rootID\)\) return;[\s\S]*?this\.autoOpenedDocs\.add\(rootID\);/, "守卫②先占位：失败也不再重来");
-  assert.match(INDEX, /getBlockAttrs\(rootID\)\)\["custom-excali-svg"\] \|\| "";/, "现查一次并写负缓存");
-  assert.match(INDEX, /boardSvgByDocId\.set\(rootID, svg\);/, "非白板文档记成空串，只查一次");
-});
-
-test("批3 注入：doctree 走元素属性判型，filetab 强转 + try/catch", () => {
-  assert.match(INDEX, /"switch-protyle"/, "切文档事件");
-  assert.match(INDEX, /"open-menu-doctree"/);
-  assert.match(INDEX, /getAttribute\("data-type"\) !== "navigation-file"/, "B94 教训：detail.type 不可靠");
-  assert.match(INDEX, /getAttribute\("data-node-id"\)/);
-  assert.match(INDEX, /"open-menu-filetab"/, "文件页签右键（不在 siyuan.d.ts，强转挂）");
-  assert.match(INDEX, /文件页签菜单注入失败/, "filetab 整体 try/catch");
-  assert.match(INDEX, /open-menu-doctree[\s\S]*?在画板中打开/, "菜单项同步 addItem，label 过 t()");
-});
-
-test("批3 设置页：白板目录 + 自动开板 + 自动建档，confirmCallback 统一收口", () => {
-  assert.match(INDEX, /boardDir: boardDirEl\?\.value \?\? this\.settings\.boardDir,/);
-  assert.match(INDEX, /autoOpenBoard: autoOpenEl\?\.checked \?\? this\.settings\.autoOpenBoard,/);
-  assert.match(INDEX, /autoCreateDoc: autoCreateDocEl\?\.checked \?\? this\.settings\.autoCreateDoc,/);
-  assert.match(INDEX, /t\("新建时自动建档"\)/, "设置项标题（第二十一轮随文件先行改名）");
+  assert.equal(/重命名后同步白板绑定/.test(INDEX), false, "建档移除：改名不再同步文档绑定");
 });
 
 /* ------------------------------ 接线：dock 面板 ------------------------------ */
@@ -287,39 +220,34 @@ test("dock：原生形态复刻 kmind-zen——原生头部 + 原生列表（搜
   assert.equal(DOCK.includes("exs-dock__swatch"), false, "背景色板已删（☰ 有 ChangeCanvasBackground）");
   assert.match(DOCK, /data-role="del-active"[\s\S]*?disabled/, "删除按钮初始禁用（没有打开的白板）");
   assert.match(DOCK, /delActiveBtn\.disabled = !host\.hasActiveBoard\(\);/, "置灰态走窄接口，只随结构事件变");
-  assert.match(DOCK, /t\("已建档"\)/, "建档徽标");
-  assert.match(DOCK, /fileLibViewKey\(view\.files, view\.opened\)/, "指纹含打开态与绑定");
+  assert.equal(DOCK.includes("已建档"), false, "建档移除：「已建档」徽标退役");
+  assert.match(DOCK, /fileLibViewKey\(view\.files, view\.opened\)/, "指纹含打开态");
   assert.match(DOCK, /t\("已打开"\)/);
   assert.match(DOCK, /const refresh = \(\): void => \{\s*renderLib\(\);/, "refresh 只刷库 + 置灰态，没有每帧状态路径");
 });
 
-test("dock：单击开画板、右键行进宿主菜单、双击开文档，均经窄接口", () => {
+test("dock：单击开画板、右键行进宿主菜单，均经窄接口（双击开文档随建档退役）", () => {
   assert.match(DOCK, /host\.openBoardFile\(file\)/);
   assert.match(DOCK, /host\.openFileMenu\(file, e\.clientX, e\.clientY\)/);
   assert.match(DOCK, /e\.preventDefault\(\);/, "挡掉浏览器/dock 默认上下文菜单");
-  assert.match(DOCK, /libFiles\.find\(\(f\) => f\.dataPath === row\.dataset\.file\)\?\.docId/, "双击只对已建档的行开文档");
   assert.match(DOCK, /host\.deleteActiveBoard\(\)/);
+  assert.equal(DOCK.includes("dblclick"), false, "建档移除：双击开绑定文档退役");
+  assert.equal(DOCK.includes("openDocOf"), false, "DockHost 不再有 openDocOf");
   assert.equal(DOCK.includes('from "@excalidraw'), false);
 });
 
-/* ------------------------------ 接线：批4 复制引用 + 体检 ------------------------------ */
+/* ------------------------------ 接线：☰ 复制引用 ------------------------------ */
 
-test("批4 ☰ 复制引用：docId 先取页签数据、缺了按 svg 反查；未建档一键建档（2026-10-25 大修）", () => {
+test("☰ 复制引用：复制图片嵌入 markdown ![标题](assets/x.svg)（建档移除后的口径）", () => {
   assert.match(TAB, /onCopyBoardRef=\{\(\) => host\.copyBoardRef\(custom\)\}/, "渲染时闭包补 custom");
-  assert.match(INDEX, /session\.data\.docId \?\? \(path \? this\.boardDocs\.find\(\(d\) => toDataPath\(d\.svg\) === path\)\?\.docId : undefined\)/, "旧会话恢复的页签没存 docId → 反查库缓存");
-  assert.match(INDEX, /private async copyBoardRefFor[\s\S]*?adoptBoardFile\(item\)/, "未建档 → 复用右键建档全流程，一步到位");
-  assert.match(INDEX, /private async copyBoardRefFor[\s\S]*?inlineRef\(docId, title\)/, "复制物 = 行内块引用 ((id \"标题\"))，粘贴即用");
-  assert.equal(/private async copyBoardRefFor[\s\S]*?embedRef\(/.test(INDEX), false, "默认复制物不再是 ![[id]]（Obsidian 语法，思源正文粘贴不转换）");
-});
-
-test("批4 体检：防重入 + 先刷库 + fileExists 逐个查；只报断链（未建档不是问题）", () => {
-  assert.match(INDEX, /if \(this\.checkupRunning\) return;/);
-  assert.match(INDEX, /runCheckup[\s\S]*?await this\.refreshBoardLib\(\);/, "体检先全量刷新库");
-  assert.match(INDEX, /if \(!\(await fileExists\(toDataPath\(d\.svg\)\)\)\) missing\.push\(d\);/, "断链 = 绑定的 svg 读不到");
-  assert.match(INDEX, /断链文档：\{n\}/);
-  assert.match(INDEX, /体检完成：没有断链的白板文档/, "全好的口径");
-  assert.equal(INDEX.includes("孤儿 SVG"), false, "文件即白板，没有孤儿概念了");
-  assert.match(INDEX, /t\("开始体检"\)/, "设置页按钮");
+  assert.match(INDEX, /private copyBoardRefFor\(custom: Custom\): void \{/, "同步函数：不再需要建档的异步链");
+  assert.match(INDEX, /已复制图片引用：粘贴到思源正文即插入白板/, "成功提示点明粘贴即插入");
+  assert.match(
+    INDEX,
+    /!\[\$\{title\}\]\(\$\{toAssetRef\(path\)\}\)/,
+    "复制物 = ![标题](assets/excali/x.svg)，思源原生图片语法粘贴即用",
+  );
+  assert.equal(/embedRef\(|inlineRef\(/.test(INDEX), false, "文档 id 引用形态（![[id]] / ((id))）随建档退役");
 });
 
 /* ------------------------------ 第二十五轮：专属目录 ------------------------------ */
@@ -330,11 +258,11 @@ test("专属目录：默认 assets/excali，库只扫这个目录；登记表退
   assert.equal(INDEX.includes("boards: [...this.boardRegistry]"), false, "持久化不再写 boards");
   assert.match(INDEX, /this\.settings = \{ \.\.\.this\.settings, saveDir: DEDICATED_BOARD_DIR \};/, "迁移完成把保存目录指到专属目录");
   assert.match(INDEX, /this\.dirMigrated = failed\.length === 0;/, "部分失败不置完成标记，下次启动补搬");
-  assert.match(INDEX, /migrationCandidates\(\{/, "候选只走四条真源");
-  assert.match(INDEX, /recent: this\.recent,[\s\S]{0,120}registry: this\.legacyBoards,[\s\S]{0,120}docSvgs:/, "recent/旧登记表/文档绑定都进候选");
+  assert.match(INDEX, /migrationCandidates\(\{/, "候选只走三条真源");
+  assert.match(INDEX, /recent: this\.recent,[\s\S]{0,120}registry: this\.legacyBoards,[\s\S]{0,120}autoNamed/, "recent/旧登记表/自动命名都进候选（文档绑定候选随建档退役）");
+  assert.equal(/docSvgs/.test(INDEX + read("src/studio/migration.ts")), false, "建档移除：迁移候选不再有文档绑定来源");
   assert.match(INDEX, /isAutoNamedBoard\(fileNameOf\(p\)\)/, "自动命名扫描");
   assert.match(INDEX, /renameSvg\(old, await uniqueTargetPath\(DEDICATED_BOARD_DIR, fileNameOf\(old\)\)\)/, "搬文件带 .bak 链、撞名避重");
-  assert.match(INDEX, /await setBlockAttrs\(d\.id, \{ "custom-excali-svg": toAssetRef\(next\) \}\)/, "文档绑定跟到新路径");
   assert.match(INDEX, /this\.recent = remapPaths\(this\.recent, remap\)/, "recent 跟到新路径");
 });
 
@@ -343,15 +271,6 @@ test("恢复页签旧路径：读盘失败换到保存目录同名文件，并�
   assert.match(TAB, /data\.dataPath = remapped;/, "页签数据跟位（否则下次保存写回旧路径）");
   assert.match(INDEX, /remapPath: \(dataPath\) => this\.remapBoardPath\(dataPath\)/, "宿主窄接口接线");
   assert.match(INDEX, /joinSavePath\(this\.settings\.saveDir, fileNameOf\(old\)\)/, "按文件名到保存目录找");
-});
-
-test("第二十五轮：搬家/改名把正文里的图片引用一起改（否则建档文档断图）", () => {
-  assert.match(DOC, /export async function rewriteAssetRefs\(oldRef: string, newRef: string\)/, "文档层提供引用改写");
-  assert.match(DOC, /content LIKE '\$\{sq\(pattern\)\}' ESCAPE/, "按 blocks.content 找引用，LIKE 通配符要转义");
-  assert.match(DOC, /getBlockKramdown/, "取正文再替换（updateBlock 只吃 markdown）");
-  assert.match(DOC, /kramdown\.split\(oldRef\)\.join\(newRef\)/, "全量替换同一路径的每处引用");
-  assert.match(INDEX, /rewriteAssetRefs\(toAssetRef\(old\), toAssetRef\(saved\)\)/, "迁移搬完文件即改正文引用");
-  assert.match(INDEX, /rewriteAssetRefs\(toAssetRef\(oldData\), toAssetRef\(saved\)\)/, "重命名同样改正文引用（老缺口一并补上）");
 });
 
 /* ------------------------------ 接线：第十九轮 BAK 纪律 + 恢复入口 ------------------------------ */

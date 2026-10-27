@@ -8,4 +8,4 @@
 export const STUDIO_TAB_TYPE = "board";
 
 /** 会被 layout.json 持久化（customModelData），只允许放可 JSON 化的数据 */
-export type StudioTabData = { dataPath: string | null; docId?: string };
+export type StudioTabData = { dataPath: string | null };

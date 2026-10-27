@@ -219,8 +219,8 @@ test("i18n：白板卡片词条双语齐备，中文原文即 key", () => {
   }
 });
 
-test("卡片显示名口径：建档用文档标题，未建档剥 .svg", () => {
-  const item = { dataPath: "/data/assets/excali/a.svg", name: "a.svg", docId: "", docTitle: "", updated: 0 };
+test("卡片显示名口径：剥 .svg 用文件名（建档移除，无文档标题）", () => {
+  const item = { dataPath: "/data/assets/excali/a.svg", name: "a.svg", updated: 0 };
   assert.equal(boardDisplayName(item), "a");
-  assert.equal(boardDisplayName({ ...item, docId: "x", docTitle: "看板" }), "看板");
+  assert.equal(boardDisplayName({ ...item, name: "设计草图.svg" }), "设计草图");
 });

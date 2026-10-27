@@ -94,10 +94,8 @@ export type StudioTabSession = {
 /** 还原 custom.data（含 layout.json 恢复进来的），容忍脏值 */
 export function parseTabData(raw: unknown): StudioTabData {
   const p = raw && typeof raw === "object" ? (raw as { dataPath?: unknown }).dataPath : null;
-  const d = raw && typeof raw === "object" ? (raw as { docId?: unknown }).docId : undefined;
   return {
     dataPath: typeof p === "string" && p !== "" ? toDataPath(p) : null,
-    docId: typeof d === "string" && d !== "" ? d : undefined,
   };
 }
 

@@ -69,4 +69,36 @@ export function decorateBoardBlocks(container: ParentNode, actions: BoardDecorat
       attr.prepend(badge);
     }
   }
+
+  sweepBoardDecorations(container, actions);
+}
+
+/**
+ * 2026-10-27 清扫腿（修「删图后 Excali 徽标残留」）：↗/徽标是注入的外来 DOM，
+ * 思源删块/清空内容只管自己渲染的节点，注入物成了孤儿挂在空块上。这里把容器里
+ * 所有已注入装饰反查一遍——所在块里已没有白板图（或块已脱离文档）就摘除。
+ * 与加腿同一次扫描里跑，重扫天然幂等：加腿补缺、扫腿清孤儿。
+ */
+export function sweepBoardDecorations(container: ParentNode, actions: BoardDecorateActions): void {
+  let decorated: NodeListOf<HTMLElement>;
+  try {
+    decorated = container.querySelectorAll<HTMLElement>(`[${OPEN_FLAG}], [${BADGE_FLAG}]`);
+  } catch {
+    return;
+  }
+  for (const el of decorated) {
+    if (!el.isConnected) continue;
+    const node = el.closest<HTMLElement>("[data-node-id]");
+    if (node && node.isConnected && blockHasBoardImg(node, actions)) continue;
+    el.remove();
+  }
+}
+
+/** 块内是否还挂着白板图（清扫判据：与加腿同一套 ref 归一） */
+function blockHasBoardImg(node: HTMLElement, actions: BoardDecorateActions): boolean {
+  for (const img of node.querySelectorAll<HTMLImageElement>("img[data-src], img[src]")) {
+    const ref = img.getAttribute("data-src") || img.getAttribute("src") || "";
+    if (ref && actions.isBoardAsset(ref)) return true;
+  }
+  return false;
 }

@@ -54,7 +54,7 @@ export type StudioMenuProps = {
   onExport: () => void;
   /** 重命名：读旧写新删旧 */
   onRename: () => void;
-  /** 2026-10-16 批4A：复制此白板的嵌入引用（未建档时由宿主提示） */
+  /** 复制此白板的引用（图片嵌入 markdown，粘贴进正文即插入白板） */
   onCopyRef: () => void;
   /** 缩放适应：缩放并滚动到全部内容 */
   onZoomToFit: () => void;

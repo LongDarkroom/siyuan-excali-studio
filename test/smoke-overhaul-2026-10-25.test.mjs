@@ -51,13 +51,14 @@ test("菜单实底：毛玻璃升级块已移除，token 不再被引用", () =>
 
 /* ---------------- 复制此白板的引用：语义重做 ---------------- */
 
-test("copyBoardRefFor：未建档一键建档 + 复制行内引用（非 ![[嵌入语法]]）", () => {
+test("copyBoardRefFor：复制图片嵌入 markdown（建档移除后的口径，非文档 id 引用）", () => {
   const src = read("src/index.ts");
-  const m = /private async copyBoardRefFor\(custom: Custom\): Promise<void> \{([\s\S]*?)\n  \}/.exec(src);
+  const m = /private copyBoardRefFor\(custom: Custom\): void \{([\s\S]*?)\n  \}/.exec(src);
   assert.ok(m, "应能定位 copyBoardRefFor");
-  assert.ok(m[1].includes("adoptBoardFile"), "未建档时应一键建档（复用右键建档全流程）");
-  assert.ok(m[1].includes("inlineRef("), "复制物应是行内块引用 ((id \"标题\"))——思源原生、粘贴即用");
-  assert.ok(!m[1].includes("embedRef("), "默认复制物不应再是 ![[id]]（Obsidian 语法，思源粘贴不转换）");
+  assert.ok(m[1].includes("toAssetRef(path)"), "复制物应基于白板文件的 assets 引用");
+  assert.ok(/!\[\$\{title\}\]\(\$/.test(m[1]), "复制物应是思源原生图片语法 ![标题](assets/excali/x.svg)，粘贴即插入白板");
+  assert.ok(!m[1].includes("adoptBoardFile"), "建档已移除：复制引用不再触发建档");
+  assert.ok(!m[1].includes("embedRef(") && !m[1].includes("inlineRef("), "文档 id 引用形态（![[id]] / ((id))）退役");
 });
 
 /* ---------------- agent 通道：注册时序 + 调用复查 ---------------- */
@@ -114,11 +115,11 @@ test("library-import 落地页：指引指向素材库面板 ⋮ 菜单（☰ �
 test("大修新增词条双语齐备，死键已清", () => {
   const zh = JSON.parse(read("i18n/zh_CN.json"));
   const en = JSON.parse(read("i18n/en_US.json"));
-  for (const k of ["还没有关联文档，复制不了引用", "已复制行内引用：粘贴到思源正文即成块引用", "通道已关闭：内置智能体"]) {
+  for (const k of ["复制图片引用", "已复制图片引用：粘贴到思源正文即插入白板", "白板还没保存，保存后才能复制引用", "通道已关闭：内置智能体"]) {
     assert.ok(zh[k], `zh_CN 缺：${k}`);
     assert.ok(en[k], `en_US 缺：${k}`);
   }
-  for (const dead of ["还没建档，复制不了引用：在白板行右键「建档」", "还没有脚本：首次启用会自动安装 4 个内置脚本到 {dir}"]) {
+  for (const dead of ["还没建档，复制不了引用：在白板行右键「建档」", "还没有脚本：首次启用会自动安装 4 个内置脚本到 {dir}", "还没有关联文档，复制不了引用", "已复制行内引用：粘贴到思源正文即成块引用", "建档", "已建档", "打开存档文档", "新建时自动建档"]) {
     assert.ok(!(dead in zh) && !(dead in en), `死键应删除：${dead}`);
   }
 });
