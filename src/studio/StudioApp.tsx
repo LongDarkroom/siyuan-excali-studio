@@ -99,6 +99,8 @@ import {
   EMBED_DEFAULT_HEIGHT,
   EMBED_DEFAULT_WIDTH,
   blockIdOfEmbedLink,
+  blockLinkIconElementOf,
+  blockLinkIconLayout,
   blockLinkTextSkeleton,
   embedPageLink,
   hasSiYuanDrag,
@@ -109,6 +111,7 @@ import {
   pluginEmbeddableAt,
   siYuanDropIds,
 } from "./embeddable";
+import { blockIconKeyOf, svgIconDataUrl } from "./block-icons.ts";
 import { fileNameOf, stampFileName } from "./storage";
 import type { BoardActions } from "./board-actions";
 import { createEaBoardHandle } from "./ea-handle";
@@ -153,7 +156,7 @@ export type StudioProps = {
   /** 2026-10-15 阶段 A：重命名前问文件名；取消返回 null（新建的命名框在宿主侧 openNew） */
   promptFileName: (suggested: string, title: string) => Promise<string | null>;
   /** 2026-10-25 紧凑文档链接：批量取块标题（宿主走内核 SQL，失败返回空映射） */
-  fetchBlockTitles: (ids: string[]) => Promise<Record<string, string>>;
+  fetchBlockMetas: (ids: string[]) => Promise<Record<string, { title: string; type: string; subtype: string }>>;
   /** 2026-10-15 阶段 A：重命名（读旧写新删旧）；返回新 /data 路径 */
   onRename: (oldPath: string, newName: string) => Promise<string>;
   /** 2026-10-15 阶段 B：图库持久化（读写 assets/excali-library.json，宿主实现） */
@@ -256,7 +259,7 @@ export function StudioApp(props: StudioProps) {
     onSave,
     saveMedia,
     onOpenDocLink,
-    fetchBlockTitles,
+    fetchBlockMetas,
     onDirtyChange,
     notify,
     showWelcome,
@@ -1402,27 +1405,77 @@ export function StudioApp(props: StudioProps) {
       }
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
       const at = clientToScene(api, rect, e.clientX, e.clientY);
-      // 文字用主题强调色（--exs-accent 两态）：上游不给链接文字着色，创建时自己上
+      // 文字与图标用主题强调色（--exs-accent 两态）：上游不给链接文字着色，创建时自己上
       const accent = mode === "dark" ? "#a8a5ff" : "#6965db";
       void (async () => {
-        // 标题拿不到（SQL 挂/索引延迟）不挡插入：回退块号
-        const titles = await fetchBlockTitles(ids).catch(() => ({}) as Record<string, string>);
-        const cols = Math.ceil(Math.sqrt(ids.length));
-        const gapY = Math.round(BLOCK_LINK_FONT_SIZE * 1.25) + 28;
-        const skeletons = ids.map((blockId, i) =>
-          blockLinkTextSkeleton({
-            blockId,
-            title: titles[blockId],
-            x: at.x + (i % cols) * 460,
-            y: at.y + Math.floor(i / cols) * gapY,
-            accent,
-          }),
+        // 元数据拿不到（SQL 挂/索引延迟/数据库行）不挡插入：回退块号 + 通用图标
+        const metas = await fetchBlockMetas(ids).catch(
+          () => ({}) as Record<string, { title: string; type: string; subtype: string }>,
         );
-        // vendor 公开 API：skeleton → 正规元素（量宽高/补默认），别手工拼字段
+        // 字体跟随：白板当前默认字体/字号（选择器选什么就是什么；读不到回落 1 / 20）
+        const appState = api.getAppState() as { currentItemFontFamily?: unknown; currentItemFontSize?: unknown };
+        const fontFamily = String(appState.currentItemFontFamily ?? 1);
+        const fontSize = Number(appState.currentItemFontSize) || BLOCK_LINK_FONT_SIZE;
+        const iconLayout = blockLinkIconLayout(fontSize);
+        const cols = Math.ceil(Math.sqrt(ids.length));
+        const gapY = Math.round(fontSize * 1.25) + 28;
+        const stamp = Date.now().toString(36);
+        const iconEls: Record<string, unknown>[] = [];
+        const skeletons = ids.map((blockId, i) => {
+          const meta = metas[blockId];
+          const x = at.x + (i % cols) * 460;
+          const y = at.y + Math.floor(i / cols) * gapY;
+          const gid = `siyuan-drop-${stamp}-${i}`;
+          const fileId = `icon-${stamp}-${i}`;
+          // 图标 file：思源官方图标 path 按强调色着色（SVG dataURL，外置通道往返）
+          api.addFiles([
+            {
+              id: fileId,
+              dataURL: svgIconDataUrl(blockIconKeyOf(meta?.type, meta?.subtype), accent),
+              mimeType: "image/svg+xml",
+              created: Date.now(),
+            } as never,
+          ]);
+          iconEls.push(
+            blockLinkIconElementOf({
+              id: `icon-el-${stamp}-${i}`,
+              fileId,
+              x,
+              y: y + iconLayout.dy,
+              size: iconLayout.size,
+              // 不挂 link：vendor 给每个带链接的选中元素画 ↗ 角标，双挂=双角标；
+              // 点击跳转由同组文字元素承担（vendor 会把组内点击落到带链接成员）
+              link: null,
+              groupIds: [gid],
+              index: `a${i}`,
+              seed: 123456789 + i,
+            }),
+          );
+          return blockLinkTextSkeleton({
+            blockId,
+            title: meta?.title,
+            x: x + iconLayout.textOffsetX,
+            y,
+            accent,
+            fontFamily,
+            fontSize,
+          });
+        });
+        // vendor 公开 API：skeleton → 正规元素（量宽高/补默认字段），别手工拼字段
         const els = convertToExcalidrawElements(skeletons as never[]) as { id: unknown }[];
+        // 成组：icon 与 text 同 groupIds（vendor 的 skeleton 转换不透传 groupIds，
+        // 插场前补写——updateScene 的 restore 原样保留）
+        els.forEach((el, i) => {
+          const rec = el as Record<string, unknown>;
+          rec.groupIds = [`siyuan-drop-${stamp}-${i}`];
+        });
         api.updateScene({
-          elements: [...api.getSceneElements(), ...(els as never[])],
-          appState: { selectedElementIds: Object.fromEntries(els.map((el) => [String(el.id), true])) },
+          elements: [...api.getSceneElements(), ...(els as never[]), ...(iconEls as never[])],
+          appState: {
+            selectedElementIds: Object.fromEntries(
+              [...els.map((el) => String(el.id)), ...iconEls.map((el) => String(el.id))].map((id) => [id, true]),
+            ),
+          },
         });
         notify(t("已插入 {n} 个思源链接，单击打开对应文档", { n: ids.length }));
       })();

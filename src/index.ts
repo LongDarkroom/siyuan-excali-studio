@@ -75,7 +75,7 @@ import {
   refreshAssetImages,
   svgAssetPathOf,
   trackEditor,
-  fetchBlockTitles,
+  fetchBlockMetas,
   resolveLute,
 } from "./siyuan/doc";
 import { decorateBoardBlocks } from "./studio/board-block-decorate";
@@ -604,7 +604,8 @@ export default class ExcaliStudioPlugin extends Plugin {
       openDocLink: (link) => this.openBoardDocLink(link),
       promptFileName: (suggested, title) => this.promptFileName(suggested, title),
       // 2026-10-25 紧凑文档链接：拖入文字的标题来源（doc.ts 内部自带失败容错）
-      fetchBlockTitles: (ids) => fetchBlockTitles(ids),
+      // 2026-10-28：改取元数据（title + type/subtype，图标分层用）
+      fetchBlockMetas: (ids) => fetchBlockMetas(ids),
       onRename: (oldPath, newName) => this.renameBoard(oldPath, newName),
       loadLibraryItems: () => this.loadLibraryItems(),
       saveLibraryItems: (items) => this.saveLibraryItems(items),

@@ -12,7 +12,7 @@ import {
   SIYUAN_DROP_FILE,
   blockIdOfEmbedLink,
   blockLinkTextSkeleton,
-  blockTitlesSqlOf,
+  blockMetasSqlOf,
   embedPageLink,
   hasSiYuanDrag,
   pluginEmbeddableAt,
@@ -105,9 +105,12 @@ test("onCanvasDrop：思源分支在最前，生成紧凑链接文字（二轮�
   const drop = app.slice(app.indexOf("const onCanvasDrop"), app.indexOf("const board = decodeBoardDrag"));
   assert.ok(drop.includes("hasSiYuanDrag(types)"), "先判思源拖拽标记");
   assert.ok(drop.includes("siYuanDropIds("), "drop 阶段解析块 ID");
-  assert.ok(drop.includes("fetchBlockTitles("), "批量取标题（失败回退块号）");
+  assert.ok(drop.includes("fetchBlockMetas("), "批量取元数据（失败回退块号 + 通用图标）");
   assert.ok(drop.includes("blockLinkTextSkeleton("), "生成 text 骨架");
+  assert.ok(drop.includes("blockIconKeyOf(") && drop.includes("svgIconDataUrl("), "类型图标进主流程");
+  assert.ok(drop.includes("currentItemFontFamily"), "字体跟随画布默认字体");
   assert.ok(drop.includes("convertToExcalidrawElements("), "经 vendor 公开 API 正规化，不手工拼字段");
+  assert.ok(drop.includes("link: null"), "图标不挂 link（2026-10-28 双角标修复：vendor 对带链接的选中元素各画一个 ↗）");
   assert.ok(drop.includes('mode === "dark" ? "#a8a5ff" : "#6965db"'), "文字用主题强调色两态");
   assert.ok(drop.includes("已插入 {n} 个思源链接，单击打开对应文档"), "结果反馈带用法提示");
   assert.ok(drop.includes("selectedElementIds"), "插入后选中");
@@ -133,12 +136,12 @@ test("紧凑链接纯函数：截断 / 空标题回退块号 / link 形态（Obs
   assert.ok(fallback.text.startsWith("块 "), "空标题回退块号");
 });
 
-test("blockTitlesSqlOf：in 子句拼接 + 形状双保险过滤（防注入）", () => {
-  const sql = blockTitlesSqlOf([ID_A, ID_B]);
-  assert.ok(sql.startsWith("select id, content from blocks where id in ("));
+test("blockMetasSqlOf：in 子句拼接 + 形状双保险过滤（防注入）+ 四列（type/subtype 2026-10-28）", () => {
+  const sql = blockMetasSqlOf([ID_A, ID_B]);
+  assert.ok(sql.startsWith("select id, content, type, subtype from blocks where id in ("));
   assert.ok(sql.includes(`'${ID_A}'`) && sql.includes(`'${ID_B}'`), "两个 id 各自成引号项");
-  assert.equal(blockTitlesSqlOf([]), "");
-  assert.equal(blockTitlesSqlOf(["'; drop table blocks;--"]), "", "非块形状的输入整体拒绝");
+  assert.equal(blockMetasSqlOf([]), "");
+  assert.equal(blockMetasSqlOf(["'; drop table blocks;--"]), "", "非块形状的输入整体拒绝");
 });
 
 test("拖拽提示条：dragover 亮 / dragLeave 出界灭 / drop 收", () => {

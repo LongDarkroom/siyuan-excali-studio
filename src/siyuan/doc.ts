@@ -10,7 +10,7 @@
  */
 
 import { getAllEditor, type IProtyle, type Plugin } from "siyuan";
-import { blockTitlesSqlOf } from "../studio/embeddable";
+import { blockMetasSqlOf } from "../studio/embeddable";
 import { t } from "../i18n";
 import { assetWebPath, fromAssetRef } from "../studio/storage.ts";
 
@@ -71,14 +71,29 @@ export function resolveLute(protyle: unknown): { Md2BlockDOM?: (md: string) => s
   return p?.protyle?.lute ?? p?.lute ?? (window as unknown as { Lute?: LuteLike }).Lute ?? null;
 }
 
-export async function fetchBlockTitles(ids: string[]): Promise<Record<string, string>> {
-  const stmt = blockTitlesSqlOf(ids);
+/**
+ * 2026-10-25 紧凑文档链接：批量取块元数据（IO 侧）。
+ * SQL 拼接的纯函数在 studio/embeddable.ts 的 blockMetasSqlOf（node 可测）；
+ * 文档块的 content 就是标题，段落块的 content 是正文文本（画布侧截断显示）。
+ * 2026-10-28 起连 type/subtype 一起取（拖入图标的类型分层用）。
+ * 任何失败返回空映射——元数据拿不到只影响显示文字与图标（回退块号 + 通用图标），
+ * 绝不挡拖拽。
+ */
+export type SiyuanBlockMeta = { title: string; type: string; subtype: string };
+
+export async function fetchBlockMetas(ids: string[]): Promise<Record<string, SiyuanBlockMeta>> {
+  const stmt = blockMetasSqlOf(ids);
   if (!stmt) return {};
   try {
-    const rows = await querySql<{ id?: string; content?: string }>(stmt);
-    const out: Record<string, string> = {};
+    const rows = await querySql<{ id?: string; content?: string; type?: string; subtype?: string }>(stmt);
+    const out: Record<string, SiyuanBlockMeta> = {};
     for (const r of rows) {
-      if (typeof r.id === "string" && typeof r.content === "string") out[r.id] = r.content;
+      if (typeof r.id !== "string") continue;
+      out[r.id] = {
+        title: typeof r.content === "string" ? r.content : "",
+        type: typeof r.type === "string" ? r.type : "",
+        subtype: typeof r.subtype === "string" ? r.subtype : "",
+      };
     }
     return out;
   } catch {

@@ -243,6 +243,8 @@ export type BlockLinkSkeleton = {
  * 块 ID + 标题 → 紧凑链接文字骨架。strokeColor 由调用方按明暗主题给
  * （StudioApp 传 --exs-accent 两态值）；link 用 siyuan:block/ 形态，单击由
  * vendor 原生 onLinkOpen 触发（StudioApp 已拦截 siyuan: 前缀 → 右侧分屏）。
+ * fontFamily 2026-10-28 起跟随画布当前默认字体（vendor appState 的
+ * currentItemFontFamily 数字枚举的字符串形态），缺省回落 "1"（Excalifont）。
  */
 export function blockLinkTextSkeleton(opts: {
   blockId: string;
@@ -251,6 +253,7 @@ export function blockLinkTextSkeleton(opts: {
   y: number;
   accent: string;
   fontSize?: number;
+  fontFamily?: string;
 }): BlockLinkSkeleton {
   const text = truncateBlockTitle(opts.title) || `块 ${opts.blockId.slice(-6)}`;
   return {
@@ -259,7 +262,7 @@ export function blockLinkTextSkeleton(opts: {
     y: opts.y,
     text,
     fontSize: opts.fontSize ?? BLOCK_LINK_FONT_SIZE,
-    fontFamily: "1",
+    fontFamily: opts.fontFamily ?? "1",
     textAlign: "left",
     verticalAlign: "top",
     strokeColor: opts.accent,
@@ -267,14 +270,99 @@ export function blockLinkTextSkeleton(opts: {
   };
 }
 
+/* ---------------- 2026-10-28 拖拽链接：类型图标（Obsidian 式「图标 + 文字」） ----------------
+ * 图标本体是微型 image 元素（思源官方图标 path 着色成 SVG dataURL，经 addFiles
+ * 注册），与文字同 groupIds 成组、同 link 可点。本模块保持零 vendor 依赖：
+ * 布局换算与 image 元素构造都是纯函数，node 单测直跑；图标 path 表在
+ * studio/block-icons.ts（同为零依赖纯模块）。
+ */
+
+/** 图标边长系数（相对字号）与图标-文字间距（场景单位） */
+export const BLOCK_LINK_ICON_RATIO = 1.1;
+export const BLOCK_LINK_ICON_GAP = 6;
+
+export type BlockLinkIconLayout = {
+  /** 图标边长（场景单位） */
+  size: number;
+  /** 图标相对文字落点 y 的下沉（对一行文字垂直居中） */
+  dy: number;
+  /** 文字相对落点 x 的右移（让出图标 + 间距） */
+  textOffsetX: number;
+};
+
 /**
- * 批量取块标题的 SQL（纯函数，node 可测；IO 在 siyuan/doc.ts 的 fetchBlockTitles）。
+ * 一行文字的高按 vendor 的 lineHeight 1.25 估（拖入文字恒单行：
+ * truncateBlockTitle 压空白且限长，不换行），图标对它垂直居中。
+ */
+export function blockLinkIconLayout(fontSize: number): BlockLinkIconLayout {
+  const fs = Number.isFinite(fontSize) && fontSize > 0 ? fontSize : BLOCK_LINK_FONT_SIZE;
+  const textH = Math.ceil(fs * 1.25);
+  const size = Math.round(fs * BLOCK_LINK_ICON_RATIO);
+  return { size, dy: Math.round((textH - size) / 2), textOffsetX: size + BLOCK_LINK_ICON_GAP };
+}
+
+/**
+ * 类型图标 image 元素（手拼字段形状与 image-import 的 makeImageElement 同一族，
+ * 多出 link 与 groupIds：单击图标 = 打开对应块，与文字同组整体选动）。
+ * file 注册（dataURL → files 表）由调用方先做，这里只管元素。
+ */
+export function blockLinkIconElementOf(opts: {
+  id: string;
+  fileId: string;
+  x: number;
+  y: number;
+  size: number;
+  /** 2026-10-28 起默认不挂：vendor 对每个带链接的选中元素画 ↗ 角标，
+   *  图标+文字都挂会出两个角标；链接只留文字（点击面积大），icon 传 null。 */
+  link?: string | null;
+  groupIds: string[];
+  index: string;
+  seed: number;
+}): Record<string, unknown> {
+  const now = Date.now();
+  return {
+    id: opts.id,
+    type: "image",
+    x: opts.x,
+    y: opts.y,
+    width: opts.size,
+    height: opts.size,
+    angle: 0,
+    strokeColor: "transparent",
+    backgroundColor: "transparent",
+    fillStyle: "solid",
+    strokeWidth: 1,
+    strokeStyle: "solid",
+    roughness: 1,
+    opacity: 100,
+    groupIds: opts.groupIds,
+    frameId: null,
+    roundness: null,
+    seed: opts.seed,
+    version: 1,
+    versionNonce: opts.seed,
+    index: opts.index,
+    isDeleted: false,
+    boundElements: null,
+    updated: now,
+    link: opts.link ?? null,
+    locked: false,
+    status: "saved",
+    fileId: opts.fileId,
+    scale: [1, 1],
+    crop: null,
+  };
+}
+
+/**
+ * 批量取块元数据的 SQL（纯函数，node 可测；IO 在 siyuan/doc.ts 的 fetchBlockMetas）。
+ * 2026-10-28 起连 type/subtype 一起取（图标分层用），仍是同一条 in 查询零额外请求。
  * ids 已过形状校验，这里仍双保险：形状再验一遍 + 单引号转义（防注入）。
  */
-export function blockTitlesSqlOf(ids: string[]): string {
+export function blockMetasSqlOf(ids: string[]): string {
   const safe = ids
     .filter((id) => /^[0-9]{14}-[0-9a-zA-Z]{7}$/.test(id))
     .map((id) => `'${id.replace(/'/g, "''")}'`);
   if (safe.length === 0) return "";
-  return `select id, content from blocks where id in (${safe.join(",")})`;
+  return `select id, content, type, subtype from blocks where id in (${safe.join(",")})`;
 }
