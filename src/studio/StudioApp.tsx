@@ -93,6 +93,16 @@ import type { ExportScene } from "./export";
 import { insertImageFiles } from "./image-import";
 import { clientToScene, viewportCenter, type Point } from "./scene-point";
 import { BOARD_DRAG_MIME, boardLinkOf, boardRefFromText, decodeBoardDrag } from "./board-lib.ts";
+import { linkNormalizations, parseSiyuanLink } from "./siyuan-link.ts";
+import { CanvasContextMenu, type CanvasMenuItem } from "./CanvasContextMenu.tsx";
+import { SiyuanLinkDialog } from "./SiyuanLinkDialog.tsx";
+import {
+  arrangeFold,
+  dissolveFold,
+  isFoldHead,
+  refoldFold,
+  unfoldFold,
+} from "./fold-actions.ts";
 import { CARD_H, CARD_W, boardRefAtPoint as boardCardAt, insertBoardCard as makeBoardCard } from "./board-card.ts";
 import {
   BLOCK_LINK_FONT_SIZE,
@@ -157,6 +167,8 @@ export type StudioProps = {
   promptFileName: (suggested: string, title: string) => Promise<string | null>;
   /** 2026-10-25 紧凑文档链接：批量取块标题（宿主走内核 SQL，失败返回空映射） */
   fetchBlockMetas: (ids: string[]) => Promise<Record<string, { title: string; type: string; subtype: string }>>;
+  /** 2026-10-30：「新建思源链接」对话框的文档搜索（宿主走内核 SQL，失败返回空数组） */
+  searchDocs?: (keyword: string) => Promise<Array<{ id: string; title: string; path?: string }>>;
   /** 2026-10-15 阶段 A：重命名（读旧写新删旧）；返回新 /data 路径 */
   onRename: (oldPath: string, newName: string) => Promise<string>;
   /** 2026-10-15 阶段 B：图库持久化（读写 assets/excali-library.json，宿主实现） */
@@ -260,6 +272,7 @@ export function StudioApp(props: StudioProps) {
     saveMedia,
     onOpenDocLink,
     fetchBlockMetas,
+    searchDocs,
     onDirtyChange,
     notify,
     showWelcome,
@@ -298,6 +311,11 @@ export function StudioApp(props: StudioProps) {
   } = props;
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
   const [mode, setMode] = useState<ThemeMode>(() => readSiyuanThemeMode());
+  /**
+   * 2026-10-30：「新建思源链接」对话框的开关。
+   * null = 关闭；否则是「要给哪个元素设链接」的元素 id。
+   */
+  const [linkDialogFor, setLinkDialogFor] = useState<string | null>(null);
   // 第四十四轮：AI 通道面板——开面板那一刻从宿主设置拉快照，切换即写回再拉
   const [aiOpen, setAiOpen] = useState(false);
   const [aiChannels, setAiChannels] = useState<AiChannels | null>(null);
@@ -473,6 +491,8 @@ export function StudioApp(props: StudioProps) {
   }, [applyDiskLibrary, libDirAbs, notify]);
 
   const rootRef = useRef<HTMLDivElement | null>(null);
+  /** 2026-10-30：画布容器（元素右键菜单的监听挂点） */
+  const canvasRef = useRef<HTMLDivElement | null>(null);
   /**
    * 2026-10-22：多画板页签 ⇒ 工具栏按钮高亮闪烁的修复（根因是 vendor 的 radio 组名
    * 硬编码为 "editor-current-shape"，同 document 内多实例互相取消选中）。
@@ -523,6 +543,15 @@ export function StudioApp(props: StudioProps) {
    */
   const eaHandleRef = useRef<EaBoardHandle | null>(null);
   eaHandleRef.current = eaHandle;
+
+  /**
+   * 2026-10-30：link 归一化的防抖闸。
+   *
+   * 「粘贴即转换」在 onChange 里改场景 ⇒ 会再触发一次 onChange ⇒ 若无闸就无限循环。
+   * 用「刚改过的 link 值集合」挡住自己写的那一次（下一帧值已规范，本就不会再入选，
+   * 这道闸是给同帧内的重入兜底）。
+   */
+  const linkNormRef = useRef<Set<string>>(new Set());
 
   useEffect(() => watchSiyuanThemeMode(setMode), []);
 
@@ -1646,6 +1675,30 @@ export function StudioApp(props: StudioProps) {
       }
       // 第五十三轮：片单跟着场景走（签名去重，抽屉没开时也只是几个字符串比较）
       syncDeck(elements as readonly FrameLike[]);
+      /*
+       * 2026-10-30「粘贴即转换」：元素 link 字段里若是思源原生形态
+       * （siyuan://blocks/… / ((id '标题')) / [标题](…)），就地改写成规范形态
+       * （siyuan:block/… / siyuan:doc/…）。
+       *
+       * 为什么改在场景层而不是 hook vendor 的输入框：那个 input 在 vendor 的
+       * portal 容器里，没有稳定 DOM 锚点（class 随版本变）。场景层一次覆盖
+       * 所有入口——属性栏粘贴、脚本 setLink、拖入带链接的文字。
+       * 认不出的链接（http、白板链接）一律不动，不擅自改用户的东西。
+       */
+      const normList = linkNormalizations(elements as ReadonlyArray<{ id?: unknown; link?: unknown }>);
+      if (normList.length > 0) {
+        const fresh = normList.filter((n) => !linkNormRef.current.has(`${n.id}|${n.link}`));
+        if (fresh.length > 0) {
+          for (const n of fresh) linkNormRef.current.add(`${n.id}|${n.link}`);
+          const handle = eaHandleRef.current;
+          if (handle) {
+            handle.patchElementsMany(
+              fresh.map((n) => ({ id: n.id, patch: { link: n.link } })),
+              CaptureUpdateAction.IMMEDIATELY,
+            );
+          }
+        }
+      }
       // 第四十六轮 B2 批：选中态驱动底栏中段三键 + zoom 百分比（都只在翻转时 setState）。
       const hasSel = Object.keys(appState.selectedElementIds ?? {}).length > 0;
       if (hasSel !== hasSelectionRef.current) {
@@ -1922,6 +1975,63 @@ export function StudioApp(props: StudioProps) {
   }, []);
 
   /**
+   * 2026-10-30：画布元素右键菜单的动作处理。
+   *
+   * 菜单项在 CanvasContextMenu 里注入到 vendor 菜单顶部；点中后按 id 分派：
+   *   new-link         打开「新建思源链接」对话框
+   *   copy-block-link  复制成思源块超链接（siyuan://blocks/…）
+   *   copy-md-link     复制成 Markdown 形态（[标题](siyuan://blocks/…)）
+   *   fold / unfold-group / arrange  折叠三件套（走共享的 fold-actions）
+   */
+  const onCanvasMenuAction = useCallback(
+    (id: CanvasMenuItem["id"], targetId: string): void => {
+      const handle = eaHandleRef.current;
+      if (!handle) return;
+      const el = handle.getElements().find((e) => e.id === targetId);
+      if (!el) return;
+      if (id === "new-link") {
+        setLinkDialogFor(targetId);
+        return;
+      }
+      if (id === "copy-block-link" || id === "copy-md-link") {
+        const link = typeof el.link === "string" ? el.link : "";
+        const target = parseSiyuanLink(link);
+        if (!target) {
+          notify(t("这个元素没有思源链接可复制"));
+          return;
+        }
+        // 思源原生形态：块 → siyuan://blocks/<id>；文档 → siyuan://doc/<id>
+        const native = target.kind === "block" ? `siyuan://blocks/${target.id}` : `siyuan://doc/${target.id}`;
+        const text =
+          id === "copy-md-link"
+            ? `[${target.id}](${native})`
+            : native;
+        void navigator.clipboard
+          ?.writeText(text)
+          .then(() => notify(t("已复制块超链接")))
+          .catch(() => notify(t("复制失败：浏览器拒绝了剪贴板访问"), 5000));
+        return;
+      }
+      if (!isFoldHead(el)) return;
+      if (id === "fold") {
+        const n = refoldFold(handle, targetId);
+        notify(n > 0 ? t("已收起 {n} 个成员", { n }) : t("这个折叠里没有可收起的成员"));
+        return;
+      }
+      if (id === "unfold-group") {
+        const n = unfoldFold(handle, targetId);
+        notify(n > 0 ? t("已展开 {n} 个成员", { n }) : t("展开失败：成员可能已被删除"));
+        return;
+      }
+      if (id === "arrange") {
+        const n = arrangeFold(handle, targetId);
+        notify(n > 0 ? t("已按列表排版：{n} 个成员", { n }) : t("这个折叠里还没有成员"));
+      }
+    },
+    [notify],
+  );
+
+  /**
    * 第三十一轮：嵌入思源块——粘贴块链接/块 ID，在视口中心建 Embeddable 元素。
    * 输入框复用宿主的 promptFileName（单行文本对话框，取消返回 null）。
    * link 带创建当时的明暗主题（iframe 配色用）；插入后选中该元素，便于随手挪位。
@@ -2120,7 +2230,7 @@ export function StudioApp(props: StudioProps) {
       onDrop={onCanvasDrop}
     >
       {dropHint ? <div className="exs-drop-hint">{t("松开以插入思源链接")}</div> : null}
-      <div className="exs-canvas">
+      <div className="exs-canvas" ref={canvasRef}>
         <Excalidraw
           theme={mode}
           langCode={excalidrawLangCode()}
@@ -2130,7 +2240,11 @@ export function StudioApp(props: StudioProps) {
           onLinkOpen={(element, event) => {
             // 第二十六轮 T6：`siyuan:doc/<id>` 拦下来走宿主开文档；其余链接 vendor 自理
             const link = (element as unknown as { link?: unknown }).link;
-            if (typeof link === "string" && link.startsWith("siyuan:")) {
+            if (typeof link !== "string" || link === "") return;
+            // 2026-10-30：认全思源原生形态——`siyuan://blocks/…`（复数）、块引用
+            // `((id '标题'))`、Markdown 包着的思源链接都要拦下来自己处理，
+            // 否则 vendor 会拿它当外部 URL 打开（弹浏览器）。
+            if (link.startsWith("siyuan:") || parseSiyuanLink(link)) {
               event.preventDefault();
               onOpenDocLink(link);
             }
@@ -2167,6 +2281,16 @@ export function StudioApp(props: StudioProps) {
         </Excalidraw>
         {/* 2026-10-22：文本折叠圆点控制钮层（脚本「选区折叠为列表」的交互面） */}
         <TextFoldOverlay api={api} getHandle={() => eaHandleRef.current} notify={notify} />
+        {/* 2026-10-30：画布元素右键菜单（「思源动作」注入到 vendor 菜单顶部） */}
+        <CanvasContextMenu
+          containerRef={canvasRef}
+          getElements={() => (api ? api.getSceneElements() : []) as never}
+          getSelectedIds={() => {
+            const st = api?.getAppState();
+            return new Set(Object.keys((st?.selectedElementIds ?? {}) as Record<string, boolean>));
+          }}
+          onAction={onCanvasMenuAction}
+        />
         {/* 批 1B：幕布 + HUD 住在画布里，含块跟画布走（不用 fixed） */}
         {presenting && presentPlan ? (
           <PresentationStage
@@ -2291,6 +2415,24 @@ export function StudioApp(props: StudioProps) {
       ) : null}
       {aiOpen && aiChannels ? (
         <AiChannelsPanel channels={aiChannels} onToggle={toggleAiChannel} onClose={() => setAiOpen(false)} />
+      ) : null}
+      {/* 2026-10-30：「新建思源链接」对话框（粘贴链接 / 搜文档） */}
+      {linkDialogFor ? (
+        <SiyuanLinkDialog
+          onClose={() => setLinkDialogFor(null)}
+          notify={notify}
+          searchDocs={searchDocs}
+          initialLink={(() => {
+            const el = eaHandleRef.current?.getElements().find((e) => e.id === linkDialogFor);
+            return typeof el?.link === "string" ? el.link : null;
+          })()}
+          onConfirm={(canonical, label) => {
+            const handle = eaHandleRef.current;
+            if (!handle) return;
+            handle.patchElements([linkDialogFor], { link: canonical }, CaptureUpdateAction.IMMEDIATELY);
+            void label;
+          }}
+        />
       ) : null}
     </div>
   );

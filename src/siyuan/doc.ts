@@ -11,6 +11,7 @@
 
 import { getAllEditor, type IProtyle, type Plugin } from "siyuan";
 import { blockMetasSqlOf } from "../studio/embeddable";
+import { docHitOf, docSearchSql, type DocSearchHit } from "../studio/doc-search.ts";
 import { t } from "../i18n";
 import { assetWebPath, fromAssetRef } from "../studio/storage.ts";
 
@@ -148,4 +149,29 @@ export function svgAssetPathOf(blockElements: HTMLElement[]): string | null {
     if (path && /\.svg$/i.test(path)) return path;
   }
   return null;
+}
+
+/**
+ * 2026-10-30：搜思源文档（「新建思源链接」对话框的第二个入口）。
+ *
+ * 只搜文档块（type='d'）——链接的语义是「指向一篇文档」；段落级引用用
+ * 块超链接（siyuan://blocks/…）更精确。SQL 拼装在 studio/doc-search.ts
+ * （纯函数，node 可测）；这里只做 IO 与失败兜底。
+ *
+ * 任何失败返回空数组：搜不到只是「没结果」，绝不该把对话框搞崩。
+ */
+export async function searchSiyuanDocs(keyword: string): Promise<DocSearchHit[]> {
+  const kw = String(keyword ?? "").trim();
+  if (kw === "") return [];
+  try {
+    const rows = await querySql<unknown>(docSearchSql(kw));
+    const out: DocSearchHit[] = [];
+    for (const r of rows) {
+      const hit = docHitOf(r);
+      if (hit) out.push(hit);
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }

@@ -43,6 +43,16 @@ export interface ElementSpec {
   groupIds?: string[];
   /** 归属画框（frame-collapse 展开还原用：普通 add* 缺省 null 不进框） */
   frameId?: string | null;
+  /** 绑定文字关系（折叠还原用）：容器挂 boundElements、文字回指 containerId */
+  boundElements?: Array<{ id: string; type?: string }> | null;
+  containerId?: string | null;
+  /** 文本排版（折叠还原用）：真实行高 / 竖向对齐 / 是否随内容改宽 */
+  lineHeight?: number;
+  verticalAlign?: "top" | "middle" | "bottom";
+  autoResize?: boolean;
+  /** 箭头绑定（折叠还原用）：绑在哪个元素上 */
+  startBinding?: { elementId: string; focus?: number; gap?: number } | null;
+  endBinding?: { elementId: string; focus?: number; gap?: number } | null;
   /** image：二进制文件 id（handle.addFiles 注册过的） */
   fileId?: string;
 }
@@ -95,7 +105,7 @@ export function makeElement(spec: ElementSpec): Record<string, unknown> {
     versionNonce: seed,
     index: `a${seq}`,
     isDeleted: false,
-    boundElements: null,
+    boundElements: spec.boundElements ?? null,
     updated: now,
     link: spec.link ?? null,
     locked: false,
@@ -105,11 +115,11 @@ export function makeElement(spec: ElementSpec): Record<string, unknown> {
     el.fontSize = spec.fontSize ?? 20;
     el.fontFamily = spec.fontFamily ?? 1;
     el.textAlign = spec.textAlign ?? "left";
-    el.verticalAlign = "top";
-    el.containerId = null;
+    el.verticalAlign = spec.verticalAlign ?? "top";
+    el.containerId = spec.containerId ?? null;
     el.originalText = spec.text ?? "";
-    el.autoResize = true;
-    el.lineHeight = 1.25;
+    el.autoResize = spec.autoResize ?? true;
+    el.lineHeight = spec.lineHeight ?? 1.25;
   }
   if (type === "arrow" || type === "line") {
     el.points = spec.points ?? [
@@ -117,8 +127,8 @@ export function makeElement(spec: ElementSpec): Record<string, unknown> {
       [width, height],
     ];
     el.lastCommittedPoint = null;
-    el.startBinding = null;
-    el.endBinding = null;
+    el.startBinding = spec.startBinding ?? null;
+    el.endBinding = spec.endBinding ?? null;
     el.startArrowhead = spec.startArrowhead ?? (type === "arrow" ? null : null);
     el.endArrowhead = spec.endArrowhead ?? (type === "arrow" ? "arrow" : null);
     el.elbowed = false;

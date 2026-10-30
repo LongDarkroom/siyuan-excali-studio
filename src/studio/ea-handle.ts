@@ -48,10 +48,38 @@ export function createEaBoardHandle(api: ExcalidrawImperativeAPI, theme?: ThemeC
         captureUpdate: capture ?? CaptureUpdateAction.IMMEDIATELY,
       });
     },
+    patchElementsMany: (patches: Array<{ id: string; patch: Record<string, unknown> }>, capture?: CaptureAction) => {
+      if (!patches || patches.length === 0) return;
+      const map = new Map(patches.map((p) => [p.id, p.patch]));
+      api.updateScene({
+        elements: api.getSceneElements().map((e) => {
+          const p = map.get(e.id);
+          return p ? { ...e, ...p } : e;
+        }) as never,
+        captureUpdate: capture ?? CaptureUpdateAction.IMMEDIATELY,
+      });
+    },
     deleteElements: (ids: string[], capture?: CaptureAction) => {
       const set = new Set(ids);
       api.updateScene({
         elements: api.getSceneElements().filter((e) => !set.has(e.id)) as never,
+        captureUpdate: capture ?? CaptureUpdateAction.IMMEDIATELY,
+      });
+    },
+    reorderElements: (order: string[], capture?: CaptureAction) => {
+      if (!order || order.length === 0) return;
+      const byId = new Map(api.getSceneElements().map((e) => [e.id, e]));
+      const out: Array<unknown> = [];
+      for (const id of order) {
+        const el = byId.get(id);
+        if (!el) continue;
+        out.push(el);
+        byId.delete(id);
+      }
+      // 不在顺序表里的（折叠期间新加的元素）保持相对次序追加到末尾
+      for (const el of byId.values()) out.push(el);
+      api.updateScene({
+        elements: out as never,
         captureUpdate: capture ?? CaptureUpdateAction.IMMEDIATELY,
       });
     },

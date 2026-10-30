@@ -2332,55 +2332,50 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   width: 18px;
   height: 18px;
   padding: 0;
-  border: 1.5px solid var(--b3-theme-on-surface, #555);
-  border-radius: 50%;
-  background: var(--b3-theme-surface, #fff);
-  color: var(--b3-theme-on-surface, #333);
+  border: 0;
+  background: transparent;
+  /* 2026-10-30：手绘风三角（实心 + 第二笔细描边，SVG 在组件里）。
+     展开态 = ▼（可收起）、折叠态 = ▶（可展开）——形状承担状态，
+     不再用「圆圈底 + 文字字形」（小尺寸下 ▶/− 的字体字形发虚）。 */
+  color: var(--b3-theme-primary, #1a8fff);
   cursor: pointer;
   pointer-events: auto;
-  transition: transform 120ms ease, box-shadow 120ms ease;
+  transition: transform 120ms ease, opacity 120ms ease;
   user-select: none;
   -webkit-user-select: none;
 }
 
+.exs-fold-badge__icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+  overflow: visible;
+}
+
 .exs-fold-badge:hover {
   transform: translate(-50%, -50%) scale(calc(var(--exs-fold-scale, 1) * 1.18));
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
+  opacity: 0.82;
 }
 
 .exs-fold-badge:active {
   transform: translate(-50%, -50%) scale(calc(var(--exs-fold-scale, 1) * 0.94));
 }
 
-/* 折叠态：实心主色圆 + 白 ▶（右指三角 = 「可展开」） */
+/* 折叠态（▶ 可展开）：同主色，形状区分状态 */
 .exs-fold-badge--folded {
-  border-color: var(--b3-theme-primary, #1a8fff);
-  background: var(--b3-theme-primary, #1a8fff);
-  color: #fff;
+  color: var(--b3-theme-primary, #1a8fff);
 }
 
-.exs-fold-badge__glyph {
-  font-size: 9px;
-  line-height: 1;
-  /* 微调视觉重心：三角字符自带左侧留白，往左挪 0.5px */
-  margin-left: -0.5px;
+/* 折叠头正被选中：只压暗一点，位置一律不动（2026-10-30：不再为躲开选区把手而位移） */
+.exs-fold-badge--selected {
+  opacity: 0.62;
 }
 
-.exs-fold-badge--folded .exs-fold-badge__glyph {
-  font-size: 8px;
-}
-
-/* 展开态的 − 比三角略大 */
-.exs-fold-badge:not(.exs-fold-badge--folded) .exs-fold-badge__glyph {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-/* 隐藏成员计数徽章：钉在圆点右上角 */
+/* 隐藏成员计数徽章：钉在三角右上角 */
 .exs-fold-badge__count {
   position: absolute;
-  top: -6px;
-  right: -8px;
+  top: -7px;
+  right: -9px;
   min-width: 13px;
   height: 13px;
   padding: 0 3px;
@@ -2391,6 +2386,53 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   line-height: 13px;
   text-align: center;
   pointer-events: none;
+}
+
+/* 2026-10-30：展开态的「收集框」——编辑态的容器（点线，不挡任何交互）。
+   平时**完全隐形**（画布与其它元素无缝）；鼠标靠近该组时淡入、选中时常显。
+   无填充 ⇒ 不产生「被框起来」的隔阂感；点线 + 低透明度 ⇒ 不与 vendor 的
+   选中框（实线带手柄）混淆。 */
+.exs-fold-box {
+  position: absolute;
+  border: 1.5px dotted var(--b3-theme-primary, #1a8fff);
+  border-radius: 10px;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 140ms ease;
+  pointer-events: none;
+}
+.exs-fold-box--on {
+  opacity: 0.6;
+}
+
+/* 2026-10-30：折叠钮右键菜单（并入 / 解散）——口径同脚本竖条的那个右键菜单。
+   fixed 定位在视口（菜单要能贴着光标，不受折叠层 inset:0 的裁剪）。 */
+.exs-fold-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: 150px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--b3-theme-background, #fff);
+  border: 0.5px solid var(--b3-border-color, rgba(0, 0, 0, 0.15));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+.exs-fold-menu button {
+  display: block;
+  width: 100%;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--b3-theme-on-background, #1f2328);
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: left;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.exs-fold-menu button:hover {
+  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.05));
 }
 
 /* ============ 第五十三轮·批 0：演示模式（右上角入口 + 画布内抽屉） ============
@@ -2956,4 +2998,110 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   font-size: 10px;
   line-height: 1.6;
   user-select: none;
+}
+
+/* 2026-10-30：「新建思源链接」对话框（粘贴链接 / 搜文档） */
+.exs-link-dialog {
+  width: min(480px, 92%);
+  max-height: 88%;
+  overflow: auto;
+  background: var(--b3-theme-background, #fff);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.exs-link-dialog__title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--b3-theme-on-background, #1f2328);
+}
+.exs-link-dialog__label {
+  display: block;
+  font-size: 12px;
+  color: var(--b3-theme-on-surface-light, #888);
+  margin: 0 0 6px;
+}
+.exs-link-dialog__input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 0.5px solid var(--b3-border-color, rgba(0, 0, 0, 0.12));
+  background: var(--b3-theme-surface, #f6f6f6);
+  color: var(--b3-theme-on-background, #1f2328);
+}
+.exs-link-dialog__input:focus {
+  outline: none;
+  border-color: var(--b3-theme-primary-light, #85b7eb);
+}
+.exs-link-dialog__hint {
+  font-size: 12px;
+  color: var(--b3-theme-on-surface-light, #888);
+  margin: 6px 0 0;
+  line-height: 1.5;
+  word-break: break-all;
+}
+.exs-link-dialog__hint--bad {
+  color: var(--b3-theme-error, #d23f31);
+}
+.exs-link-dialog__sep {
+  height: 0.5px;
+  background: var(--b3-border-color, rgba(0, 0, 0, 0.12));
+  margin: 14px 0 12px;
+}
+.exs-link-dialog__hits {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+.exs-link-dialog__hit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--b3-theme-on-background, #1f2328);
+  font-size: 13px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.exs-link-dialog__hit:hover {
+  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.05));
+}
+.exs-link-dialog__hit-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.exs-link-dialog__hit-path {
+  font-size: 11px;
+  color: var(--b3-theme-on-surface-light, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.exs-link-dialog__btn {
+  font-size: 12px;
+  padding: 6px 14px;
+  margin-top: 12px;
+  border-radius: 6px;
+  border: 0.5px solid var(--b3-theme-primary-light, #85b7eb);
+  background: var(--b3-theme-primary-lightest, rgba(53, 117, 240, 0.1));
+  color: var(--b3-theme-primary, #3575f0);
+  cursor: pointer;
+}
+.exs-link-dialog__btn:hover {
+  background: var(--b3-theme-primary-lighter, rgba(53, 117, 240, 0.18));
+}
+.exs-link-dialog__btn:not(.exs-link-dialog__btn--primary) {
+  border-color: transparent;
+  background: transparent;
+  color: var(--b3-theme-on-surface-light, #888);
+  margin-left: 8px;
 }

@@ -594,7 +594,7 @@ function scriptMock(initial = []) {
       selected = v;
     },
   };
-  const calls = { delete: [], add: [], patch: [], notify: [], exportImage: [], addImage: [] };
+  const calls = { delete: [], add: [], patch: [], notify: [], exportImage: [], addImage: [], reorder: [] };
   const handle = {
     getElements: () => elements,
     getAppState: () => appState,
@@ -621,6 +621,20 @@ function scriptMock(initial = []) {
       calls.delete.push(ids);
       const set = new Set(ids);
       elements = elements.filter((e) => !set.has(e.id));
+    },
+    reorderElements: (order) => {
+      // 2026-10-30：折叠还原要把成员排回原 z 序（addElements 是追加）
+      calls.reorder.push(order);
+      const byId = new Map(elements.map((e) => [e.id, e]));
+      const out = [];
+      for (const id of order) {
+        const el = byId.get(id);
+        if (!el) continue;
+        out.push(el);
+        byId.delete(id);
+      }
+      for (const el of byId.values()) out.push(el);
+      elements = out;
     },
     selectElements: (ids) => {
       selected = {};
@@ -815,7 +829,8 @@ test("selection-fold：守卫——单人提示、折叠态头走解散不覆盖
   assert.ok(m1.calls.notify.join("").includes("至少 2 个元素"), "单人提示");
   assert.equal(m1.calls.delete.length, 0, "不删任何东西");
 
-  // ② 头已是折叠态 → 再跑 = 解散恢复，绝不用新选区覆盖旧快照
+  // ② 头已是折叠态 + 选中新元素 → 并入（v2 新语义：不用解散重建）
+  //    旧快照绝不能被覆盖：新成员是「追加」进去的
   const m2 = scriptMock([
     { id: "h", type: "text", x: 0, y: 0, width: 50, height: 20, text: "已折叠", fontSize: 20, excaliToggle: { collapsed: true, elements: [{ id: "old" }] } },
     { id: "n", type: "text", x: 0, y: 40, width: 50, height: 20, text: "新下属", fontSize: 20 },
@@ -823,10 +838,12 @@ test("selection-fold：守卫——单人提示、折叠态头走解散不覆盖
   m2.selected = { h: true, n: true };
   const r2 = await runScriptCode(code, m2.ea, {});
   assert.equal(r2.ok, true, r2.error);
-  assert.ok(m2.calls.notify.join("").includes("已恢复原样：1 个折叠已消除"), "折叠态头提示解散");
-  assert.equal(m2.calls.delete.length, 0, "不动场景");
-  assert.ok(m2.elements.some((e) => e.id === "old"), "旧快照成员回场");
-  assert.equal(m2.elements.find((e) => e.id === "h").excaliToggle, undefined, "折叠字段被清（无痕）");
+  assert.ok(m2.calls.notify.join("").includes("已并入 1 个元素到这个折叠"), "折叠态头 + 新元素 = 并入");
+  const folded2 = m2.elements.find((e) => e.id === "h");
+  assert.equal(folded2.excaliToggle.collapsed, true, "仍是折叠态");
+  assert.equal(folded2.excaliToggle.elements.length, 2, "旧成员 + 新成员都在快照里（旧快照没被覆盖）");
+  assert.equal(m2.calls.delete.length, 1, "折叠态下新成员一起被藏起来");
+  assert.equal(m2.elements.some((e) => e.id === "n"), false, "新成员已从画布收进快照");
 });
 
 test("selection-fold：只选一个折叠头 → 也算消除（不落入「至少 2 个」守卫）", async () => {
@@ -883,6 +900,107 @@ test("selection-fold：不一致态（快照成员仍在场）→ 只补缺的�
   assert.deepEqual(added, ["m2"], "只补不在场的 m2（m1 已在场不重复插）");
   assert.equal(m.elements.filter((e) => e.id === "m1").length, 1, "m1 只有一个");
   assert.ok(m.calls.notify.join("").includes("1 个成员回到画布"), "计数只算补回的");
+});
+
+test("selection-fold：折叠记下全场 z 序，消除时把成员排回原位（2026-10-30）", async () => {
+  const code = builtinCode("selection-fold.md");
+  const m = scriptMock([
+    { id: "a", type: "text", x: 0, y: 0, width: 50, height: 20, text: "在头之前" },
+    { id: "h", type: "text", x: 0, y: 30, width: 50, height: 20, text: "头", fontSize: 20 },
+    { id: "m1", type: "text", x: 0, y: 60, width: 50, height: 20, text: "成员一" },
+  ]);
+  m.selected = { h: true, m1: true };
+  const r1 = await runScriptCode(code, m.ea, {});
+  assert.equal(r1.ok, true, r1.error);
+  const folded = m.elements.find((e) => e.id === "h");
+  assert.ok(folded.excaliToggle, "折叠态挂在头上");
+  assert.deepEqual(folded.excaliToggle.order, ["a", "h", "m1"], "折叠时记下全场 z 序");
+  assert.equal(folded.excaliToggle.elements.length, 1, "成员进快照");
+
+  // 消除（再跑一次）：成员回场 + 按 order 排回（addElements 只是追加）
+  m.selected = { h: true };
+  const r2 = await runScriptCode(code, m.ea, {});
+  assert.equal(r2.ok, true, r2.error);
+  assert.equal(m.calls.reorder.length, 1, "消除时调了 reorderElements");
+  assert.deepEqual(m.calls.reorder[0], ["a", "h", "m1"], "按折叠时记下的顺序排");
+  assert.deepEqual(m.elements.map((e) => e.id), ["a", "h", "m1"], "还原后层序不变（成员不被甩到最上层）");
+  assert.equal(m.elements.find((e) => e.id === "h").excaliToggle, undefined, "字段清空");
+});
+
+test("selection-fold：折叠记下原生编组 id 与成员相对头的偏移（头动→成员跟着走）", async () => {
+  const code = builtinCode("selection-fold.md");
+  const m = scriptMock([
+    { id: "h", type: "text", x: 100, y: 0, width: 50, height: 20, text: "头", fontSize: 20 },
+    { id: "m1", type: "text", x: 120, y: 40, width: 50, height: 20, text: "成员一" },
+  ]);
+  m.selected = { h: true, m1: true };
+  const r = await runScriptCode(code, m.ea, {});
+  assert.equal(r.ok, true, r.error);
+  const head = m.elements.find((e) => e.id === "h");
+  assert.equal(head.excaliToggle.groupId, "g-h", "记下原生编组 id");
+  assert.deepEqual(head.excaliToggle.offsets, [{ id: "m1", dx: 20, dy: 40 }], "记下成员相对头的偏移");
+  assert.deepEqual(head.groupIds, ["g-h"], "头被编进组");
+  assert.deepEqual(head.excaliToggle.elements[0].groupIds, ["g-h"], "快照带编组关系（展开后成员才跟头走）");
+});
+
+test("selection-fold：解散时成员按「头当前位置 + 偏移」回场（头拖走过，成员跟着走）", async () => {
+  const code = builtinCode("selection-fold.md");
+  const m = scriptMock([
+    {
+      id: "h",
+      type: "text",
+      x: 0,
+      y: 0,
+      width: 50,
+      height: 20,
+      text: "头",
+      fontSize: 20,
+      excaliToggle: {
+        collapsed: true,
+        groupId: "g-h",
+        offsets: [{ id: "m1", dx: 100, dy: 40 }],
+        elements: [{ id: "m1", type: "text", x: 0, y: 40, width: 50, height: 20 }],
+      },
+    },
+  ]);
+  // 头在折叠态被拖到了 x=300（成员不在场，拖不到）
+  m.elements[0].x = 300;
+  m.selected = { h: true };
+  const r = await runScriptCode(code, m.ea, {});
+  assert.equal(r.ok, true, r.error);
+  const back = m.elements.find((e) => e.id === "m1");
+  assert.ok(back, "成员回场");
+  assert.equal(back.x, 400, "成员落在头的当前位置 + 偏移（300+100），而不是旧绝对坐标 0");
+  assert.equal(back.y, 40, "纵坐标同理");
+  assert.equal(m.elements.find((e) => e.id === "h").excaliToggle, undefined, "折叠字段被清（无痕）");
+});
+
+test("selection-fold：并入（展开态）——新成员留在画布上，只补编组关系与成员表", async () => {
+  const code = builtinCode("selection-fold.md");
+  const m = scriptMock([
+    {
+      id: "h",
+      type: "text",
+      x: 0,
+      y: 0,
+      width: 50,
+      height: 20,
+      text: "头",
+      fontSize: 20,
+      excaliToggle: { collapsed: false, groupId: "g-h", memberIds: ["m1"], offsets: [{ id: "m1", dx: 0, dy: 40 }] },
+    },
+    { id: "m1", type: "text", x: 0, y: 40, width: 50, height: 20, text: "成员一" },
+    { id: "n", type: "text", x: 0, y: 80, width: 50, height: 20, text: "新成员" },
+  ]);
+  m.selected = { h: true, n: true };
+  const r = await runScriptCode(code, m.ea, {});
+  assert.equal(r.ok, true, r.error);
+  const head = m.elements.find((e) => e.id === "h");
+  assert.deepEqual(head.excaliToggle.memberIds, ["m1", "n"], "新成员进成员表");
+  assert.equal(head.excaliToggle.offsets.length, 2, "新成员也记了偏移");
+  assert.ok(m.elements.some((e) => e.id === "n"), "展开态下新成员留在画布上");
+  assert.deepEqual(m.elements.find((e) => e.id === "n").groupIds, ["g-h"], "新成员编进同一个组");
+  assert.equal(m.calls.delete.length, 0, "展开态并入不删任何东西");
 });
 
 test("selection-fold：无选区 + 画布只有一个折叠 → 直接当开关恢复（不用再框选）", async () => {

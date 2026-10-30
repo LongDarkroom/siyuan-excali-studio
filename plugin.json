@@ -2,11 +2,20 @@
   "name": "siyuan-excali-studio",
   "author": "LongDarkroom",
   "url": "https://github.com/LongDarkroom/siyuan-excali-studio",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "minAppVersion": "3.8.0",
-  "backends": ["all"],
-  "frontends": ["desktop", "mobile", "browser-desktop", "browser-mobile"],
-  "kernels": ["all"],
+  "backends": [
+    "all"
+  ],
+  "frontends": [
+    "desktop",
+    "mobile",
+    "browser-desktop",
+    "browser-mobile"
+  ],
+  "kernels": [
+    "all"
+  ],
   "disabledInPublish": false,
   "displayName": {
     "default": "Excali Studio",
@@ -20,5 +29,12 @@
     "default": "README.md",
     "zh-CN": "README.md"
   },
-  "keywords": ["excalidraw", "whiteboard", "svg", "白板", "手绘", "画图"]
+  "keywords": [
+    "excalidraw",
+    "whiteboard",
+    "svg",
+    "白板",
+    "手绘",
+    "画图"
+  ]
 }

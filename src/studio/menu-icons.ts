@@ -122,6 +122,17 @@ export const ICON_SELECTION_FOLD =
   "M9.8,11.5L16.5,11.5" +
   "M9.8,16L18.5,16";
 
+/**
+ * 折叠控制钮·展开态（▼ 可收起）：实心三角，边略带手绘的不对称；
+ * 配一道「第二笔」的细描边（ICON_FOLD_DOWN_SKETCH）仿手绘双线。全绝对坐标 0..24 卡界。
+ */
+export const ICON_FOLD_DOWN = "M5.7,8.2L18.5,8.9L12.4,19.5Z";
+export const ICON_FOLD_DOWN_SKETCH = "M5.2,9.1L18.9,9.6";
+
+/** 折叠控制钮·折叠态（▶ 可展开）：实心三角指向右 + 第二笔竖线。全绝对坐标 0..24 卡界。 */
+export const ICON_FOLD_RIGHT = "M7.3,5.7L18.4,12.4L7.6,19.3Z";
+export const ICON_FOLD_RIGHT_SKETCH = "M6.6,6.1L6.9,18.9";
+
 /** 固定到右栏 / 脚本库的脚本专属图标（对标 Obsidian：脚本配了图标就不显示齿轮）。
  *  键 = 脚本文件名；未配置的回落 ICON_SCRIPT_GEAR，后续逐个补。
  *  2026-10-22：两个折叠脚本补图标——此前都走齿轮回落，竖条上两枚八齿圆

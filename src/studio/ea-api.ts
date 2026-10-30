@@ -32,8 +32,19 @@ export interface EaBoardHandle {
   addElements: (specs: ElementSpec[], capture?: CaptureAction) => string[];
   /** 按 id 给元素打样式补丁（同 id 覆盖进 scene）；capture 语义同 addElements */
   patchElements: (ids: string[], patch: Record<string, unknown>, capture?: CaptureAction) => void;
+  /**
+   * 一次落多个元素的**不同**补丁（列表排版：一步撤销，而不是每个成员一步）。
+   * patches = [{ id, patch }, …]
+   */
+  patchElementsMany: (patches: Array<{ id: string; patch: Record<string, unknown> }>, capture?: CaptureAction) => void;
   /** 真删元素；capture 语义同 addElements */
   deleteElements: (ids: string[], capture?: CaptureAction) => void;
+  /**
+   * 2026-10-30：按 id 顺序重排场景元素（z 序）。折叠还原用——
+   * 成员删掉后再 addElements 会被追加到数组末尾（= 甩到最上层），
+   * 还原时按折叠时记下的顺序排回去。
+   */
+  reorderElements: (order: string[], capture?: CaptureAction) => void;
   clear: () => void;
   selectElements: (ids: string[]) => void;
   updateScene: (appState: Partial<AppState>) => void;
@@ -158,6 +169,8 @@ export interface EaApi {
   getElement: (id: string) => ExcalidrawElement | undefined;
   addElements: (specs: Array<Omit<ElementSpec, "type"> & { type?: ElementSpec["type"] }>) => string[];
   deleteElements: (ids: string[]) => void;
+  /** 按 id 顺序重排场景元素（z 序）；折叠还原用，把成员放回原来的层位 */
+  reorderElements: (order: string[]) => void;
   clear: () => void;
   selectElements: (ids: string[]) => void;
   setStyle: (ids: string[] | "selection", patch: StylePatch) => void;
@@ -271,6 +284,7 @@ export function createEaApi(handle: EaBoardHandle, host: EaHost, scriptName = ""
     addElements: (specs) =>
       handle.addElements(specs.map((s) => ({ ...s, type: s.type ?? "rectangle" })) as ElementSpec[]),
     deleteElements: (ids) => handle.deleteElements(ids),
+    reorderElements: (order) => handle.reorderElements(order),
     clear: () => handle.clear(),
     selectElements: (ids) => handle.selectElements(ids),
     setStyle: (ids, patch) => {

@@ -71,12 +71,17 @@ import {
   remapPaths,
 } from "./studio/migration";
 import {
+  describeSiyuanLink,
+  parseSiyuanLink,
+} from "./studio/siyuan-link";
+import {
   activeProtyle,
   refreshAssetImages,
   svgAssetPathOf,
   trackEditor,
   fetchBlockMetas,
   resolveLute,
+  searchSiyuanDocs,
 } from "./siyuan/doc";
 import { decorateBoardBlocks } from "./studio/board-block-decorate";
 import { pickBoardFile } from "./siyuan/board-picker";
@@ -606,6 +611,8 @@ export default class ExcaliStudioPlugin extends Plugin {
       // 2026-10-25 紧凑文档链接：拖入文字的标题来源（doc.ts 内部自带失败容错）
       // 2026-10-28：改取元数据（title + type/subtype，图标分层用）
       fetchBlockMetas: (ids) => fetchBlockMetas(ids),
+      // 2026-10-30：「新建思源链接」对话框的文档搜索（内核 SQL，失败返回空数组）
+      searchDocs: (keyword) => searchSiyuanDocs(keyword),
       onRename: (oldPath, newName) => this.renameBoard(oldPath, newName),
       loadLibraryItems: () => this.loadLibraryItems(),
       saveLibraryItems: (items) => this.saveLibraryItems(items),
@@ -2058,6 +2065,11 @@ export default class ExcaliStudioPlugin extends Plugin {
    * 第二十六轮 T6：图形上的 `siyuan:doc/<id>` 链接 → 开文档；解析不了只提示不抛。
    * 第四十轮：同一条通道再认 `siyuan:excali/<ref>`（画布上的白板卡片）→ 开那块板
    * 的页签。文件可能被改名/删掉了，所以先验存在——点了没反应比报错更难查。
+   *
+   * 2026-10-30：认全思源原生形态（`siyuan://blocks/<id>` / `siyuan://doc/<id>` /
+   * `siyuan://<doc>/<block>` / `((id '标题'))`），先经 siyuan-link 归一化成
+   * `siyuan:block/<id>` / `siyuan:doc/<id>` 再走既有通道——以前只认自造形态，
+   * 粘贴思源复制的超链接后一律「无法识别」。
    */
   private openBoardDocLink(link: string): void {
     const boardPath = boardPathFromLink(link);
@@ -2065,25 +2077,50 @@ export default class ExcaliStudioPlugin extends Plugin {
       void this.openLinkedBoard(boardPath);
       return;
     }
+    // 2026-10-30：认全思源原生形态（blocks 是复数——旧口径漏的就是这个字母）
+    const target = parseSiyuanLink(link);
+    if (target) {
+      if (target.kind === "block") {
+        this.openSiyuanBlock(target.id);
+        return;
+      }
+      this.openDocOf(target.id);
+      return;
+    }
     // 2026-10-25 交互框：画布嵌入框的跳转形态——块/文档在右侧分屏打开（双页阅读）。
     // openTab 收到子块 ID 会打开其所在文档；移动端 openTab 为空实现，走既有兜底。
     const blockId = blockIdFromLink(link);
     if (blockId) {
-      if (isMobileFrontend()) {
-        this.openDocumentById(blockId);
-        return;
-      }
-      void openTab({ app: this.app, doc: { id: blockId }, position: "right" }).catch((e) => {
-        showMessage(t("打开文档失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }), 7000);
-      });
+      this.openSiyuanBlock(blockId);
       return;
     }
     const docId = docIdFromLink(link);
     if (!docId) {
-      showMessage(t("无法识别的文档链接：{link}", { link }), 5000, "error");
+      // 2026-10-30：别只丢一句「无法识别」——把能认的形态列出来，用户照着填就行
+      showMessage(
+        t("无法识别的文档链接：{link}。支持思源块超链接（siyuan://blocks/…）、文档超链接（siyuan://doc/…）与块引用（((id '标题'))）", {
+          link,
+        }),
+        7000,
+        "error",
+      );
       return;
     }
     this.openDocOf(docId);
+  }
+
+  /**
+   * 2026-10-30：开一个思源块。
+   * 桌面端在右侧分屏打开（双页阅读）；移动端没有分屏，直接开它所在的文档。
+   */
+  private openSiyuanBlock(blockId: string): void {
+    if (isMobileFrontend()) {
+      this.openDocumentById(blockId);
+      return;
+    }
+    void openTab({ app: this.app, doc: { id: blockId }, position: "right" }).catch((e) => {
+      showMessage(t("打开文档失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }), 7000);
+    });
   }
 
   /** 白板卡片 → 页签（openExisting 自带「已开就聚焦」）；文件没了给明确提示 */

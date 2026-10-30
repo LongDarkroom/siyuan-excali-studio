@@ -31,6 +31,7 @@ export type StudioTabHost = Pick<
   | "onNewBoard"
   | "promptFileName"
   | "fetchBlockMetas"
+  | "searchDocs"
   | "onRename"
   | "loadLibraryItems"
   | "saveLibraryItems"
@@ -274,6 +275,7 @@ export function attachStudioTab(custom: Custom, host: StudioTabHost): StudioTabS
         }}
         promptFileName={host.promptFileName}
         fetchBlockMetas={host.fetchBlockMetas}
+        searchDocs={host.searchDocs}
         gridModeEnabled={host.gridModeEnabled}
         onGridChange={host.onGridChange}
         loadLibraryItems={host.loadLibraryItems}

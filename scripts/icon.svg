@@ -1,6 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <!-- 商店图标源文件：与 src/studio/icons.ts 的 iconExcaliStudio 同形，
-       底色换成 Excalidraw 品牌紫，线条转白；经 qlmanage 光栅化为根目录 icon.png（160×160） -->
+       底色换成 Excalidraw 品牌紫，线条转白。
+       光栅化（2026-10-28 起）：headless Chrome 透明底渲染 512×512 —— 160×160 在
+       Retina 集市页按 2x 渲染会发糊；透明底参数 --default-background-color=00000000。
+       （集市限制 icon.png ≤64KB，512px 约 12KB） -->
   <rect width="1024" height="1024" rx="224" fill="#6965db"/>
   <g fill="none" stroke="#ffffff" stroke-width="56" stroke-linecap="round" stroke-linejoin="round">
     <rect x="176" y="216" width="672" height="514" rx="56"/>

@@ -65,3 +65,36 @@ test("makeElement：frameId 透传（frame-collapse 展开归框），缺省 nul
   assert.equal(makeElement({ type: "rectangle", x: 0, y: 0 }).frameId, null, "普通 add* 不进框");
   assert.equal(makeElement({ type: "text", x: 0, y: 0, frameId: null }).frameId, null, "显式 null 也认");
 });
+
+test("makeElement：折叠还原保真——绑定关系/排版/箭头绑定都透传，缺省行为不变", () => {
+  // 容器挂绑定文字（还原后不该散架成浮空文本）
+  const box = makeElement({ type: "rectangle", x: 0, y: 0, boundElements: [{ id: "t1", type: "text" }] });
+  assert.deepEqual(box.boundElements, [{ id: "t1", type: "text" }], "容器保留 boundElements");
+  assert.equal(makeElement({ type: "rectangle", x: 0, y: 0 }).boundElements, null, "缺省仍是 null（旧行为不变）");
+  // 文字回指容器 + 真实行高/竖向对齐/是否随内容改宽
+  const t = makeElement({
+    type: "text",
+    x: 0,
+    y: 0,
+    text: "行一\n行二",
+    containerId: "box1",
+    lineHeight: 1.5,
+    verticalAlign: "middle",
+    autoResize: false,
+  });
+  assert.equal(t.containerId, "box1", "文字保留 containerId");
+  assert.equal(t.lineHeight, 1.5, "保留真实行高");
+  assert.equal(t.verticalAlign, "middle", "保留竖向对齐");
+  assert.equal(t.autoResize, false, "保留自动改宽开关");
+  // 缺省仍是旧值
+  const plain = makeElement({ type: "text", x: 0, y: 0, text: "x" });
+  assert.equal(plain.containerId, null);
+  assert.equal(plain.lineHeight, 1.25);
+  assert.equal(plain.verticalAlign, "top");
+  assert.equal(plain.autoResize, true);
+  // 箭头绑定（还原后仍绑在原元素上）
+  const ar = makeElement({ type: "arrow", x: 0, y: 0, startBinding: { elementId: "a1" }, endBinding: { elementId: "b1" } });
+  assert.deepEqual(ar.startBinding, { elementId: "a1" });
+  assert.deepEqual(ar.endBinding, { elementId: "b1" });
+  assert.equal(makeElement({ type: "arrow", x: 0, y: 0 }).startBinding, null, "缺省仍是 null");
+});

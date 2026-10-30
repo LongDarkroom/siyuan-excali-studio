@@ -303,14 +303,17 @@ test("插件根 fonts/ 覆盖手绘字体与中文字体", () => {
   }
 });
 
-test("集市图标 icon.png 在插件根且是 160×160 PNG", () => {
+test("集市图标 icon.png 在插件根且是 512×512 PNG（集市上限 64KB）", () => {
   const p = resolve(ROOT, "icon.png");
   assert.ok(existsSync(p), "缺 icon.png：集市列表与插件卡片用它");
   const buf = readFileSync(p);
   assert.equal(buf.subarray(1, 4).toString("latin1"), "PNG", "不是 PNG（脚本/编辑器可能改了文件）");
   const w = buf.readUInt32BE(16);
   const h = buf.readUInt32BE(20);
-  assert.equal(`${w}x${h}`, "160x160", `集市口径为 160×160，实际 ${w}×${h}`);
+  // 2026-10-28 起由 160×160 改为 512×512：集市页按 2x 渲染，160px 会发糊。
+  // 集市只认 PNG/JPEG/WebP/AVIF，且 icon.png 上限 64KB。
+  assert.equal(`${w}x${h}`, "512x512", `集市口径为 512×512，实际 ${w}×${h}`);
+  assert.ok(buf.length <= 64 * 1024, `icon.png 超过集市上限 64KB：${(buf.length / 1024).toFixed(1)}KB`);
 });
 
 test("Excalidraw 样式里引用的每个字体文件都真的存在", () => {

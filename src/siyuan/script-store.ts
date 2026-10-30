@@ -1040,21 +1040,64 @@ const SELECTION_FOLD_SCRIPT = `# 选区折叠为列表
 自定义字段，画布上只剩头 + 头左侧的圆点控制钮。点头（圆点）= 收起 / 展开，
 带淡入淡出动画；每一步都能 ⌘Z 撤销，存盘后折叠状态不丢。
 
-三种跑法（同一个按钮，脚本自己看状态分流）：
-1. **折叠**：框选「头 + 所有下属元素」→ 跑一次 → 成员收进头，只剩头 + 圆点；
-2. **恢复原样**：选中折叠头（单选它就够，不用再框选下属）→ 再跑一次 →
-   快照成员全部回到画布、头上的折叠字段被清除——和折叠前一模一样，圆点也消失；
-   画布上只有一个折叠时，不选任何东西直接点按钮也行（按钮即开关）；
-3. **日常收放**：之后不再用脚本，点头部左侧圆点即可（收起/展开切换，带动画）。
+四种跑法（同一个按钮，脚本自己看状态分流）：
+1. **折叠**：框选「头 + 所有下属元素」→ 跑一次 → 成员收进头，只剩头 + 三角；
+2. **并入**：已折叠好的组，再选中「折叠头 + 想加进去的元素」→ 跑一次 → 新成员直接
+   进这个组（不用解散重建）；折叠态下新成员会一起被藏起来；
+3. **恢复原样**：只选中折叠头（单选它就够，不用再框选下属）→ 再跑一次 → 快照成员
+   按「头的当前位置 + 相对偏移」回到画布、头上的折叠字段与编组关系被清除——和折叠前
+   一模一样；画布上只有一个折叠时，不选任何东西直接点按钮也行（按钮即开关）；
+4. **日常收放**：之后不再用脚本，点头部左侧三角即可（收起/展开切换，带动画）；
+   三角上**右键**还有「并入 / 解散」菜单。
+
+移动与跟随：折叠时头与成员会被编成**原生编组**（展开态拖头，整组一起动，撤销也是
+一步），并记下每个成员**相对头的偏移**——折叠态下把头拖走，之后展开时成员仍回到它
+该在的位置（跟着头走）。
 
 与「画框折叠」的分工：那个把元素收进画框（frame，整块场景收放）；本脚本把元素
 收进普通文本（列表收放，不占画布结构）。两者可同时用。
 
-已知边界（演示版）：成员还原后 z 序置顶（列表元素不重叠，无感）；成员自带的
-自定义字段（如素材配方）不保留——普通元素无损。解散时快照里已在画布上的成员
-不会重复插入（防同 id 两个元素）。
+已知边界：成员自带的**自定义字段**（如素材配方）不保留；普通元素（文本/位置/字号/
+字体/行高/竖向对齐/绑定关系）无损，还原时按折叠时的层序排回原位。解散时快照里已在
+画布上的成员不会重复插入（防同 id 两个元素）。
 
 \`\`\`js
+// 元素的 z 序（vendor 的 index：场景更新后是数字，早期版本是 "a3" 这类串）
+const zIdx = (e) => {
+  const raw = e && e.index;
+  if (typeof raw === "number") return raw;
+  if (typeof raw === "string") {
+    const m = /^\\D*(\\d+)/.exec(raw);
+    if (m) return Number(m[1]);
+  }
+  return Number.MAX_SAFE_INTEGER;
+};
+// 折叠组的原生编组 id（与头 id 派生，稳定）——头与成员同组，展开态拖头整组跟随
+const groupIdFor = (headId) => "g-" + headId;
+// 成员相对头的偏移（头动 → 成员跟着走的依据）
+const offsetsOf = (head, members) =>
+  members.map((m) => ({
+    id: m.id,
+    dx: (m.x || 0) - (head.x || 0),
+    dy: (m.y || 0) - (head.y || 0),
+  }));
+// 按「头的当前位置 + 偏移」给快照成员定位置（展开/解散时用）
+const placeByOffsets = (members, head, offsets) => {
+  const map = new Map((offsets || []).map((o) => [o.id, o]));
+  return members.map((m) => {
+    const off = map.get(m.id);
+    if (!off) return m;
+    return { ...m, x: (head.x || 0) + off.dx, y: (head.y || 0) + off.dy };
+  });
+};
+// 这个折叠头已经有哪些成员（并入时判重）
+const memberIdsOf = (head) => {
+  const tg = head.excaliToggle || {};
+  if (Array.isArray(tg.offsets)) return tg.offsets.map((o) => o.id);
+  if (Array.isArray(tg.memberIds)) return tg.memberIds.slice();
+  if (Array.isArray(tg.elements)) return tg.elements.map((e) => e.id);
+  return [];
+};
 const ids = ea.getSelectedElements();
 let els = ids.map((id) => ea.getElement(id)).filter((e) => e && e.isDeleted !== true);
 const allHeads = ea.getElements().filter(
@@ -1063,29 +1106,58 @@ const allHeads = ea.getElements().filter(
 // 没选区也允许「再点一次」：画布上恰好只有一个折叠时，它就是这次的目标
 if (els.length === 0 && allHeads.length === 1) els = allHeads.slice();
 
-// ① 消除模式：选区里已有折叠头（折叠态或展开态都算）→ 解散，恢复原样
+// ① 选区里已有折叠头 → 并入（头 + 其它元素）或解散（只选了头）
 const heads = els.filter(
   (e) => e.excaliToggle && typeof e.excaliToggle.collapsed === "boolean",
 );
 if (heads.length > 0) {
   const alive = new Set(ea.getElements().map((e) => e.id));
-  let restored = 0;
-  for (const h of heads) {
-    const snap = h.excaliToggle;
-    if (snap.collapsed && Array.isArray(snap.elements)) {
-      // 折叠态：快照成员回场（已在场的不重复加，防同 id 两元素）
-      const missing = snap.elements.filter((m) => !alive.has(m.id));
-      if (missing.length > 0) ea.addElements(missing);
-      restored += missing.length;
+  const head = heads[0];
+  const snap = head.excaliToggle;
+  const known = new Set(memberIdsOf(head));
+  const outsiders = els.filter((e) => e.id !== head.id && !known.has(e.id));
+  if (outsiders.length > 0) {
+    // 并入：新成员进这个折叠组（不用解散重建）
+    const gid = snap.groupId || groupIdFor(head.id);
+    const offs = (snap.offsets || []).slice();
+    const elements = snap.collapsed ? (snap.elements || []).slice() : [];
+    const memberIds = snap.collapsed ? [] : (snap.memberIds || []).slice();
+    for (const n of outsiders) {
+      offs.push({ id: n.id, dx: (n.x || 0) - (head.x || 0), dy: (n.y || 0) - (head.y || 0) });
+      if (snap.collapsed) {
+        // 快照里带上编组关系（展开后成员才跟头走）——不必真去改画布上的成员
+        elements.push(Object.assign(JSON.parse(JSON.stringify(n)), { groupIds: [gid] }));
+      } else {
+        memberIds.push(n.id);
+      }
     }
-    // 展开态的成员本就在画布上，只差清字段。undefined：内存里即时失效，
-    // 存盘时 JSON.stringify 直接丢掉这个键——完全无痕
-    ea.setStyle([h.id], { excaliToggle: undefined });
+    const next = { collapsed: snap.collapsed, groupId: gid, offsets: offs };
+    if (snap.collapsed) next.elements = elements;
+    else next.memberIds = memberIds;
+    if (Array.isArray(snap.order)) next.order = snap.order;
+    if (!snap.collapsed) {
+      // 展开态：新成员留在画布上，得真给它们打上编组关系
+      ea.setStyle(outsiders.map((e) => e.id), { groupIds: [gid] });
+    }
+    ea.setStyle([head.id], { groupIds: [gid], excaliToggle: next });
+    if (snap.collapsed) ea.deleteElements(outsiders.map((n) => n.id));
+    ea.notify("已并入 " + outsiders.length + " 个元素到这个折叠");
+  } else {
+    // 解散：成员按「头的当前位置 + 偏移」回场，字段与编组关系一并清掉
+    const members = placeByOffsets((snap.elements || []).slice(), head, snap.offsets);
+    const missing = members.filter((m) => !alive.has(m.id));
+    if (missing.length > 0) ea.addElements(missing);
+    if (Array.isArray(snap.order) && snap.order.length > 0) ea.reorderElements(snap.order);
+    // 退出编组（拆组，否则留着半个空组）
+    ea.setStyle([head.id], { groupIds: [] });
+    if (members.length > 0) ea.setStyle(members.map((m) => m.id), { groupIds: [] });
+    // undefined：内存里即时失效，存盘时 JSON.stringify 直接丢掉这个键——完全无痕
+    ea.setStyle([head.id], { excaliToggle: undefined });
+    ea.notify(
+      "已恢复原样：" + heads.length + " 个折叠已消除" +
+        (missing.length > 0 ? "，" + missing.length + " 个成员回到画布" : "（成员已在画布上）"),
+    );
   }
-  ea.notify(
-    "已恢复原样：" + heads.length + " 个折叠已消除" +
-      (restored > 0 ? "，" + restored + " 个成员回到画布" : "（成员已在画布上）"),
-  );
 } else if (els.length < 2) {
   ea.notify(
     allHeads.length > 1
@@ -1096,11 +1168,19 @@ if (heads.length > 0) {
   // ② 折叠模式：最上的文本当头，其余收进快照后删除（先存后删防数据丢失）
   els.sort((a, b) => a.y - b.y || a.x - b.x);
   const head = els.find((e) => e.type === "text") ?? els[0];
-  const members = els.filter((e) => e.id !== head.id);
+  const members = els.filter((e) => e.id !== head.id).sort((a, b) => zIdx(a) - zIdx(b));
+  // 原生编组：头与成员同组 ⇒ 展开态拖头，vendor 原生带着整组一起动（撤销也正确）
+  // 编组关系直接写进快照（成员马上要被删，不必真去改画布上的它们）——折叠仍是 2 步撤销
+  const gid = groupIdFor(head.id);
+  const order = ea.getElements().map((e) => e.id);
   ea.setStyle([head.id], {
+    groupIds: [gid],
     excaliToggle: {
       collapsed: true,
-      elements: members.map((m) => JSON.parse(JSON.stringify(m))),
+      groupId: gid,
+      offsets: offsetsOf(head, members),
+      elements: members.map((m) => Object.assign(JSON.parse(JSON.stringify(m)), { groupIds: [gid] })),
+      order,
     },
   });
   ea.deleteElements(members.map((m) => m.id));
