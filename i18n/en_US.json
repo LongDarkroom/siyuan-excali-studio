@@ -414,5 +414,12 @@
   "已收起 {n} 个成员": "Folded {n} member(s)",
   "这个折叠里没有可收起的成员": "This fold has no member to fold",
   "已展开 {n} 个成员": "Unfolded {n} member(s)",
-  "展开失败：成员可能已被删除": "Unfold failed: members may have been deleted"
+  "展开失败：成员可能已被删除": "Unfold failed: members may have been deleted",
+  "版本更新": "What's new",
+  "每一次更新优化了什么、解决了什么问题，都记在这里。": "Every improvement and fix in each release is recorded here.",
+  "历史版本": "Past versions",
+  "最新": "Latest",
+  "当前已是最新版本": "You're on the latest version",
+  "历史版本记录": "Release history",
+  "知道了": "Got it"
 }

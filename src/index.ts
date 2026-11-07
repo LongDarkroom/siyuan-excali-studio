@@ -91,11 +91,11 @@ import { createDockPanel, type DockHost } from "./siyuan/ExcaliDock";
 import {
   PLUGIN_VERSION,
   VERSION_SLOT,
+  buildChangelogDialogHtml,
   changelogDecision,
   changelogPath,
   fetchPluginFile,
-  renderChangelogHtml,
-  sliceVersionSection,
+  wireChangelogDialog,
 } from "./siyuan/changelog";
 import { installBuiltinScripts, listScripts, outdatedBuiltinScripts, readScript, resetBuiltinScripts, syncBuiltinScripts, SCRIPTS_DIR, SCRIPT_SETTING_SPECS, type ScriptInfo } from "./siyuan/script-store";
 import { runScriptCode } from "./siyuan/script-runner";
@@ -431,25 +431,37 @@ export default class ExcaliStudioPlugin extends Plugin {
   }
 
   /**
-   * 第五十二轮：版本更新弹窗。三条口径（用户拍板）：首装不弹只静默记版本、只弹当前
-   * 版本那一段、不设「不再提示」（版本号已经先记进独立槽，× 掉就不会重启再弹）。
-   * 读不到日志 / 该版本没写日志 / 渲染器缺失一律静默。
+   * 版本更新弹窗。口径（用户拍板）：首装不弹只静默记版本、弹双栏全历史
+   * （左栏全部版本，默认选当前版本）、不设「不再提示」。
+   * 读不到日志 / 渲染器缺失一律静默。
    */
   private async maybeShowChangelog(): Promise<void> {
     try {
       const action = changelogDecision(await this.loadData(VERSION_SLOT), PLUGIN_VERSION);
       if (action === "unknown-version" || action === "up-to-date") return;
-      // 先回写再弹：弹窗被用户划掉、或者这一段的日志其实是空的，都不该下次重启再来一遍
+      // 先回写再弹：弹窗被用户划掉也不该下次重启再来一遍
       await this.saveData(VERSION_SLOT, PLUGIN_VERSION);
       if (action !== "show") return;
-      const section = sliceVersionSection(await fetchPluginFile(changelogPath(this.name)), PLUGIN_VERSION);
-      if (!section) return;
+      const html = buildChangelogDialogHtml(await fetchPluginFile(changelogPath(this.name)), PLUGIN_VERSION, {
+        title: t("版本更新"),
+        subtitle: t("每一次更新优化了什么、解决了什么问题，都记在这里。"),
+        history: t("历史版本"),
+        latest: t("最新"),
+        current: t("当前已是最新版本"),
+        archived: t("历史版本记录"),
+        ok: t("知道了"),
+        close: t("关闭"),
+      });
+      if (!html) return;
       const dialog = new Dialog({
         title: `${t("更新日志")} v${PLUGIN_VERSION}`,
-        width: "min(640px, 92vw)",
-        content: `<div class="exs-changelog b3-typography">${renderChangelogHtml(section)}</div>`,
+        width: "min(860px, calc(100vw - 56px))",
+        height: "min(68vh, 620px)",
+        hideCloseIcon: true,
+        content: html,
       });
       dialog.element.classList.add("exs-changelog-dialog");
+      wireChangelogDialog(dialog.element, () => dialog.destroy());
     } catch (e) {
       console.warn("[excali-studio] 更新日志读取失败", e);
     }

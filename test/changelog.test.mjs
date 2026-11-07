@@ -21,6 +21,9 @@ import {
   fetchPluginFile,
   renderChangelogHtml,
   sliceVersionSection,
+  parseChangelogVersions,
+  buildChangelogDialogHtml,
+  wireChangelogDialog,
 } from "../src/siyuan/changelog.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -187,9 +190,13 @@ test("接线：挂在 onload 末尾、先回写版本再弹、脏版本绝不落
   assert.match(INDEX, /const action = changelogDecision\(await this\.loadData\(VERSION_SLOT\), PLUGIN_VERSION\);/, "读独立槽");
   assert.match(INDEX, /if \(action === "unknown-version" \|\| action === "up-to-date"\) return;\n\s*\/\/[^\n]*\n\s*await this\.saveData\(VERSION_SLOT, PLUGIN_VERSION\);/, "脏版本先挡掉，才回写");
   assert.match(INDEX, /await this\.saveData\(VERSION_SLOT, PLUGIN_VERSION\);\n\s*if \(action !== "show"\) return;/, "回写在弹窗之前（首装也要记上）");
-  assert.match(INDEX, /sliceVersionSection\(await fetchPluginFile\(changelogPath\(this\.name\)\), PLUGIN_VERSION\)/, "单一真源：运行时读包内 CHANGELOG.md");
-  assert.match(INDEX, /if \(!section\) return;/, "这个版本没写日志就静默");
+  assert.match(INDEX, /buildChangelogDialogHtml\(await fetchPluginFile\(changelogPath\(this\.name\)\), PLUGIN_VERSION, \{/, "单一真源：运行时读包内 CHANGELOG.md，构建双栏全历史");
+  assert.match(INDEX, /if \(!html\) return;/, "这个版本没写日志就静默");
+  assert.match(INDEX, /width: "min\(860px, calc\(100vw - 56px\)\)"/, "双栏弹窗要留出窗口边距");
+  assert.match(INDEX, /height: "min\(68vh, 620px\)"/, "弹窗高度必须收在窗口内");
+  assert.match(INDEX, /hideCloseIcon: true/, "原生关闭图标让位给自绘 hero 的 ×");
   assert.match(INDEX, /dialog\.element\.classList\.add\("exs-changelog-dialog"\)/, "样式挂 scope 类，不裸改全局");
+  assert.match(INDEX, /wireChangelogDialog\(dialog\.element, \(\) => dialog\.destroy\(\)\)/, "版本切换与关闭走根节点委托");
   assert.match(INDEX, /console\.warn\("\[excali-studio\] 更新日志读取失败", e\)/, "全程静默失败，只留一条 warn");
   // 存储槽必须独立：persist() 整对象覆写 excali-studio.json，塞进去迟早被漏掉
   assert.match(src("siyuan/changelog.ts"), /VERSION_SLOT = "excali-studio-version"/, "槽名单独一个，不塞 settings");
@@ -198,13 +205,126 @@ test("接线：挂在 onload 末尾、先回写版本再弹、脏版本绝不落
 
 /* ------------------------------ ④ 样式与文案 ------------------------------ */
 
-test("CSS：容器圆角 + 内容边距定死 + 正文自己滚动（把整段日志撑到屏幕外是不行的）", () => {
+test("CSS：双栏布局 + 卡片 + 深色对调 + 窄屏横排", () => {
   const CSS = src("index.css");
-  assert.match(CSS, /\.exs-changelog-dialog \.b3-dialog__container \{[\s\S]{0,80}border-radius: 12px;/, "与命名/拓展功能对话框同口径");
-  assert.match(CSS, /\.exs-changelog-dialog \.b3-dialog__content \{\n  padding: 14px 24px 20px;\n\}/, "content 内边距随主题浮动，必须定死");
-  assert.match(CSS, /\.exs-changelog-dialog \.exs-changelog \{\n  max-height: min\(58vh, 540px\);\n  overflow: auto;/, "正文限高内滚");
-  assert.match(CSS, /\.exs-changelog-dialog \.exs-changelog h2 \{[\s\S]{0,60}font-size: 15px;/, "文档尺度标题压到对话框尺度");
+  assert.match(CSS, /\.exs-changelog-dialog \.b3-dialog__container \{[\s\S]{0,200}border-radius: 18px;/, "与命名/拓展功能对话框同口径");
+  assert.match(CSS, /\.exs-changelog-dialog \.b3-dialog__header \{\n  display: none;\n\}/, "原生标题栏退场");
+  assert.match(CSS, /\.exs-changelog-dialog \.b3-dialog__body,/, "内容挂在 __body（思源现行 DOM）");
+  assert.match(CSS, /\.exs-changelog-dialog \.b3-dialog__content \{\n  flex: 1;\n  min-height: 0;\n  display: flex;/, "content 边距必须定死，双栏才能铺满");
+  assert.match(CSS, /max-height: calc\(100dvh - 48px\)/, "弹窗必须有窗口高度兜底");
+  assert.match(CSS, /--cl-brand: #6965db;/, "品牌紫（浅色档）");
+  assert.match(CSS, /html\[data-theme-mode="dark"\] \.exs-changelog-dialog \{[\s\S]{0,120}--cl-brand: #a8a5ff;/, "深色档换亮紫");
+  assert.match(CSS, /\.exs-changelog-dialog \.cl-rail \{/, "缺左侧版本时间线");
+  assert.match(CSS, /\.exs-changelog-dialog \.cl-group \{/, "缺分组白卡片");
+  assert.match(CSS, /\.exs-changelog-dialog \.cl-ver\.is-active \{/, "缺当前版本选中态");
+  assert.match(CSS, /@media \(max-width: 760px\)[\s\S]{0,1600}\.cl-rail \{/, "窄屏版本列必须横过来");
   assert.match(CSS, /\.exs-changelog-dialog \.exs-changelog__plain \{[\s\S]{0,80}white-space: pre-wrap;/, "纯文本回落不丢换行");
+});
+
+/* ------------------------------ ⑤ 全历史解析 ------------------------------ */
+
+const HISTORY = `# 更新日志
+
+文档前言，不算版本。
+
+## v0.2.0 (2026-10-26)
+
+首段引导语。
+
+### 甲组
+- **重点**：甲。
+- 甲二。
+
+### 乙组
+正文乙。
+
+---
+
+## v0.1.0（2026-10-20）
+
+首次发布。
+
+### 修复
+- 只有一条。
+`;
+
+const LABELS = {
+  title: "版本更新",
+  subtitle: "每一次更新优化了什么、解决了什么问题，都记在这里。",
+  history: "历史版本",
+  latest: "最新",
+  current: "当前已是最新版本",
+  archived: "历史版本记录",
+  ok: "知道了",
+  close: "关闭",
+};
+
+test("解析：半角 / 全角日期括号都认，前言跳过，`###` 切组", () => {
+  const versions = parseChangelogVersions(HISTORY);
+  assert.equal(versions.length, 2);
+  assert.equal(versions[0].version, "0.2.0");
+  assert.equal(versions[0].date, "2026-10-26");
+  assert.equal(versions[1].version, "0.1.0");
+  assert.equal(versions[1].date, "2026-10-20");
+  assert.equal(versions[0].lead, "首段引导语。");
+  assert.deepEqual(versions[0].groups.map((g) => g.title), ["甲组", "乙组"]);
+  assert.ok(versions[0].groups[0].markdown.includes("**重点**"));
+  assert.ok(!versions[0].groups[0].markdown.includes("### 乙组"), "组正文不能串到下一组");
+  assert.ok(!versions[0].groups[1].markdown.includes("---"), "段尾分隔线要剥掉");
+  assert.deepEqual(parseChangelogVersions("# 更新日志\n\n没有二级标题"), []);
+});
+
+test("构建：全版本进左栏，默认选中当前版本；缺失时回落最新一版", () => {
+  const html = buildChangelogDialogHtml(HISTORY, "0.1.0", LABELS);
+  assert.equal((html.match(/data-cl-ver="/g) || []).length, 2, "两个版本都要进左栏");
+  assert.equal((html.match(/data-cl-page="/g) || []).length, 2, "每一版都要有详情页");
+  assert.match(html, /class="cl-ver is-active" data-cl-ver="1" aria-current="true"/);
+  assert.match(html, /<section class="cl-page" data-cl-page="0" hidden>/);
+  assert.match(html, /<section class="cl-page" data-cl-page="1" data-cl-current="true">/);
+  assert.ok(html.includes("历史版本记录"), "非当前版本页脚是历史记录");
+
+  const fallback = buildChangelogDialogHtml(HISTORY, "9.9.9", LABELS);
+  assert.match(fallback, /class="cl-ver is-active" data-cl-ver="0"/);
+  assert.ok(!fallback.includes('data-cl-current="true"'), "版本对不上时不能自己认领「当前」");
+  assert.ok(
+    fallback.includes('<span class="cl-foot-status">历史版本记录</span>'),
+    "版本对不上时页脚只能说「历史版本记录」"
+  );
+});
+
+test("构建：标题/徽标/按钮齐备，且所有动态文本转义", () => {
+  const md = `## v1.0.0 (2026-01-01)\n\n### <img src=x onerror=alert(1)>\n- <script>alert(1)</script>\n`;
+  const html = buildChangelogDialogHtml(md, "1.0.0", LABELS);
+  assert.ok(html.includes("What's new"));
+  assert.ok(html.includes('<span class="cl-new">最新</span>'));
+  assert.ok(html.includes("data-cl-ok>知道了</button>"));
+  assert.ok(html.includes('aria-label="关闭"'));
+  assert.ok(html.includes("<pre class=\"exs-changelog__plain\">"), "没有 Lute 时回落 <pre>");
+  assert.ok(!html.includes("<script>"), "正文不能被当 HTML 拼");
+  assert.ok(html.includes("&lt;script&gt;"), "尖括号要转义");
+  assert.ok(!html.includes("<img src=x"), "小节标题也要转义");
+});
+
+test("构建：页脚只有一份、在滚动区之外，且带切换用的状态文案", () => {
+  const html = buildChangelogDialogHtml(HISTORY, "0.2.0", LABELS);
+  assert.equal((html.match(/<footer class="cl-foot">/g) || []).length, 1, "页脚不能每页各来一份");
+  assert.ok(html.indexOf('<footer class="cl-foot">') > html.indexOf("</main>"), "页脚必须在滚动容器后面");
+  assert.ok(html.includes('class="cl-foot-status"'));
+  assert.ok(html.includes('data-cl-text-current="当前已是最新版本"'));
+  assert.ok(html.includes('data-cl-text-archived="历史版本记录"'));
+  assert.equal((html.match(/data-cl-current="true"/g) || []).length, 1, "只有当前版本页打标");
+});
+
+test("交互接线：根节点事件委托、hidden 切页、关闭回调", () => {
+  const fn = wireChangelogDialog.toString();
+  assert.match(fn, /addEventListener\("click"/, "必须用根节点委托");
+  assert.ok(fn.includes("data-cl-ver"), "版本切换走 data 属性");
+  assert.ok(fn.includes("data-cl-close"), "自绘 × 走 data 属性");
+  assert.ok(fn.includes("data-cl-ok"), "「知道了」走 data 属性");
+  assert.ok(fn.includes(".hidden ="), "切页用 hidden 显隐");
+  assert.ok(fn.includes("cl-foot-status"), "切页时要同步底部状态文案");
+  assert.ok(fn.includes("data-cl-current"), "当前版本页靠 data 属性识别");
+  assert.ok(fn.includes("scrollTop = 0"), "换版本要回到页首，不能停在上一版滚到的位置");
 });
 
 test("i18n：「更新日志」双语齐备，中文原文即 key", () => {
