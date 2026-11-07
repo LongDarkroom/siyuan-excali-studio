@@ -24,6 +24,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { excalidrawZhCnPatch } from "./excalidraw-zh-cn-patch.mjs";
 import { excalidrawFontsPatch } from "./excalidraw-fonts-patch.mjs";
+import { excalidrawLayoutPatch } from "./excalidraw-layout-patch.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -39,7 +40,7 @@ function config(entry, outDir, fileName) {
   return {
     configFile: false,
     root: ROOT,
-    plugins: [excalidrawZhCnPatch(), excalidrawFontsPatch()],
+    plugins: [excalidrawZhCnPatch(), excalidrawFontsPatch(), excalidrawLayoutPatch()],
     base: "./",
     define: {
       __EXCALI_PLUGIN_VERSION__: JSON.stringify(PLUGIN_VERSION),

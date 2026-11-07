@@ -12,7 +12,9 @@
 //   ③ 底栏是一条 flex 流（exs-bottom-dock > exs-bottom-bar + exs-zoom-pill），
 //     vendor footer 左列退役——绝对定位中段 + 魔法 margin 的旧拼法不许回流；
 //   ④ 🎨 必须是真开关（propsOpen state + exs-props-open 根类），面板不能只跟选中走；
-//   ⑤ 五键全部走合成键盘事件进 vendor action 通道（撤销栈/缩放锚点原生完整）。
+//   ⑤ 五键全部走合成键盘事件进 vendor action 通道（撤销栈/缩放锚点原生完整）；
+//   ⑥ 面板收起要复刻 Obsidian 的「样式面板不在 ⇒ 弹层不出」：清 vendor openPopup
+//     + 捕获期吞纯 S/G（Shift+S/G 是吸管，放行）。
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -27,6 +29,7 @@ import {
   ICON_MINUS,
   ICON_PLUS,
 } from "../src/studio/menu-icons.ts";
+import { swallowsStylesPopupKey } from "../src/studio/props-panel-keys.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel) => readFileSync(resolve(ROOT, rel), "utf8");
@@ -161,7 +164,8 @@ test("StudioApp：hasSelection + propsOpen 双门控，五键全走合成键盘�
   assert.match(APP, /zoomPct !== zoomPercentRef\.current/, "zoom 翻转才渲染");
   // 双根类：exs-selection 门中段、exs-props-open 门面板（= 开关开 且 有选中）
   assert.match(APP, /hasSelection \? "exs-selection" : ""/, "根类拼 exs-selection");
-  assert.match(APP, /propsOpen && hasSelection \? "exs-props-open" : ""/, "exs-props-open = 开关开 且 有选中");
+  assert.match(APP, /const propsPanelVisible = propsOpen && hasSelection;/, "面板可见 = 开关开 且 有选中");
+  assert.match(APP, /propsPanelVisible \? "exs-props-open" : ""/, "exs-props-open 走派生可见态");
   // 结构：dock > bar(中段组 + undo/redo) + zoom pill
   assert.match(APP, /<div className="exs-bottom-dock">/, "dock 容器");
   assert.match(APP, /<div className="exs-bottom-bar">/, "主 pill");
@@ -188,6 +192,46 @@ test("StudioApp：hasSelection + propsOpen 双门控，五键全走合成键盘�
   // 不许在 React 里摸 vendor footer 类名
   assert.equal(APP.includes("App-menu__left"), false, "不许在 React 里摸 vendor 类名");
   assert.equal(APP.includes("undo-redo-buttons"), false, "vendor undo-redo 改装已退役");
+});
+
+test("键门：面板收起时吞纯 S/G；面板开、带修饰键、吸管、输入框一律放行", () => {
+  const base = {
+    key: "s",
+    panelVisible: false,
+    inRoot: true,
+    editableTarget: false,
+    shiftKey: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+  };
+  assert.equal(swallowsStylesPopupKey(base), true, "收起时纯 S 要吞");
+  assert.equal(swallowsStylesPopupKey({ ...base, key: "G" }), true, "大写 G 同样吞");
+  assert.equal(swallowsStylesPopupKey({ ...base, panelVisible: true }), false, "面板开着交还 vendor");
+  assert.equal(swallowsStylesPopupKey({ ...base, shiftKey: true }), false, "Shift+S 是吸管，必须放行");
+  assert.equal(swallowsStylesPopupKey({ ...base, metaKey: true }), false, "⌘S 是保存，必须放行");
+  assert.equal(swallowsStylesPopupKey({ ...base, ctrlKey: true }), false, "Ctrl+S 必须放行");
+  assert.equal(swallowsStylesPopupKey({ ...base, altKey: true }), false, "带 Alt 的组合放行");
+  assert.equal(swallowsStylesPopupKey({ ...base, editableTarget: true }), false, "文本输入目标放行");
+  assert.equal(swallowsStylesPopupKey({ ...base, inRoot: false }), false, "根容器外不接管");
+  assert.equal(swallowsStylesPopupKey({ ...base, isComposing: true }), false, "输入法组词放行");
+  assert.equal(swallowsStylesPopupKey({ ...base, key: "f" }), false, "只认 S/G");
+});
+
+test("StudioApp：面板收起清 openPopup + 捕获期 S/G 键门接线", () => {
+  assert.match(
+    APP,
+    /import \{ isTextEntryTarget, swallowsStylesPopupKey \} from "\.\/props-panel-keys\.ts";/,
+    "键门必须来自纯逻辑模块",
+  );
+  assert.match(APP, /propsPanelVisibleRef\.current = propsPanelVisible;/, "捕获期读最新面板可见态");
+  assert.match(
+    APP,
+    /api\.updateScene\(\{ appState: \{ openPopup: null \} \}\);/,
+    "面板收起要清 vendor 的 openPopup（等价于 Obsidian 卸载面板）",
+  );
+  assert.match(APP, /swallowsStylesPopupKey\(\{/, "捕获期接键门判定");
+  assert.match(APP, /event\.stopImmediatePropagation\(\);/, "吞键要断在 vendor 之前");
 });
 
 test("底栏图标：24 网格、绝对坐标，改坏会被卡住", () => {

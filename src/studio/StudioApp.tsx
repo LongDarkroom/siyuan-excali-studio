@@ -89,6 +89,7 @@ import { ExportDialog } from "./ExportDialog";
 import { LibraryImportDialog } from "./LibraryImportDialog";
 import { openPathInFileManager } from "./desktop-bridge.ts";
 import { startLibraryMenuInjection } from "./library-menu-inject.ts";
+import { isTextEntryTarget, swallowsStylesPopupKey } from "./props-panel-keys.ts";
 import type { ExportScene } from "./export";
 import { insertImageFiles } from "./image-import";
 import { clientToScene, viewportCenter, type Point } from "./scene-point";
@@ -470,6 +471,8 @@ export function StudioApp(props: StudioProps) {
   const [hasSelection, setHasSelection] = useState(false);
   const hasSelectionRef = useRef(false);
   const [propsOpen, setPropsOpen] = useState(false);
+  const propsPanelVisible = propsOpen && hasSelection;
+  const propsPanelVisibleRef = useRef(false);
   const [zoomPercent, setZoomPercent] = useState(100);
   const zoomPercentRef = useRef(100);
   /** 2026-10-21 P1：图片转素材弹窗的目标图片；null = 关着 */
@@ -2137,6 +2140,43 @@ export function StudioApp(props: StudioProps) {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
+  /*
+   * 面板收起 = Obsidian 卸载样式面板。vendor 面板我们只能 CSS 藏、组件仍挂载，
+   * 而颜色/字体弹层的 Radix portal 挂在 .excalidraw 下（面板外），所以：
+   *   ① 收起时把 vendor 的 openPopup 一并清掉（等价于卸载连带收起浮层）；
+   *   ② 收起期间吞掉纯 S/G，否则 vendor 仍会置 openPopup、弹层照浮（复刻 Obsidian
+   *      关 tray 后按 S 无反应）。Shift+S/G 是吸管，放行。
+   */
+  useEffect(() => {
+    propsPanelVisibleRef.current = propsPanelVisible;
+    if (propsPanelVisible || !api) return;
+    if (api.getAppState().openPopup != null) {
+      api.updateScene({ appState: { openPopup: null } });
+    }
+  }, [propsPanelVisible, api]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const el = rootRef.current;
+      const swallow = swallowsStylesPopupKey({
+        key: event.key,
+        panelVisible: propsPanelVisibleRef.current,
+        inRoot: !!el && event.target instanceof Node && el.contains(event.target),
+        editableTarget: isTextEntryTarget(event.target),
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        isComposing: event.isComposing,
+      });
+      if (!swallow) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
   /**
    * 批 1A：放映键位。只在放映中接管（presentKeysRef 非空），其余时候一行都不碰；
    * 统一在 capture 阶段吃掉，vendor 的 frame 选择/快捷键收不到。
@@ -2212,7 +2252,7 @@ export function StudioApp(props: StudioProps) {
       className={[
         "exs-root",
         hasSelection ? "exs-selection" : "",
-        propsOpen && hasSelection ? "exs-props-open" : "",
+        propsPanelVisible ? "exs-props-open" : "",
         presenting ? "exs-presenting" : "",
       ]
         .filter(Boolean)
