@@ -17,10 +17,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CaptureUpdateAction, Excalidraw, TTDDialog, convertToExcalidrawElements, hashElementsVersion } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Excalidraw, TTDDialog, convertToExcalidrawElements, exportToCanvas, hashElementsVersion } from "@excalidraw/excalidraw";
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { excalidrawLangCode, t } from "../i18n";
-import { themeBgForMode, readSiyuanThemeMode, readThemeBgSlots, watchSiyuanThemeMode, withThemeBgSlot, type ThemeMode } from "./theme";
+import { themeBgForMode, themeDefaultCanvasColor, readSiyuanThemeMode, readThemeBgSlots, watchSiyuanThemeMode, withThemeBgSlot, type ThemeMode } from "./theme";
 import { StudioMenu } from "./StudioMenu";
 import { ScriptRail, type ScriptRailItem } from "./ScriptRail";
 import { LineIcon } from "./line-icon";
@@ -29,10 +29,14 @@ import { AiChannelsPanel } from "./AiChannelsPanel";
 import type { AiChannels, ChannelId } from "./ai/channels";
 import { IMAGE_TO_MATERIAL, INSERT_BOARD_CARD, OUTLINE_COLOR, PRESENTATION, railActionMount, railActionOf, type RailActionId, type RailActionMeta } from "./rail-actions.ts";
 import { deckOf, deckSignature, moveSlide, PRESENTATION_KEY, slideTitle, toggleSlide, toggleSlideReveal, visibleSlides, type Deck, type DeckPatch, type FrameLike, type Slide } from "./presentation-plan";
+import { frameSizeFor, nextFrameSpot, type FrameRatio } from "./frame-presets.ts";
+import { makeElement } from "./ea-element.ts";
+import { THUMB_MAX, thumbSignature, type ThumbElement } from "./presentation-thumbs.ts";
 import { installRadioIsolation } from "./radio-isolation.ts";
 import {
   buildRestorePatches,
   buildRunPatches,
+  clampCursor,
   lastStep,
   planPage,
   snapshotOpacity,
@@ -49,6 +53,7 @@ import {
   navNext,
   navPrev,
   navStart,
+  fromCursor,
   toCursor,
   type NavState,
 } from "./presentation-nav.ts";
@@ -214,7 +219,7 @@ export type StudioProps = {
   getAiChannels: () => AiChannels;
   onAiChannel: (id: ChannelId, on: boolean) => void;
   /**
-   * 第五十三轮：演示偏好（幕布/逐条/打字机/光标/速度/留白/自动前进）。
+   * 第五十三轮：演示偏好（幕布/逐条/打字机/自动前进/全屏/方向键）。
    * getPresentationSettings 在打开抽屉与进片场时各拉一次；改一项就落盘并回写。
    */
   getPresentationSettings: () => PresentationSettings;
@@ -692,6 +697,15 @@ export function StudioApp(props: StudioProps) {
     frameRendering: { enabled: boolean; name: boolean; outline: boolean; clip: boolean };
     /** 批 1E：进片场定格的偏好——一场放映内不许中途换口径 */
     scrim: boolean;
+    /** 第八十轮：遮罩/网格/全屏即时生效；其余项写回快照、下一步生效 */
+    hideGrid: boolean;
+    /** 进片场前的网格显示值：退出无条件还原（放映不改用户的视图偏好） */
+    grid: boolean;
+    reveal: boolean;
+    /** 每页是否允许分条（页面级「整页一起出」是例外，全局开关更新时要保留它） */
+    pageReveal: boolean[];
+    /** 进片场那一刻的场景元素（未打 opacity 补丁）：缩略图补画时用它，避免预览停在半截 */
+    thumbElements: RunElement[];
     typewriter: boolean;
     cursor: boolean;
     speed: number;
@@ -723,6 +737,104 @@ export function StudioApp(props: StudioProps) {
   } | null>(null);
   /** 自动前进的截止时间（0 = 不走；打字中暂停，打完重新计时） */
   const presentDeadlineRef = useRef(0);
+  /** 2026-11-08：放映中手动暂停自动前进（HUD 按钮 / P 键）；不写设置，退出即清 */
+  const presentPausedRef = useRef(false);
+  const [presentPaused, setPresentPaused] = useState(false);
+  /**
+   * 第八十轮：放映中「即时生效」的三项（遮罩 / 隐藏网格 / 全屏）。
+   * 它们是观感开关，改完应当立刻看到；逐条/打字机/速度/留白只写回快照，下一步才生效。
+   */
+  const [presentScrim, setPresentScrim] = useState(true);
+  const [presentFullscreen, setPresentFullscreen] = useState(false);
+  /** 遮罩颜色 = 画布底色（进片场时定一次；放映中换主题属于极端边角，不追） */
+  const [presentMaskColor, setPresentMaskColor] = useState("#ffffff");
+  /**
+   * 第八十轮：缩略图缓存。键 = 画框 id，值 = { 签名, data URL }。
+   * 生成是异步且串行的（一次一张），签名变了才重画；抽屉开着或放映中才排队。
+   */
+  const [presentThumbs, setPresentThumbs] = useState<Record<string, string>>({});
+  const thumbCacheRef = useRef<Map<string, { sig: string; url: string }>>(new Map());
+  const thumbWantedRef = useRef<Map<string, string>>(new Map());
+  const thumbQueueRef = useRef<string[]>([]);
+  const thumbBusyRef = useRef(false);
+  const thumbTimerRef = useRef<number | null>(null);
+  const thumbsOnRef = useRef(false);
+  /** 串行泵：一次只画一张，画完再取下一张（导出会加载字体，并发只会互相抢主线程） */
+  const pumpThumbsRef = useRef<() => void>(() => {});
+  /** 放映中改偏好：即时项立刻落，其余写回快照下一步生效（赋值在下面定义完处） */
+  const presentLiveRef = useRef<(key: keyof PresentationSettings, value: PresentationSettings[keyof PresentationSettings]) => void>(
+    () => {},
+  );
+  /** 动画帧里要读最新片单/底色；放进 ref，避免把整个 onChange 回调绑死在 state 上 */
+  const deckRef = useRef<Deck>({ slides: [], hasOrdered: false });
+  deckRef.current = deck;
+  const presentBgRef = useRef<() => string>(() => "#ffffff");
+  presentBgRef.current = () => {
+    const raw = api?.getAppState().viewBackgroundColor;
+    const bg = typeof raw === "string" ? raw : "";
+    return bg || themeBgForMode(bgSlotsRef.current, modeRef.current, undefined) || themeDefaultCanvasColor();
+  };
+  /**
+   * 全屏放映（Advanced Canvas 的 fullscreenPresentationEnabled 同款）。
+   *
+   * 全屏目标是**插件自己的根容器**（.exs-root）而不是 documentElement——
+   * 全屏整个思源窗口会把思源自己的侧栏/Dock 一起顶掉，用户会失去返回路径。
+   * 浏览器拒绝时（宿主限制/无用户手势）静默降级为窗口模式，不报错。
+   * 设置里的「开始演示时全屏」与底栏 ⛶ 都走 applyFullscreen，状态只认真实的
+   * fullscreenElement（用户按 Esc 退出时由 fullscreenchange 回写）。
+   */
+  const presentFullscreenRef = useRef(false);
+  /** 全屏切换会改视口尺寸，进/退全屏后要按新视口重新取景（focusFrame 定义在后面） */
+  const focusFrameRef = useRef<(frameId: string, fit?: number) => void>(() => {});
+  const applyFullscreen = useCallback((on: boolean): void => {
+    const root = rootRef.current;
+    if (!root) return;
+    const doc = root.ownerDocument;
+    if (!on) {
+      presentFullscreenRef.current = false;
+      setPresentFullscreen(false);
+      if (doc.fullscreenElement) void doc.exitFullscreen?.().catch(() => {});
+      return;
+    }
+    const el = root as unknown as { requestFullscreen?: () => Promise<void> };
+    if (typeof el.requestFullscreen !== "function" || doc.fullscreenElement) return;
+    void el
+      .requestFullscreen()
+      .then(() => {
+        presentFullscreenRef.current = true;
+        setPresentFullscreen(true);
+      })
+      .catch(() => {
+        // 降级：留在窗口模式放映，功能不受影响
+        presentFullscreenRef.current = false;
+        setPresentFullscreen(false);
+      });
+  }, []);
+  const toggleFullscreen = useCallback((): void => {
+    applyFullscreen(!presentFullscreenRef.current);
+  }, [applyFullscreen]);
+  // Esc / 宿主退出全屏：底栏那个按钮的状态得跟上，不然会一直显示「退出全屏」
+  useEffect(() => {
+    const doc = rootRef.current?.ownerDocument ?? document;
+    const sync = (): void => {
+      const isFull = !!doc.fullscreenElement;
+      presentFullscreenRef.current = isFull;
+      setPresentFullscreen(isFull);
+      // 视口尺寸变了：之前按窗口算的 scroll/zoom 会让当前页偏出新画面。
+      // 等一帧让 vendor 收完 resize，再按新视口把同一页重新对准。
+      const snap = presentSnapRef.current;
+      const nav = presentNavRef.current;
+      if (!snap || !nav) return;
+      window.requestAnimationFrame(() => {
+        const cur = presentNavRef.current;
+        if (!cur) return;
+        presentCamUntilRef.current = performance.now() + PRESENT_CAM_MS;
+        focusFrameRef.current(snap.plans[cur.page].frameId, snap.fit);
+      });
+    };
+    doc.addEventListener("fullscreenchange", sync);
+    return () => doc.removeEventListener("fullscreenchange", sync);
+  }, []);
   const presentNextRef = useRef<() => void>(() => {});
   /** 键盘监听只注册一次，处理器每帧换 —— 避免每次翻页重绑 window 监听 */
   const presentKeysRef = useRef<{
@@ -735,6 +847,8 @@ export function StudioApp(props: StudioProps) {
     nextDir: (side: GraphSide) => void;
     /** 切全屏 */
     fullscreen: () => void;
+    /** 2026-11-08：暂停/继续自动前进 */
+    pause: () => void;
   } | null>(null);
   const deckSigRef = useRef("");
   /** 图状态签名（边集合 + 未连页集合）：与页序签名分开，箭头变了它才变 */
@@ -764,6 +878,112 @@ export function StudioApp(props: StudioProps) {
     graphSigRef.current = gsSig;
     setPresentGraph(gs);
   }, []);
+
+  /*
+   * 第八十轮：演示缩略图。
+   * 抽屉里的卡片与放映底栏的页码预览共用同一份缓存；生成走 vendor 的
+   * `exportToCanvas({ exportingFrame })`（它按画框裁切、用画框宽高比，
+   * 并自动关掉框线/画框名）。三种实时性要分清：
+   * - 生成**串行**：导出要加载字体，并发只会互相抢主线程；
+   * - 触发**防抖**：onChange 每帧都跑，等落笔约 320ms 再算签名；
+   * - 只在抽屉开着或放映中排队（编辑时不预热几十页）。
+   */
+  const pumpThumbs = useCallback(async (): Promise<void> => {
+    if (thumbBusyRef.current) return;
+    thumbBusyRef.current = true;
+    try {
+      while (thumbQueueRef.current.length > 0) {
+        const id = thumbQueueRef.current.shift() as string;
+        const want = thumbWantedRef.current.get(id);
+        if (!want) continue;
+        const all = (presentSnapRef.current?.thumbElements ?? api?.getSceneElements()) as unknown as
+          | (ThumbElement & Record<string, unknown>)[]
+          | undefined;
+        if (!all) continue;
+        const frame = all.find((e) => e.id === id);
+        if (!frame) continue;
+        let canvas: HTMLCanvasElement;
+        try {
+          canvas = await exportToCanvas({
+            elements: all as never,
+            appState: {
+              exportBackground: true,
+              exportScale: 1,
+              viewBackgroundColor: presentBgRef.current(),
+              exportWithDarkMode: modeRef.current === "dark",
+              frameRendering: { enabled: true, name: false, outline: false, clip: true },
+            } as never,
+            files: api?.getFiles() ?? {},
+            exportingFrame: frame as never,
+            exportPadding: 0,
+            maxWidthOrHeight: THUMB_MAX,
+          });
+        } catch (e) {
+          // 字体/嵌入图片的偶发失败不该打断用户操作：留占位，下次内容变化再试
+          console.warn("[excali-studio] 缩略图生成失败", e);
+          continue;
+        }
+        // 画到一半内容又变了：这张作废，队列里已有新签名的同一页
+        if (thumbWantedRef.current.get(id) !== want) continue;
+        const url = canvas.toDataURL("image/png");
+        thumbCacheRef.current.set(id, { sig: want, url });
+        setPresentThumbs((prev) => (prev[id] === url ? prev : { ...prev, [id]: url }));
+      }
+    } finally {
+      thumbBusyRef.current = false;
+    }
+  }, [api]);
+  pumpThumbsRef.current = () => void pumpThumbs();
+
+  /** 算签名、补缓存命中、把缺的页排进队列；immediate = 开抽屉时别等防抖 */
+  const scheduleThumbs = useCallback(
+    (immediate = false): void => {
+      if (thumbTimerRef.current !== null) {
+        window.clearTimeout(thumbTimerRef.current);
+        thumbTimerRef.current = null;
+      }
+      const run = (): void => {
+        if (!thumbsOnRef.current) return;
+        const all = (presentSnapRef.current?.thumbElements ?? api?.getSceneElements()) as unknown as
+          | ThumbElement[]
+          | undefined;
+        if (!all) return;
+        const bg = presentBgRef.current();
+        const wanted = new Map<string, string>();
+        for (const s of deckRef.current.slides) {
+          // 空画框没有内容可裁（导出会得到空包围盒）：卡片直接用「空白页」占位
+          if (s.blank) continue;
+          const sig = thumbSignature(all, s.id, bg);
+          if (sig !== "") wanted.set(s.id, sig);
+        }
+        thumbWantedRef.current = wanted;
+        // 队列里签名已过期的直接丢掉（内容还在变，先不画）
+        thumbQueueRef.current = thumbQueueRef.current.filter((id) => {
+          const sig = wanted.get(id);
+          return !!sig && thumbCacheRef.current.get(id)?.sig !== sig;
+        });
+        for (const [id, sig] of wanted) {
+          const cached = thumbCacheRef.current.get(id);
+          if (cached && cached.sig === sig) {
+            setPresentThumbs((prev) => (prev[id] === cached.url ? prev : { ...prev, [id]: cached.url }));
+            continue;
+          }
+          if (!thumbQueueRef.current.includes(id)) thumbQueueRef.current.push(id);
+        }
+        pumpThumbsRef.current();
+      };
+      if (immediate) run();
+      else thumbTimerRef.current = window.setTimeout(run, 320);
+    },
+    [api],
+  );
+  // 卸载时别让悬空的缩略图定时器去碰已拆掉的 api
+  useEffect(
+    () => () => {
+      if (thumbTimerRef.current !== null) window.clearTimeout(thumbTimerRef.current);
+    },
+    [],
+  );
   /** 元数据写入走正常场景更新：可撤销、会标脏、自动保存照旧落盘 */
   const applyDeckPatches = useCallback(
     (patches: DeckPatch[]): void => {
@@ -798,6 +1018,18 @@ export function StudioApp(props: StudioProps) {
     (id: string): void => applyDeckPatches(toggleSlideReveal(deck, id)),
     [applyDeckPatches, deck],
   );
+  /** 第八十轮：抽屉内联改名 = 改画框名（vendor 自己的画框名，不另存一份） */
+  const renameDeckSlide = useCallback(
+    (id: string, name: string): void => {
+      if (!api) return;
+      const next = name.trim();
+      api.updateScene({
+        elements: api.getSceneElements().map((e) => (e.id === id ? { ...e, name: next } : e)) as never,
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      });
+    },
+    [api],
+  );
   /** 宿主设置是唯一真源；打开抽屉时拉一次，避免另一块画板改过之后这边停在上次的值 */
   const readPresentSettings = useCallback(
     (): PresentationSettings => normalizePresentationSettings(getPresentationSettings()),
@@ -806,13 +1038,18 @@ export function StudioApp(props: StudioProps) {
   const openPresentDrawer = useCallback((): void => {
     setPresentSettings(readPresentSettings());
     setPresentOpen(true);
-  }, [readPresentSettings]);
+    // 开抽屉就排队画缩略图（别等下一次 onChange 的防抖）
+    thumbsOnRef.current = true;
+    scheduleThumbs(true);
+  }, [readPresentSettings, scheduleThumbs]);
   const changePresentSetting = useCallback(
     <K extends keyof PresentationSettings,>(key: K, value: PresentationSettings[K]): void => {
       const next = normalizePresentationSettings({ ...presentSettings, [key]: value });
       if (next[key] === presentSettings[key]) return;
       setPresentSettings(next);
       onPresentationSetting(key, next[key]);
+      // 放映中：观感项立刻生效；其余写回快照，下一步/下一段打字按新值走
+      if (presentingRef.current) presentLiveRef.current(key, next[key]);
     },
     [onPresentationSetting, presentSettings],
   );
@@ -880,11 +1117,53 @@ export function StudioApp(props: StudioProps) {
     },
     [api],
   );
-  // 面板跳页要和放映用同一份取景系数，否则齿轮里的「镜头留白」滑块只对放映生效、
-  // 点页码跳过去永远是写死的 0.92（读的是快照值，未开放映时也有默认，见 readPresentSettings）
+  focusFrameRef.current = focusFrame;
+  // 面板跳页要和放映用同一份取景系数；滑块虽然退役了，已落盘的 fit 仍要沿用，
+  // 否则点页码跳过去永远是写死的 0.92（读的是快照值，见 readPresentSettings）
   const jumpToSlide = useCallback(
     (slide: Slide): void => focusFrame(slide.id, presentSettings.fit),
     [focusFrame, presentSettings.fit],
+  );
+
+  /**
+   * 第八十一轮：新建一页标准画框。
+   * 一次 updateScene 落地（一个撤销点），随后把镜头开过去——新页插在末页右侧、
+   * 很可能在视口外，不飞过去用户会以为没插上。
+   */
+  const addDeckSlide = useCallback(
+    (ratio: FrameRatio): void => {
+      if (!api) return;
+      const all = api.getSceneElements();
+      const boxes = all
+        .filter((e) => e.type === "frame" && !e.isDeleted)
+        .map((f) => ({ x: f.x, y: f.y, width: f.width ?? 0, height: f.height ?? 0 }));
+      const last = deck.slides[deck.slides.length - 1];
+      const anchor = last ? { x: last.x, y: last.y, width: last.w, height: last.h } : null;
+      const size = frameSizeFor(ratio, anchor);
+      let at = nextFrameSpot(boxes, anchor);
+      if (!at) {
+        const c = viewportCenter(api);
+        at = { x: Math.round(c.x - size.width / 2), y: Math.round(c.y - size.height / 2) };
+      }
+      const el = makeElement({
+        type: "frame",
+        x: at.x,
+        y: at.y,
+        width: size.width,
+        height: size.height,
+        name: t("第 {n} 页", { n: deck.slides.length + 1 }),
+      });
+      const id = String(el.id);
+      api.updateScene({
+        elements: [...all, el as never],
+        appState: { selectedElementIds: { [id]: true } } as never,
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      });
+      setPresentSel(deck.slides.length);
+      window.requestAnimationFrame(() => focusFrame(id, presentSettings.fit));
+      notify(t("已插入 {ratio} 画框 · {w}×{h}", { ratio, w: size.width, h: size.height }));
+    },
+    [api, deck.slides, focusFrame, notify, presentSettings.fit],
   );
 
   /** 放映补丁一律 NEVER：不进撤销栈、不产生撤销点，退出回填后画布回到放映前 */
@@ -924,6 +1203,11 @@ export function StudioApp(props: StudioProps) {
   );
 
   const bumpAutoDeadline = useCallback((): void => {
+    // 暂停中不排下一次自动推进；恢复时由 togglePresentPause 重新排期
+    if (presentPausedRef.current) {
+      presentDeadlineRef.current = 0;
+      return;
+    }
     const snap = presentSnapRef.current;
     presentDeadlineRef.current =
       snap && snap.autoAdvance > 0 ? performance.now() + snap.autoAdvance * 1000 : 0;
@@ -1055,6 +1339,68 @@ export function StudioApp(props: StudioProps) {
     [finishTyping, presentGo],
   );
 
+  /**
+   * 放映中改偏好（设置气泡里的每一次勾选/拖动都走这里）：
+   * - 观感三项（遮罩 / 隐藏网格 / 全屏）**立刻**落到现场；
+   * - 「逐条出场」例外地要当场重算每页计划并重落游标——它改的是页的形状，
+   *   拖到下一步才生效会让面板和画面各说各话；
+   * - 其余（打字机/光标/速度/自动前进/留白/方向导航）写回快照，
+   *   从下一步、下一段打字或下一次镜头飞行起生效。
+   * 只动本次放映的运行时；落盘由 changePresentSetting 负责。
+   */
+  presentLiveRef.current = (key, value): void => {
+    const snap = presentSnapRef.current;
+    if (!snap) return;
+    switch (key) {
+      case "scrim":
+        setPresentScrim(value as boolean);
+        return;
+      case "hideGrid": {
+        const hide = value as boolean;
+        api?.updateScene({
+          appState: { gridModeEnabled: hide ? false : snap.grid } as never,
+          captureUpdate: CaptureUpdateAction.NEVER,
+        });
+        return;
+      }
+      case "fullscreen":
+        applyFullscreen(value as boolean);
+        return;
+      case "reveal": {
+        snap.reveal = value as boolean;
+        snap.plans = snap.plans.map((p, i) =>
+          planPage(snap.thumbElements, p.frameId, snap.reveal && snap.pageReveal[i]),
+        );
+        const cur = presentNavRef.current;
+        if (!cur) return;
+        finishTyping();
+        presentPendingRef.current = null;
+        presentGo(fromCursor(clampCursor(snap.plans, toCursor(cur)), cur), "jump");
+        return;
+      }
+      case "autoAdvance":
+        snap.autoAdvance = value as number;
+        bumpAutoDeadline();
+        return;
+      case "typewriter":
+        snap.typewriter = value as boolean;
+        return;
+      case "cursor":
+        snap.cursor = value as boolean;
+        return;
+      case "speed":
+        snap.speed = value as number;
+        return;
+      case "fit":
+        snap.fit = value as number;
+        return;
+      case "directional":
+        snap.directional = value as boolean;
+        return;
+      default:
+        return;
+    }
+  };
   /*
    * 唯一 interval（60ms）：① 相机飞行窗结束后把排队意图落下；
    * ② 自动前进到点后走一步（打字中 / 飞行中 / 有排队时先不走）。
@@ -1068,7 +1414,7 @@ export function StudioApp(props: StudioProps) {
         presentPendingRef.current = null;
         presentGoRef.current(pending.nav, pending.kind);
       }
-      if (typingRef.current || presentPendingRef.current) return;
+      if (typingRef.current || presentPendingRef.current || presentPausedRef.current) return;
       const snap = presentSnapRef.current;
       if (!snap || snap.autoAdvance <= 0) return;
       if (now < presentCamUntilRef.current) return;
@@ -1110,8 +1456,10 @@ export function StudioApp(props: StudioProps) {
     }));
     const built = buildSlideGraph(all as unknown as Parameters<typeof buildSlideGraph>[0], frames);
     const graph = built.edges.length > 0 ? built : null;
+    /** 页面级例外：这一页设成「整页一起出」时，全局逐条开关管不着它 */
+    const pageReveal = shown.map((s) => s.reveal !== "all");
     presentSnapRef.current = {
-      plans: shown.map((s) => planPage(all, s.id, ps.reveal && s.reveal !== "all")),
+      plans: shown.map((s, i) => planPage(all, s.id, ps.reveal && pageReveal[i])),
       titles: shown.map((s) => t(slideTitle(s))),
       graph,
       original: snapshotOpacity(all),
@@ -1127,6 +1475,11 @@ export function StudioApp(props: StudioProps) {
         clip: st.frameRendering?.clip !== false,
       },
       scrim: ps.scrim,
+      hideGrid: ps.hideGrid,
+      grid: !!st.gridModeEnabled,
+      reveal: ps.reveal,
+      pageReveal,
+      thumbElements: all,
       typewriter: ps.typewriter,
       cursor: ps.cursor,
       speed: ps.speed,
@@ -1135,6 +1488,10 @@ export function StudioApp(props: StudioProps) {
       directional: ps.directional,
       fullscreen: ps.fullscreen,
     };
+    // 即时项的运行时状态：改设置立刻看得到，不改快照
+    setPresentScrim(ps.scrim);
+    setPresentFullscreen(false);
+    setPresentMaskColor(presentBgRef.current());
     if (autoSaveTimer.current !== null) {
       window.clearTimeout(autoSaveTimer.current);
       autoSaveTimer.current = null;
@@ -1148,12 +1505,17 @@ export function StudioApp(props: StudioProps) {
     presentPendingRef.current = null;
     presentNavRef.current = null;
     presentDeadlineRef.current = 0;
+    // 每次开演都从「未暂停」起，暂停只是本次放映的运行时状态
+    presentPausedRef.current = false;
+    setPresentPaused(false);
     api.updateScene({
       appState: {
         viewModeEnabled: true,
         selectedElementIds: {},
         // 关画框渲染：框线/名字/裁剪消失，成员照常画（不再靠压 opacity 藏画框）
         frameRendering: { enabled: false, name: false, outline: false, clip: false },
+        // 第八十轮：网格是编辑辅助，放映默认藏起来；退出无条件还原（见 exitPresentation）
+        gridModeEnabled: ps.hideGrid ? false : !!st.gridModeEnabled,
       } as never,
       captureUpdate: CaptureUpdateAction.NEVER,
     });
@@ -1163,25 +1525,15 @@ export function StudioApp(props: StudioProps) {
     const nav = navStart(plans, graph, startPage);
     presentNavRef.current = nav;
     setPresentOpen(false);
+    // 放映中底栏的页码预览也要缩略图：抽屉没来得及画完的，用进片场快照继续补
+    thumbsOnRef.current = true;
+    scheduleThumbs(true);
     setPresentSel(nav.page);
     focusFrame(plans[nav.page].frameId, presentSnapRef.current.fit);
     presentGo(nav, "enter");
     // 全屏：进片场就申请（失败静默降级为窗口模式）
-    if (ps.fullscreen) {
-      const root = rootRef.current;
-      const el = root as unknown as { requestFullscreen?: () => Promise<void> } | null;
-      if (el && typeof el.requestFullscreen === "function") {
-        void el
-          .requestFullscreen()
-          .then(() => {
-            presentFullscreenRef.current = true;
-          })
-          .catch(() => {
-            presentFullscreenRef.current = false;
-          });
-      }
-    }
-  }, [api, deck, focusFrame, notify, presentGo, readPresentSettings]);
+    if (ps.fullscreen) applyFullscreen(true);
+  }, [api, applyFullscreen, deck, focusFrame, notify, presentGo, readPresentSettings, scheduleThumbs]);
 
   /**
    * 退片场：按快照回填 opacity + 全文 + 视口 + viewModeEnabled，然后才摘闸。
@@ -1195,13 +1547,8 @@ export function StudioApp(props: StudioProps) {
       window.cancelAnimationFrame(typingRef.current.raf);
       typingRef.current = null;
     }
-    // 退全屏（进片场申请过才退）
-    if (presentFullscreenRef.current) {
-      presentFullscreenRef.current = false;
-      const root = rootRef.current;
-      const doc = root?.ownerDocument;
-      if (doc?.fullscreenElement) void doc.exitFullscreen?.().catch(() => {});
-    }
+    // 退全屏：无条件调一次，host 已经退出时会早退（状态以真实 fullscreenElement 为准）
+    applyFullscreen(false);
     if (api) {
       const elems = api.getSceneElements();
       const all = elems as unknown as (RunElement & TextElementLike)[];
@@ -1221,6 +1568,8 @@ export function StudioApp(props: StudioProps) {
           zoom: { value: snap.zoom },
           // 还原画框渲染开关（放映时关掉的）
           frameRendering: { ...snap.frameRendering },
+          // 无条件还原网格：放映改的只是本次视图，不许写回用户偏好
+          gridModeEnabled: snap.grid,
         } as never,
         captureUpdate: CaptureUpdateAction.NEVER,
       });
@@ -1231,38 +1580,13 @@ export function StudioApp(props: StudioProps) {
     presentNavRef.current = null;
     presentDeadlineRef.current = 0;
     presentingRef.current = false;
+    presentPausedRef.current = false;
+    setPresentPaused(false);
+    // 即时项的运行时状态归位（下次开演会按新设置重新装）
+    setPresentScrim(true);
+    setPresentFullscreen(false);
     setPresenting(null);
-  }, [api]);
-
-  /**
-   * 全屏放映（Advanced Canvas 的 fullscreenPresentationEnabled 同款）。
-   *
-   * 全屏目标是**插件自己的根容器**（.exs-root）而不是 documentElement——
-   * 全屏整个思源窗口会把思源自己的侧栏/Dock 一起顶掉，用户会失去返回路径。
-   * 浏览器拒绝时（宿主限制/无用户手势）静默降级为窗口模式，不报错。
-   */
-  const presentFullscreenRef = useRef(false);
-  const toggleFullscreen = useCallback((): void => {
-    const root = rootRef.current;
-    if (!root) return;
-    const doc = root.ownerDocument;
-    const isFull = !!doc.fullscreenElement;
-    if (isFull) {
-      void doc.exitFullscreen?.().catch(() => {});
-      return;
-    }
-    const el = root as unknown as { requestFullscreen?: () => Promise<void> };
-    if (typeof el.requestFullscreen !== "function") return;
-    void el
-      .requestFullscreen()
-      .then(() => {
-        presentFullscreenRef.current = true;
-      })
-      .catch(() => {
-        // 降级：留在窗口模式放映，功能不受影响
-        presentFullscreenRef.current = false;
-      });
-  }, []);
+  }, [api, applyFullscreen]);
 
   /**
    * 连按时以「排队中的那一页」为基准推进，否则两次快按会被算成同一个目标。
@@ -1312,6 +1636,20 @@ export function StudioApp(props: StudioProps) {
     finishTyping();
     presentGo(navEnd(snap.plans, snap.graph, presentNavRef.current ?? navStart(snap.plans, null)), "jump");
   }, [finishTyping, presentGo]);
+  /**
+   * 2026-11-08：放映中暂停/继续自动前进。只动运行时，不改落盘偏好——
+   * 用户下次开演仍按自己设的秒数走；暂停期间手动翻页照常可用。
+   */
+  const togglePresentPause = useCallback((): void => {
+    // 没开自动前进就没有可暂停的东西，别切出一个没有任何按钮反映的状态
+    if (!(presentSnapRef.current?.autoAdvance)) return;
+    const next = !presentPausedRef.current;
+    presentPausedRef.current = next;
+    setPresentPaused(next);
+    if (next) presentDeadlineRef.current = 0;
+    else bumpAutoDeadline();
+  }, [bumpAutoDeadline]);
+
   presentNextRef.current = presentNext;
 
   presentKeysRef.current = presenting
@@ -1329,6 +1667,7 @@ export function StudioApp(props: StudioProps) {
           else presentNext();
         },
         fullscreen: toggleFullscreen,
+        pause: togglePresentPause,
       }
     : null;
 
@@ -1630,9 +1969,10 @@ export function StudioApp(props: StudioProps) {
           setDirty(true);
         }
       }
-      // 拖拽每帧都会回调，所以只在网格真的翻转时才回写设置（写一次 = 一次 saveData）
+      // 拖拽每帧都会回调，所以只在网格真的翻转时才回写设置（写一次 = 一次 saveData）。
+      // 放映中网格是我们为了「隐藏网格」临时关掉的，不能当成用户偏好写回。
       const grid = !!appState.gridModeEnabled;
-      if (grid !== gridRef.current) {
+      if (!presentingRef.current && grid !== gridRef.current) {
         gridRef.current = grid;
         onGridChange(grid);
       }
@@ -1678,6 +2018,8 @@ export function StudioApp(props: StudioProps) {
       }
       // 第五十三轮：片单跟着场景走（签名去重，抽屉没开时也只是几个字符串比较）
       syncDeck(elements as readonly FrameLike[]);
+      // 第八十轮：内容一停手就重算缩略图签名（抽屉/放映中才真的排队，见 scheduleThumbs）
+      if (thumbsOnRef.current) scheduleThumbs();
       /*
        * 2026-10-30「粘贴即转换」：元素 link 字段里若是思源原生形态
        * （siyuan://blocks/… / ((id '标题')) / [标题](…)），就地改写成规范形态
@@ -1717,7 +2059,7 @@ export function StudioApp(props: StudioProps) {
       // 放在指纹判定之外：busy/守卫跳过的轮次也靠后续交互把定时器再排上。
       scheduleAutoSave();
     },
-    [onBoardActive, onGridChange, scheduleAutoSave, stampOf, syncDeck],
+    [onBoardActive, onGridChange, scheduleAutoSave, scheduleThumbs, stampOf, syncDeck],
   );
 
   /** 场景快照：优先现读 api（和既有保存链路同源），拆树后的极端场景兜到 onChange 的影子 */
@@ -2234,6 +2576,10 @@ export function StudioApp(props: StudioProps) {
         case "F":
           act = keys.fullscreen;
           break;
+        case "p":
+        case "P":
+          act = keys.pause;
+          break;
         default:
           return;
       }
@@ -2337,8 +2683,20 @@ export function StudioApp(props: StudioProps) {
             api={api}
             plan={presentPlan}
             titles={presentSnapRef.current?.titles ?? []}
+            frameIds={presentSnapRef.current?.plans.map((p) => p.frameId) ?? []}
+            thumbs={presentThumbs}
             page={presenting.page}
-            scrim={presentSnapRef.current?.scrim ?? true}
+            mask={presentScrim}
+            maskColor={presentMaskColor}
+            settings={presentSettings}
+            onSetting={changePresentSetting}
+            autoAdvance={presentSnapRef.current?.autoAdvance ?? 0}
+            paused={presentPaused}
+            onPrev={presentPrev}
+            onNext={() => presentNext()}
+            onTogglePause={togglePresentPause}
+            fullscreen={presentFullscreen}
+            onToggleFullscreen={toggleFullscreen}
             onJump={presentJump}
             onExit={exitPresentation}
           />
@@ -2419,6 +2777,7 @@ export function StudioApp(props: StudioProps) {
         <PresentationDrawer
           deck={deck}
           graph={presentGraph}
+          thumbs={presentThumbs}
           settings={presentSettings}
           onSetting={changePresentSetting}
           selected={Math.min(presentSel, Math.max(0, deck.slides.length - 1))}
@@ -2428,10 +2787,16 @@ export function StudioApp(props: StudioProps) {
             if (s) jumpToSlide(s);
           }}
           onMove={moveDeckSlide}
+          onAddSlide={addDeckSlide}
           onToggle={toggleDeckSlide}
           onToggleReveal={toggleDeckReveal}
+          onRename={renameDeckSlide}
           onStart={startPresentation}
-          onClose={() => setPresentOpen(false)}
+          onClose={() => {
+            setPresentOpen(false);
+            // 抽屉关了又没在放映：不必再为缩略图排期（下次打开会立刻补）
+            if (!presentingRef.current) thumbsOnRef.current = false;
+          }}
         />
       ) : null}
       {exportOpen ? (

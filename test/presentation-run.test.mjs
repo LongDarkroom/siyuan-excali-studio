@@ -227,12 +227,12 @@ test("进片场：抓快照 → 关编辑 → 藏抽屉 → 落第一屏", () =>
   const body = APP.slice(at, APP.indexOf("const exitPresentation", at));
   assert.match(
     body,
-    /plans: shown\.map\(\(s\) => planPage\(all, s\.id, ps\.reveal && s\.reveal !== "all"\)\)/,
+    /plans: shown\.map\(\(s, i\) => planPage\(all, s\.id, ps\.reveal && pageReveal\[i\]\)\)/,
     "片单按 visibleSlides 建计划；整页页 / 全局逐条关闭时不分条",
   );
   assert.match(body, /original: snapshotOpacity\(all\)/, "原始透明度快照");
   assert.match(body, /textOriginal: snapshotText\(all as unknown as TextElementLike\[\]\)/, "全文快照");
-  assert.match(body, /scrim: ps\.scrim,[\s\S]{0,200}autoAdvance: ps\.autoAdvance/, "放映偏好进片场时定格");
+  assert.match(body, /scrim: ps\.scrim,[\s\S]{0,400}autoAdvance: ps\.autoAdvance/, "放映偏好进片场时定格");
   assert.match(body, /viewModeEnabled: true/, "放映中锁编辑");
   assert.match(body, /setPresentOpen\(false\)/, "抽屉收起");
   assert.match(body, /focusFrame\(/, "镜头开到第一页");

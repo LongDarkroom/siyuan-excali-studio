@@ -92,7 +92,7 @@ test("CSS：底栏 flex 流 + 中段 max-width 收展 + vendor footer 左列退�
     /\.exs-root \.exs-bottom-bar \{[^}]*border-left: none;[^}]*border-radius: 0 var\(--exs-pill-radius\) var\(--exs-pill-radius\) 0;/,
     "bar 本体出右半 pill（左边不画边框）",
   );
-  // 中段收展：max-width 0→6.75rem（3 键 × 2.25rem），带过渡
+  // 中段收展：max-width 0→6rem（3 键 × 2rem），带过渡
   assert.match(
     CSS,
     /\.exs-root \.exs-sel-group \{[^}]*max-width: 0;[^}]*transition: max-width 180ms ease, opacity 140ms ease;/,
@@ -100,7 +100,7 @@ test("CSS：底栏 flex 流 + 中段 max-width 收展 + vendor footer 左列退�
   );
   assert.match(
     CSS,
-    /\.exs-root\.exs-selection \.exs-sel-group \{[^}]*max-width: 6\.75rem;/,
+    /\.exs-root\.exs-selection \.exs-sel-group \{[^}]*max-width: 6rem;/,
     "选中态中段展开到三键宽度",
   );
   // 旧拼法不许回流
@@ -145,13 +145,25 @@ test("CSS：质感轮——帽/双 pill 吃 --shadow-island 同款阴影，☰ �
   const tile = CSS.match(/[^}]*\.exs-root \.excalidraw \.main-menu-trigger \{[^}]*\}/);
   assert.ok(tile && tile[0].includes("var(--exs-pill-tile)"), "☰ trigger 缩成帽内灰块");
   assert.equal(tile[0].includes("border-right: none"), false, "描边归帽管，trigger 不再拼段");
-  // 三段 pill 统一 3px 内衬（帽与双 pill 同高：calc(2.25rem + 6px)）
+  assert.ok(tile[0].includes("width: 2rem;") && tile[0].includes("height: 2rem;"), "☰ 灰块 32px");
+  // 三段 pill 统一 40px（2rem 键 + 3px×2 内衬 + 1px×2 描边）且 border-box，
+  // 帽与双 pill 同高——旧版帽 44 / bar 50 的 3px 台阶就是「割裂」根因
+  assert.match(
+    CSS,
+    /\.exs-root \.excalidraw \.App-menu_top__left > div:first-child \{[^}]*box-sizing: border-box;[^}]*height: calc\(2rem \+ 8px\);/,
+    "☰ 帽 border-box 且与底栏同高",
+  );
   const bar = CSS.match(/[^}]*\.exs-root \.exs-bottom-bar \{[^}]*\}/);
   const zoom = CSS.match(/[^}]*\.exs-root \.exs-zoom-pill \{[^}]*\}/);
   for (const [name, block] of [["bar", bar], ["zoom", zoom]]) {
     assert.ok(block && block[0].includes("padding: 3px;"), `${name} pill 要有 3px 内衬`);
-    assert.ok(block && block[0].includes("height: calc(2.25rem + 6px)"), `${name} pill 高度含内衬`);
+    assert.ok(block && block[0].includes("box-sizing: border-box;"), `${name} pill 按 border-box 算高`);
+    assert.ok(block && block[0].includes("height: calc(2rem + 8px)"), `${name} pill 高度含内衬`);
   }
+  assert.ok(bar[0].includes("clip-path: inset(-40px -40px -40px 0);"), "bar 只裁左侧阴影，接缝不出灰带");
+  // 用户明确不要参考图里百分比背后的深色块：重置键保持透明，只在 hover 浮底
+  const zoomReset = CSS.match(/[^}]*\.exs-root \.exs-zoom-reset \{[^}]*\}/);
+  assert.ok(zoomReset && zoomReset[0].includes("background: transparent;"), "百分比背后不加深色底");
 });
 
 /* ------------------------------ StudioApp 接线 ------------------------------ */

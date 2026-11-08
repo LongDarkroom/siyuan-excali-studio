@@ -7,17 +7,24 @@
  * 分栏时视口右缘 ≠ 画布右缘（第三十八轮色板就是栽在这儿）；absolute 的含块是
  * `.exs-root`（position: relative，本组件与 .exs-canvas 都是它的子节点），跟着画布走。
  *
- * 本组件只读片单/偏好、只发意图（挪页 / 排除 / 整页 / 跳页 / 改偏好），
- * 写元数据、落设置和动镜头都在 StudioApp。
+ * 第八十轮：每页一张**缩略图卡片**（对标 Excalidraw+ 的 Slides 面板）。
+ * 第八十一轮：窗口加宽成双列浏览窗；页序改成**拖左侧把手**（↑↓ 按钮退役，但键盘
+ * ↑↓/←→ 仍可挪页）；底栏「新建页」按固定比例插标准画框——手画的框大小不一，
+ * 一放映就是「这页大那页小」。
+ *
+ * 缩略图与改名都走宿主通道：本组件不碰 imperative 句柄，也不写场景——
+ * 它只读片单/预览图/偏好，只发意图（挪页 / 新建页 / 排除 / 整页 / 跳页 / 改名 / 改偏好）。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { t } from "../i18n";
 import { LineIcon } from "./line-icon";
-import { ICON_PLAY } from "./menu-icons";
+import { ICON_PLAY, ICON_PLUS } from "./menu-icons";
+import { FRAME_RATIOS, isFrameRatio, type FrameRatio } from "./frame-presets.ts";
 import { slideTitle, type Deck } from "./presentation-plan";
 import type { GraphState } from "./presentation-graph.ts";
 import type { PresentationSettings } from "./settings";
+import { FadeScroll, PresentationSettingsMenu, usePopoverDismiss } from "./PresentationSettingsMenu";
 
 /** 眼睛（入片/排除）。全绝对坐标，口径同 menu-icons。 */
 const ICON_EYE =
@@ -33,13 +40,26 @@ const ICON_STEPS = "M5,7h14M5,12h9M5,17h5";
 /** 设置：推子 */
 const ICON_SLIDERS = "M4,7h8M17,7h3M4,12h3M11,12h9M4,17h8M17,17h3";
 
+/** 拖动把手：两列小圆点（strokeLinecap=round 时零长线段就是圆点） */
+const ICON_GRIP = "M9,7h.01M15,7h.01M9,12h.01M15,12h.01M9,17h.01M15,17h.01";
+
+/** 比例按钮的第二行短名：光看 16:10 / 3:4 容易挑错 */
+const RATIO_NAMES: Record<FrameRatio, string> = {
+  "16:9": "宽屏",
+  "4:3": "经典",
+  "16:10": "近宽屏",
+  "3:4": "竖版",
+};
+
 /**
- * 面板位置记忆的localStorage 键。为什么存这里而不是 PresentationSettings：
- * 那是「放映偏好」语义（幕布/打字机那类，改一次所有白板共用、且面板里可见可调），
+ * 面板位置记忆的 localStorage 键。为什么存这里而不是 PresentationSettings：
+ * 那是「放映偏好」语义（遮罩/打字机那类，改一次所有白板共用、且面板里可见可调），
  * 面板停在哪是纯本地视图状态，塞进去会给设置 schema 和它的 deepEqual 测试平白添键。
- * 用独立键还有个好处：换白板/换窗口都记得住，但不影响任何共享语义。
  */
 const POS_KEY = "excali-present-drawer-pos";
+
+/** 上次用的画框比例：下次开「新建页」还停在那个比例上 */
+const RATIO_KEY = "excali-present-ratio";
 
 /** 落位记忆：相对包含块(.exs-root)的百分比，换分辨率/窗口大小不会飘 */
 type DrawerPos = { rx: number; ry: number };
@@ -51,6 +71,9 @@ function readPos(): DrawerPos | null {
     const o = JSON.parse(raw) as Partial<DrawerPos>;
     if (typeof o.rx !== "number" || typeof o.ry !== "number") return null;
     if (!Number.isFinite(o.rx) || !Number.isFinite(o.ry)) return null;
+    // 旧版本「点一下头部没拖动」也会落位，把默认值 0,0 写进记忆 → 抽屉永远贴左上角。
+    // 0,0 不是会有人故意挑的落点（那里压着左 Dock），读到就当成没记忆、回中。
+    if (o.rx === 0 && o.ry === 0) return null;
     return { rx: Math.min(1, Math.max(0, o.rx)), ry: Math.min(1, Math.max(0, o.ry)) };
   } catch {
     return null;
@@ -66,24 +89,22 @@ function writePos(p: DrawerPos | null): void {
   }
 }
 
-function ToggleRow(props: {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (on: boolean) => void;
-}) {
-  return (
-    <label className={"exs-present-set" + (props.disabled ? " exs-present-set--disabled" : "")}>
-      <span className="exs-present-set__label">{props.label}</span>
-      <input
-        type="checkbox"
-        className="exs-present-switch"
-        checked={props.checked}
-        disabled={props.disabled}
-        onChange={(e) => props.onChange(e.currentTarget.checked)}
-      />
-    </label>
-  );
+function readRatio(): FrameRatio {
+  try {
+    const raw = localStorage.getItem(RATIO_KEY);
+    if (isFrameRatio(raw)) return raw;
+  } catch {
+    /* 隐私模式：用默认比例 */
+  }
+  return "16:9";
+}
+
+function writeRatio(ratio: FrameRatio): void {
+  try {
+    localStorage.setItem(RATIO_KEY, ratio);
+  } catch {
+    /* 同上，记不住不影响插入 */
+  }
 }
 
 export function PresentationDrawer(props: {
@@ -93,38 +114,56 @@ export function PresentationDrawer(props: {
    * 有 → 放映沿箭头走；没有 → 按片单顺序翻。面板上要说清楚现在走哪条路线。
    */
   graph: GraphState;
+  /**
+   * 第八十轮：画框 id → 缩略图 data URL。缺项 = 还在生成（先显示占位）。
+   * 由宿主生成并缓存（签名变了才重画），抽屉只负责显示。
+   */
+  thumbs: Record<string, string>;
   /** 放映偏好（宿主设置的本地快照；改一项就往上写一项） */
   settings: PresentationSettings;
   onSetting: <K extends keyof PresentationSettings>(key: K, value: PresentationSettings[K]) => void;
   /** 面板里当前选中的页（下标跟 deck.slides 一致） */
   selected: number;
   onSelect: (index: number) => void;
-  /** 上移/下移一页 → StudioApp 写 order 元数据 */
+  /** 拖动/键盘挪一页 → StudioApp 写 order 元数据 */
   onMove: (from: number, to: number) => void;
+  /** 第八十一轮：按固定比例新建一页标准画框（落在片单末尾） */
+  onAddSlide: (ratio: FrameRatio) => void;
   /** 入片/排除一页 */
   onToggle: (id: string) => void;
   /** 这一页逐条 ↔ 整页 */
   onToggleReveal: (id: string) => void;
-  /** 点「开始演示」→ 批 1 的放映控制器接管；本批只报状态 */
+  /** 第八十轮：双击页名改画框名（宿主写场景，抽屉自己不碰） */
+  onRename: (id: string, name: string) => void;
+  /** 点「开始演示」→ 放映控制器接管 */
   onStart: () => void;
   onClose: () => void;
 }) {
   const { slides } = props.deck;
   const shown = slides.filter((s) => s.included).length;
   const [showSettings, setShowSettings] = useState(false);
-  const st = props.settings;
+  /** 内联改名：同一时刻只编辑一页；Enter/失焦保存，Esc 放弃 */
+  const [editing, setEditing] = useState<{ id: string; draft: string } | null>(null);
+  const cancelRenameRef = useRef(false);
+  const menuHostRef = useRef<HTMLDivElement | null>(null);
+  usePopoverDismiss(showSettings, () => setShowSettings(false), menuHostRef);
+
+  /** 底栏「新建页」比例气泡 */
+  const [newOpen, setNewOpen] = useState(false);
+  const [lastRatio, setLastRatio] = useState<FrameRatio>(() => readRatio());
+  const newHostRef = useRef<HTMLDivElement | null>(null);
+  usePopoverDismiss(newOpen, () => setNewOpen(false), newHostRef);
 
   /**
    * 拖动：按住头部空白处拖动面板（设置/关闭按钮除外，见 onHeadPointerDown）。
    * 位置存「相对包含块的百分比」，用 top/left 绝对定位，由 CSS 默认值兜底默认位。
-   * null = 还没拖过 → 用 CSS 的默认右缘位置（top:52/right:10）。
+   * null = 还没拖过 → 居中浮窗（top/left 50% + translate）。
+   * 初值直接读 localStorage：先渲染到右缘再跳到记忆位会闪一下。
    */
   const rootRef = useRef<HTMLElement | null>(null);
-  const [pos, setPos] = useState<DrawerPos | null>(null);
+  const listRef = useRef<HTMLOListElement | null>(null);
+  const [pos, setPos] = useState<DrawerPos | null>(() => readPos());
   const [dragging, setDragging] = useState(false);
-  useEffect(() => {
-    setPos(readPos());
-  }, []);
 
   const onHeadPointerDown = useCallback((e: React.PointerEvent) => {
     // 头部有设置/关闭两个按钮：点在按钮上不启动拖动，否则点按钮会变成拖面板
@@ -143,8 +182,16 @@ export function PresentationDrawer(props: {
     const clientY0 = e.clientY;
     setDragging(true);
     const clamp = (v: number, max: number): number => Math.min(Math.max(0, v), Math.max(0, max));
-    let last: DrawerPos = { rx: 0, ry: 0 };
+    // 起点必须是**当前位置**：默认值 0,0 会让「点一下头部」把抽屉钉到左上角
+    let last: DrawerPos = {
+      rx: cbRect.width > 0 ? clamp(left0, cbRect.width - selfRect.width) / cbRect.width : 0,
+      ry: cbRect.height > 0 ? clamp(top0, cbRect.height - selfRect.height) / cbRect.height : 0,
+    };
+    let moved = false;
     const onMove = (ev: PointerEvent): void => {
+      // 3px 起步阈值：单纯点一下（聚焦/误触）不算拖过，不该改位置
+      if (!moved && Math.hypot(ev.clientX - clientX0, ev.clientY - clientY0) < 3) return;
+      moved = true;
       const nx = left0 + (ev.clientX - clientX0);
       const ny = top0 + (ev.clientY - clientY0);
       const rx = cbRect.width > 0 ? clamp(nx, cbRect.width - selfRect.width) / cbRect.width : 0;
@@ -157,7 +204,8 @@ export function PresentationDrawer(props: {
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
       setDragging(false);
-      writePos(last);
+      // 只在真的拖过之后落位（居中态下点一下不该变成左上角）
+      if (moved) writePos(last);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -169,14 +217,191 @@ export function PresentationDrawer(props: {
     writePos(null);
   }, []);
 
+  const startRename = useCallback((id: string, name: string): void => {
+    cancelRenameRef.current = false;
+    setEditing({ id, draft: name });
+  }, []);
+
+  const finishRename = useCallback((): void => {
+    const cur = editing;
+    setEditing(null);
+    if (!cur || cancelRenameRef.current) return;
+    const name = cur.draft.trim();
+    // 同值不写：改名走一次可撤销的场景更新，别为了「点进来又点出去」多一个撤销点
+    const slide = slides.find((s) => s.id === cur.id);
+    if (!slide || slide.name.trim() === name) return;
+    props.onRename(cur.id, name);
+  }, [editing, props, slides]);
+
   const posStyle = pos
-    ? ({ left: `${pos.rx * 100}%`, top: `${pos.ry * 100}%`, right: "auto", bottom: "auto" } as const)
+    ? ({ left: `${pos.rx * 100}%`, top: `${pos.ry * 100}%`, right: "auto", bottom: "auto", transform: "none" } as const)
     : undefined;
+
+  /* ---------------- 第八十一轮：拖把手指针改页序 ---------------- */
+
+  /**
+   * 正在拖的那一页。pointer 坐标是**相对抽屉**的（抽屉自己有 backdrop-filter，
+   * fixed 的含块会变成它，别指望视口坐标直接用）。
+   */
+  const [drag, setDrag] = useState<{ from: number; id: string; x: number; y: number; target: number } | null>(null);
+  /** 指针过程量放 ref：每帧 setDrag 只驱动视觉，判定逻辑不依赖渲染 */
+  const dragRef = useRef<{
+    id: string;
+    from: number;
+    startX: number;
+    startY: number;
+    pointerX: number;
+    pointerY: number;
+    active: boolean;
+    raf: number;
+  } | null>(null);
+
+  const scroller = (): HTMLElement | null =>
+    (rootRef.current?.querySelector(".exs-present-scroll") as HTMLElement | null) ?? null;
+
+  /** 离指针最近的那张卡 = 松手后落在的下标（双列网格里比「插入线」更好读） */
+  const targetAt = (clientX: number, clientY: number): number => {
+    const cards = listRef.current?.querySelectorAll<HTMLElement>("[data-slide]");
+    let best = -1;
+    let bestD = Infinity;
+    cards?.forEach((el, i) => {
+      const r = el.getBoundingClientRect();
+      const dx = clientX - (r.left + r.width / 2);
+      const dy = clientY - (r.top + r.height / 2);
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    });
+    return best;
+  };
+
+  const focusGrip = (id: string): void => {
+    window.requestAnimationFrame(() => {
+      listRef.current?.querySelectorAll<HTMLElement>("[data-grip]").forEach((g) => {
+        if (g.dataset.grip === id) g.focus();
+      });
+    });
+  };
+
+  const beginDrag = (e: React.PointerEvent<HTMLButtonElement>, id: string, from: number): void => {
+    // 只认主键：右键菜单/中键滚轮不该启动拖动
+    if (e.button !== 0) return;
+    e.preventDefault();
+    // 按下即聚焦：键盘用户拖完能接着用 ↑↓ 微调
+    e.currentTarget.focus();
+    dragRef.current = {
+      id,
+      from,
+      startX: e.clientX,
+      startY: e.clientY,
+      pointerX: e.clientX,
+      pointerY: e.clientY,
+      active: false,
+      raf: 0,
+    };
+
+    const onMove = (ev: PointerEvent): void => {
+      const cur = dragRef.current;
+      if (!cur) return;
+      cur.pointerX = ev.clientX;
+      cur.pointerY = ev.clientY;
+      if (!cur.active) {
+        // 4px 起步阈值：单纯点一下把手不该变成「拖了一下」
+        if (Math.hypot(ev.clientX - cur.startX, ev.clientY - cur.startY) < 4) return;
+        cur.active = true;
+        // 指针停在边缘不动时也要继续滚：靠 rAF 自己跑，别等 pointermove
+        const tick = (): void => {
+          const c = dragRef.current;
+          if (!c || !c.active) return;
+          const sc = scroller();
+          if (sc) {
+            const r = sc.getBoundingClientRect();
+            if (c.pointerY < r.top + 26) sc.scrollTop -= 12;
+            else if (c.pointerY > r.bottom - 26) sc.scrollTop += 12;
+          }
+          c.raf = window.requestAnimationFrame(tick);
+        };
+        cur.raf = window.requestAnimationFrame(tick);
+      }
+      const rr = rootRef.current?.getBoundingClientRect();
+      const target = targetAt(ev.clientX, ev.clientY);
+      setDrag({
+        from: cur.from,
+        id: cur.id,
+        x: ev.clientX - (rr?.left ?? 0),
+        y: ev.clientY - (rr?.top ?? 0),
+        target: target >= 0 ? target : cur.from,
+      });
+    };
+
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== "Escape") return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      finish(false);
+    };
+
+    const finish = (commit: boolean): void => {
+      const cur = dragRef.current;
+      dragRef.current = null;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("keydown", onKey, true);
+      if (cur?.raf) window.cancelAnimationFrame(cur.raf);
+      const target = cur ? targetAt(cur.pointerX, cur.pointerY) : -1;
+      setDrag(null);
+      if (cur?.active && commit && target >= 0 && target !== cur.from) props.onMove(cur.from, target);
+      if (cur) focusGrip(cur.id);
+    };
+    const onUp = (): void => finish(true);
+    const onCancel = (): void => finish(false);
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("keydown", onKey, true);
+  };
+
+  /** 键盘挪页（把手聚焦时）：↑/← 前移，↓/→ 后移；挪完把焦点还给这一页 */
+  const onGripKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, id: string, i: number): void => {
+    const delta = e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : 0;
+    if (delta === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const to = i + delta;
+    if (to < 0 || to >= slides.length) return;
+    props.onMove(i, to);
+    focusGrip(id);
+  };
+
+  /** 新建后滚到列表底部：新页插在末尾，不滚过去用户看不见（列表页多时尤其） */
+  const pendingBottomRef = useRef(false);
+  useEffect(() => {
+    if (!pendingBottomRef.current) return;
+    pendingBottomRef.current = false;
+    const sc = scroller();
+    sc?.scrollTo({ top: sc.scrollHeight, behavior: "smooth" });
+  }, [slides.length]);
+
+  const insertPage = (ratio: FrameRatio): void => {
+    setLastRatio(ratio);
+    writeRatio(ratio);
+    setNewOpen(false);
+    pendingBottomRef.current = true;
+    props.onAddSlide(ratio);
+  };
 
   return (
     <aside
       ref={rootRef}
-      className={"exs-present-drawer" + (dragging ? " exs-present-drawer--dragging" : "")}
+      className={
+        "exs-present-drawer" +
+        (pos ? "" : " exs-present-drawer--center") +
+        (dragging ? " exs-present-drawer--dragging" : "")
+      }
       style={posStyle}
       role="complementary"
       aria-label={t("演示")}
@@ -193,186 +418,228 @@ export function PresentationDrawer(props: {
           {props.deck.hasOrdered ? "" : ` · ${t("按位置排序")}`}
           {props.graph.kind === "linear" ? "" : ` · ${t("按箭头走")}`}
         </span>
-        <button
-          type="button"
-          className={"exs-present-close" + (showSettings ? " exs-present-close--on" : "")}
-          onClick={() => setShowSettings(!showSettings)}
-          title={t("演示设置")}
-          aria-label={t("演示设置")}
-          aria-expanded={showSettings}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-            <path d={ICON_SLIDERS} />
-            <circle cx="15" cy="7" r="2" />
-            <circle cx="9" cy="12" r="2" />
-            <circle cx="15" cy="17" r="2" />
-          </svg>
-        </button>
+        <div className="exs-present-menuhost" ref={menuHostRef}>
+          <button
+            type="button"
+            className={"exs-present-close" + (showSettings ? " exs-present-close--on" : "")}
+            onClick={() => setShowSettings(!showSettings)}
+            title={t("演示设置")}
+            aria-label={t("演示设置")}
+            aria-expanded={showSettings}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+              <path d={ICON_SLIDERS} />
+              <circle cx="15" cy="7" r="2" />
+              <circle cx="9" cy="12" r="2" />
+              <circle cx="15" cy="17" r="2" />
+            </svg>
+          </button>
+          {showSettings ? (
+            <PresentationSettingsMenu settings={props.settings} onSetting={props.onSetting} />
+          ) : null}
+        </div>
         <button type="button" className="exs-present-close" onClick={props.onClose} title={t("关闭")} aria-label={t("关闭")}>
           ✕
         </button>
       </header>
 
-      {showSettings ? (
-        <section className="exs-present-settings" aria-label={t("演示设置")}>
-          <ToggleRow label={t("幕布")} checked={st.scrim} onChange={(v) => props.onSetting("scrim", v)} />
-          <ToggleRow label={t("逐条出场")} checked={st.reveal} onChange={(v) => props.onSetting("reveal", v)} />
-          <ToggleRow label={t("打字机")} checked={st.typewriter} onChange={(v) => props.onSetting("typewriter", v)} />
-          <ToggleRow
-            label={t("打字光标")}
-            checked={st.cursor}
-            disabled={!st.typewriter}
-            onChange={(v) => props.onSetting("cursor", v)}
-          />
-          <ToggleRow label={t("全屏放映")} checked={st.fullscreen} onChange={(v) => props.onSetting("fullscreen", v)} />
-          <ToggleRow
-            label={t("方向键沿边导航")}
-            checked={st.directional}
-            onChange={(v) => props.onSetting("directional", v)}
-          />
-          <label className={"exs-present-set exs-present-set--range" + (st.typewriter ? "" : " exs-present-set--disabled")}>
-            <span className="exs-present-set__label">{t("打字速度")}</span>
-            <input
-              type="range"
-              min={8}
-              max={80}
-              step={4}
-              value={st.speed}
-              disabled={!st.typewriter}
-              onChange={(e) => props.onSetting("speed", Number(e.currentTarget.value))}
-            />
-            <span className="exs-present-set__val">{t("{n} 毫秒/字", { n: st.speed })}</span>
-          </label>
-          <label className="exs-present-set exs-present-set--range">
-            <span className="exs-present-set__label">{t("镜头留白")}</span>
-            <input
-              type="range"
-              min={0.6}
-              max={1}
-              step={0.02}
-              value={st.fit}
-              onChange={(e) => props.onSetting("fit", Number(e.currentTarget.value))}
-            />
-            <span className="exs-present-set__val">{Math.round(st.fit * 100)}%</span>
-          </label>
-          <label className="exs-present-set exs-present-set--range">
-            <span className="exs-present-set__label">{t("自动前进")}</span>
-            <input
-              type="range"
-              min={0}
-              max={30}
-              step={1}
-              value={st.autoAdvance}
-              onChange={(e) => props.onSetting("autoAdvance", Number(e.currentTarget.value))}
-            />
-            <span className="exs-present-set__val">
-              {st.autoAdvance === 0 ? t("关") : t("{n} 秒", { n: st.autoAdvance })}
-            </span>
-          </label>
-        </section>
-      ) : null}
-
-      <div className="exs-present-drawer__body">
+      <FadeScroll className="exs-present-drawer__body">
         {slides.length === 0 ? (
           <div className="exs-present-empty">
             <b>{t("还没有演示页")}</b>
-            {t("先在画布上框住一页内容，再点右上角的 ▶ 建片单。")}
+            {t("先在画布上框住一页内容，或点下方「＋ 新建页」按标准比例插一页。")}
           </div>
         ) : (
-          <ol className="exs-present-list">
-            {slides.map((s, i) => (
-              <li
-                key={s.id}
-                className={
-                  "exs-present-row" + (i === props.selected ? " exs-present-row--active" : "") + (s.included ? "" : " exs-present-row--off")
-                }
-              >
-                <button type="button" className="exs-present-row__main" onClick={() => props.onSelect(i)}>
-                  <span className="exs-present-row__no">{i + 1}</span>
-                  <span className="exs-present-row__name">{t(slideTitle(s))}</span>
-                </button>
-                <button
-                  type="button"
-                  className={"exs-present-mini" + (s.reveal === "all" ? " exs-present-mini--muted" : "")}
-                  onClick={() => props.onToggleReveal(s.id)}
-                  title={s.reveal === "all" ? t("这一页逐条出场") : t("这一页整页一起出")}
-                  aria-label={s.reveal === "all" ? t("这一页逐条出场") : t("这一页整页一起出")}
-                  aria-pressed={s.reveal === "auto"}
+          <ol className="exs-present-list" ref={listRef}>
+            {slides.map((s, i) => {
+              const url = props.thumbs[s.id] ?? "";
+              return (
+                <li
+                  key={s.id}
+                  data-slide={s.id}
+                  className={
+                    "exs-present-card" +
+                    (i === props.selected ? " exs-present-card--active" : "") +
+                    (s.included ? "" : " exs-present-card--off") +
+                    (drag && drag.from === i ? " exs-present-card--dragging" : "") +
+                    (drag && drag.target === i && drag.from !== i ? " exs-present-card--drop" : "")
+                  }
                 >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    aria-hidden="true"
+                  <button
+                    type="button"
+                    className="exs-present-grip"
+                    data-grip={s.id}
+                    onPointerDown={(e) => beginDrag(e, s.id, i)}
+                    onKeyDown={(e) => onGripKeyDown(e, s.id, i)}
+                    title={t("拖动调整页序（聚焦后可用 ↑↓）")}
+                    aria-label={t("拖动调整页序")}
                   >
-                    <path d={ICON_STEPS} />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  className="exs-present-mini"
-                  disabled={i === 0}
-                  onClick={() => props.onMove(i, i - 1)}
-                  title={t("上移")}
-                  aria-label={t("上移")}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  className="exs-present-mini"
-                  disabled={i === slides.length - 1}
-                  onClick={() => props.onMove(i, i + 1)}
-                  title={t("下移")}
-                  aria-label={t("下移")}
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  className={"exs-present-mini" + (s.included ? "" : " exs-present-mini--off")}
-                  onClick={() => props.onToggle(s.id)}
-                  title={s.included ? t("这一页不放映") : t("重新入片")}
-                  aria-label={s.included ? t("这一页不放映") : t("重新入片")}
-                  aria-pressed={!s.included}
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    aria-hidden="true"
-                  >
-                    <path d={ICON_EYE} />
-                    {s.included ? null : <path d={ICON_SLASH} />}
-                  </svg>
-                </button>
-              </li>
-            ))}
+                    <LineIcon d={ICON_GRIP} size={14} strokeWidth={2} />
+                  </button>
+                  <div className="exs-present-card__main">
+                    <button
+                      type="button"
+                      className="exs-present-card__preview"
+                      onClick={() => props.onSelect(i)}
+                      title={t("把镜头开过去看这一页")}
+                      aria-label={t("第 {n} 页", { n: i + 1 })}
+                    >
+                      {s.blank ? (
+                        <span className="exs-present-card__blank">{t("空白页")}</span>
+                      ) : url ? (
+                        <img className="exs-present-card__img" src={url} alt="" draggable={false} />
+                      ) : (
+                        <span className="exs-present-card__ph">{t("生成预览…")}</span>
+                      )}
+                      <span className="exs-present-card__no">{i + 1}</span>
+                    </button>
+                    <div className="exs-present-card__foot">
+                    {editing?.id === s.id ? (
+                      <input
+                        className="exs-present-card__rename"
+                        value={editing.draft}
+                        autoFocus
+                        onFocus={(e) => e.currentTarget.select()}
+                        onChange={(e) => setEditing({ id: s.id, draft: e.currentTarget.value })}
+                        onBlur={finishRename}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.currentTarget.blur();
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            cancelRenameRef.current = true;
+                            e.currentTarget.blur();
+                          }
+                          e.stopPropagation();
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className="exs-present-card__name"
+                        onClick={() => props.onSelect(i)}
+                        onDoubleClick={() => startRename(s.id, s.name)}
+                        title={t("双击重命名")}
+                      >
+                        {t(slideTitle(s))}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={"exs-present-mini" + (s.reveal === "all" ? " exs-present-mini--muted" : "")}
+                      onClick={() => props.onToggleReveal(s.id)}
+                      title={s.reveal === "all" ? t("这一页逐条出场") : t("这一页整页一起出")}
+                      aria-label={s.reveal === "all" ? t("这一页逐条出场") : t("这一页整页一起出")}
+                      aria-pressed={s.reveal === "auto"}
+                    >
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        aria-hidden="true"
+                      >
+                        <path d={ICON_STEPS} />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      className={"exs-present-mini" + (s.included ? "" : " exs-present-mini--off")}
+                      onClick={() => props.onToggle(s.id)}
+                      title={s.included ? t("这一页不放映") : t("重新入片")}
+                      aria-label={s.included ? t("这一页不放映") : t("重新入片")}
+                      aria-pressed={!s.included}
+                    >
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        aria-hidden="true"
+                      >
+                        <path d={ICON_EYE} />
+                        {s.included ? null : <path d={ICON_SLASH} />}
+                      </svg>
+                    </button>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
           </ol>
         )}
         <div className="exs-present-tip">
           {props.graph.kind === "linear"
-            ? t("点页名把镜头开过去；↑↓ 改页序，≡ 管整页还是逐条，眼睛管放不放。")
+            ? t("拖动左侧把手改页序；双击页名改名；≡ 管整页还是逐条，眼睛管放不放。")
             : props.graph.kind === "linked"
               ? t("已按箭头连页：放映沿箭头走，可分叉也能绕回。")
               : t("部分页面还没连上箭头，没连的按页序继续放。")}
         </div>
-      </div>
+      </FadeScroll>
 
       <footer className="exs-present-drawer__foot">
+        <div className="exs-present-newhost" ref={newHostRef}>
+          <button
+            type="button"
+            className={"exs-present-newbtn" + (newOpen ? " exs-present-newbtn--on" : "")}
+            onClick={() => setNewOpen(!newOpen)}
+            title={t("新建标准画框")}
+            aria-label={t("新建标准画框")}
+            aria-expanded={newOpen}
+            aria-haspopup="menu"
+          >
+            <LineIcon d={ICON_PLUS} size={14} strokeWidth={2} />
+            {t("新建页")}
+          </button>
+          {newOpen ? (
+            <div className="exs-present-newmenu" role="menu" aria-label={t("新建标准画框")}>
+              <div className="exs-present-newmenu__head">
+                <b>{t("新建标准画框")}</b>
+                <span>{t("插到最后一页右侧，尺寸随现有页缩放")}</span>
+              </div>
+              <div className="exs-present-newmenu__grid">
+                {FRAME_RATIOS.map((p) => (
+                  <button
+                    key={p.ratio}
+                    type="button"
+                    role="menuitem"
+                    className={"exs-present-ratio" + (p.ratio === lastRatio ? " exs-present-ratio--on" : "")}
+                    onClick={() => insertPage(p.ratio)}
+                    aria-label={t("新建 {ratio} 画框", { ratio: p.ratio })}
+                  >
+                    <span className="exs-present-ratio__value">{p.ratio}</span>
+                    <span className="exs-present-ratio__name">{t(RATIO_NAMES[p.ratio])}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="exs-present-newmenu__foot">{t("插入后可随时拖动、缩放，插入本身可撤销。")}</div>
+            </div>
+          ) : null}
+        </div>
         <button type="button" className="exs-present-play" onClick={props.onStart} disabled={shown === 0}>
           <LineIcon d={ICON_PLAY} size={14} strokeWidth={2} />
           {t("开始演示")}
         </button>
       </footer>
+
+      {drag && slides[drag.from] ? (
+        <div className="exs-present-dragghost" style={{ left: drag.x, top: drag.y }} aria-hidden="true">
+          <span className="exs-present-dragghost__no">{drag.from + 1}</span>
+          {props.thumbs[drag.id] ? (
+            <img className="exs-present-dragghost__img" src={props.thumbs[drag.id]} alt="" draggable={false} />
+          ) : (
+            <span className="exs-present-dragghost__ph" />
+          )}
+          <span className="exs-present-dragghost__name">{t(slideTitle(slides[drag.from]))}</span>
+        </div>
+      ) : null}
     </aside>
   );
 }

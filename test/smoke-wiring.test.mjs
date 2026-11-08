@@ -167,20 +167,40 @@ test("契约·新建链路（第二十一轮文件先行）：命名 → 建空�
   assert.match(APP, /const pathRef = useRef<string \| null>\(initialPath\);/, "路径初始值直接来自页签 data（新建也有）");
 });
 
-test("契约·命名对话框 Apple UI 化（第五十轮）：scope 类、content 定边距、素/实心主次按钮", () => {
+test("契约·命名对话框 Apple UI 化：scope 类、body 定边距、素/实心主次按钮", () => {
   const CSS = src("index.css");
   assert.match(INDEX, /dialog\.element\.classList\.add\("exs-name-dialog"\)/, "scope 类必须挂 Dialog 根上（样式只在自家弹窗生效，不污染思源）");
   assert.equal([...INDEX.matchAll(/classList\.add\("exs-name-dialog"\)/g)].length, 2, "promptFileName 与 inputPrompt 两个弹窗都要接 scope 类（同款观感）");
-  // 贴边根因：思源 content 内边距随主题浮动——显式给死才稳
-  assert.match(CSS, /\.exs-name-dialog \.b3-dialog__content \{[^}]*padding: 14px 24px 20px;/, "content 左右 24px 定死，「位置」不再贴边");
-  // 按钮主次对齐 macOS：取消素钮、确定实心强调色（旧 b3-button--outline/--text 拼法退役）
+  // 贴边根因：思源现行内容挂 __body（老版本 __content），只写 __content 等于没写
+  assert.match(
+    CSS,
+    /\.exs-name-dialog \.b3-dialog__body,\s*\n\.exs-name-dialog \.b3-dialog__content,[\s\S]{0,120}\{\s*\n\s*padding: 14px 22px 20px;/,
+    "body / content 两代都接，左右 22px 定死",
+  );
+  // 按钮主次对齐 macOS：取消素钮、确定实心品牌紫（旧 b3-button--outline/--text 拼法退役）
   assert.match(INDEX, /<button class="b3-button exs-name-cancel" type="button">\$\{t\("取消"\)\}<\/button>/, "取消 = 素钮");
   assert.match(INDEX, /<button class="b3-button exs-name-ok" type="button">\$\{t\("确定"\)\}<\/button>/, "确定 = 主钮");
   assert.equal(INDEX.includes("b3-button--outline exs-name-cancel"), false, "旧描边拼法退役");
-  assert.match(CSS, /\.exs-name-dialog \.exs-name-ok \{[^}]*background: var\(--b3-theme-primary[^)]*\);/, "确定钮吃主题强调色实心");
-  assert.match(CSS, /\.exs-name-dialog \.b3-dialog__container \{[^}]*border-radius: 12px;/, "容器 12px 圆角（对齐底栏 --exs-pill-radius 口径）");
-  assert.match(CSS, /\.exs-name-tip \{[^}]*background: var\(--b3-theme-background-light/, "「位置」行做成浅底信息条");
+  assert.match(CSS, /\.exs-name-dialog \.exs-name-ok \{[^}]*background: var\(--exs-dlg-accent\);/, "确定钮吃品牌紫实心");
+  assert.match(CSS, /\.exs-name-dialog,\s*\n\.exs-board-picker-dialog \{[^}]*--exs-dlg-accent: #6965db;/, "弹窗品牌紫在 body 层显式给（拿不到 .exs-root token）");
+  assert.match(CSS, /html\[data-theme-mode="dark"\] \.exs-name-dialog,[\s\S]{0,80}\{[^}]*--exs-dlg-accent: #a8a5ff;/, "深色改用亮紫");
+  assert.match(CSS, /\.exs-name-dialog \.b3-dialog__container,[\s\S]{0,80}\{[^}]*border-radius: 13px;/, "容器 13px 圆角");
+  assert.match(CSS, /\.exs-name-tip \{[^}]*background: var\(--exs-dlg-hover\)/, "「位置」行做成浅底信息条");
   assert.match(CSS, /\.exs-name-actions \{[^}]*justify-content: flex-end;/, "按钮右对齐（内联 style 已搬到类里）");
+});
+
+test("契约·打开白板弹窗：scope 类、搜索常驻、列表行 Apple 化", () => {
+  const CSS = src("index.css");
+  assert.match(BOARD_PICKER, /classList\.add\("exs-board-picker-dialog"\)/, "选择器弹窗必须挂自家 scope 类");
+  assert.match(
+    CSS,
+    /\.exs-board-picker-dialog \.exs-picker \{[^}]*overflow: hidden;/,
+    "外框不跟着滚：搜索常驻，只有列表滚",
+  );
+  assert.match(CSS, /\.exs-board-picker-dialog \.exs-picker__list \{[^}]*flex: 1;/, "列表吃掉剩余高度");
+  assert.match(CSS, /\.exs-board-picker-dialog \.exs-picker__search:focus \{[^}]*border-color: var\(--exs-dlg-accent\)/, "搜索框焦点用品牌紫");
+  assert.match(CSS, /\.exs-board-picker-dialog \.exs-picker__item\.b3-list-item--focus \{[^}]*background: var\(--exs-dlg-accent-soft\)/, "键盘焦点行用品牌紫浅底");
+  assert.match(CSS, /\.exs-board-picker-dialog \.exs-picker__badge \{[^}]*color: var\(--exs-dlg-accent\)/, "「已打开」角标跟品牌色");
 });
 
 test("契约·M2 文档内入口：块图标菜单只对 assets/*.svg 出现", () => {
@@ -741,7 +761,7 @@ test("第三十四轮·脚本侧边栏：右缘竖条 + 固定/取消固定闭�
   // 选择器：右键固定/取消固定 + 已固定标记（pin 的入口在选择器，unpin 在侧边栏）
   assert.match(INDEX, /addEventListener\("contextmenu"/, "选择器条目右键出固定菜单");
   assert.match(INDEX, /t\("固定到侧边栏"\)/, "固定动作文案");
-  assert.match(INDEX, /exs-script-pin/, "已固定标记（圆点）");
+  assert.match(INDEX, /exs-script-pin/, "已固定标记（胶囊）");
   assert.match(INDEX, /rememberScriptPin\(info\.name, !pinNow\)/, "右键点击翻转固定状态");
   // 设置与样式
   assert.match(SETTINGS, /pinnedScripts/, "固定清单是正式设置键（持久化）");

@@ -33,6 +33,7 @@ const json = (rel) => JSON.parse(readFileSync(resolve(ROOT, rel), "utf8"));
 const stripComments = (code) => code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'\\])\/\/[^\n]*/g, "$1");
 const APP = stripComments(src("studio/StudioApp.tsx"));
 const DRAWER = stripComments(src("studio/PresentationDrawer.tsx"));
+const MENU = stripComments(src("studio/PresentationSettingsMenu.tsx"));
 const TYPE = src("studio/presentation-typewriter.ts");
 const CSS = src("index.css");
 
@@ -109,6 +110,8 @@ test("文本补丁：只算差异（每帧幂等）；退出只回改过的", ()
 test("设置归一：缺键回落默认，速度/留白/自动前进夹在合法区间", () => {
   assert.deepEqual(DEFAULT_PRESENTATION, {
     scrim: true,
+    // 第八十轮：网格是编辑辅助不是特效，默认放映时藏起来
+    hideGrid: true,
     reveal: true,
     typewriter: false,
     cursor: false,
@@ -153,7 +156,7 @@ test("进片场：逐条开关 + 页级例外一起决定 units", () => {
   assert.equal(planPage(all, "f1", false).units.length, 0);
   assert.match(
     APP,
-    /plans: shown\.map\(\(s\) => planPage\(all, s\.id, ps\.reveal && s\.reveal !== "all"\)\)/,
+    /plans: shown\.map\(\(s, i\) => planPage\(all, s\.id, ps\.reveal && pageReveal\[i\]\)\)/,
     "全局逐条关或这一页 all 时，plan 不分条",
   );
 });
@@ -196,10 +199,22 @@ test("打字中按 next：第一下补完不翻页；自动前进在打字/飞�
   assert.ok(typing > 0 && finish > typing && ret > finish && advance > ret, "先补完 → return → 第二下才翻页");
 
   const timer = APP.slice(APP.indexOf("const timer = window.setInterval"), APP.indexOf("}, [presenting]);"));
-  assert.match(timer, /if \(typingRef\.current \|\| presentPendingRef\.current\) return;/, "打字中 / 有排队不走自动前进");
+  assert.match(
+    timer,
+    /if \(typingRef\.current \|\| presentPendingRef\.current \|\| presentPausedRef\.current\) return;/,
+    "打字中 / 有排队 / 手动暂停都不走自动前进",
+  );
   assert.match(timer, /if \(!snap \|\| snap\.autoAdvance <= 0\) return;/, "自动前进关闭时什么都不做");
   assert.match(timer, /if \(now < presentCamUntilRef\.current\) return;/, "镜头还在飞时不抢跑");
   assert.match(timer, /presentNextRef\.current\(\);/, "到点走一步");
+
+  // 2026-11-08：暂停必须连「下一次截止时间的排期」一起掐掉，否则恢复瞬间会立刻跳一步
+  const bump = APP.slice(APP.indexOf("const bumpAutoDeadline = useCallback"), APP.indexOf("/** 打字收尾"));
+  assert.match(
+    bump,
+    /if \(presentPausedRef\.current\) \{[\s\S]{0,160}presentDeadlineRef\.current = 0;[\s\S]{0,80}return;/,
+    "暂停时 bumpAutoDeadline 不排期",
+  );
 });
 
 /* ------------------------------ ③ 红线 ------------------------------ */
@@ -228,34 +243,33 @@ test("分层：打字机纯逻辑零 React / 思源 / vendor 依赖", () => {
 
 /* ------------------------------ ④ 抽屉与样式 ------------------------------ */
 
-test("抽屉：设置区只发意图；打字机关闭时速度/光标一起禁用", () => {
-  assert.match(DRAWER, /props\.onSetting\("scrim", v\)/);
-  assert.match(DRAWER, /props\.onSetting\("reveal", v\)/);
-  assert.match(DRAWER, /props\.onSetting\("typewriter", v\)/);
-  assert.match(DRAWER, /props\.onSetting\("speed", Number\(e\.currentTarget\.value\)\)/);
-  assert.match(DRAWER, /props\.onSetting\("fit", Number\(e\.currentTarget\.value\)\)/);
-  assert.match(DRAWER, /props\.onSetting\("autoAdvance", Number\(e\.currentTarget\.value\)\)/);
-  assert.match(DRAWER, /disabled=\{!st\.typewriter\}/, "打字机关时禁用");
+test("设置列表：只发意图；自动前进固定 10 秒开关", () => {
+  assert.match(MENU, /props\.onSetting\("scrim", v\)/);
+  assert.match(MENU, /props\.onSetting\("reveal", v\)/);
+  assert.match(MENU, /props\.onSetting\("typewriter", v\)/);
+  assert.match(MENU, /props\.onSetting\("autoAdvance", on \? AUTO_ADVANCE_SECONDS : 0\)/);
+  assert.equal(MENU.includes('props.onSetting("speed"') || MENU.includes('props.onSetting("fit"'), false, "速度/留白已无 UI");
   assert.match(DRAWER, /aria-expanded=\{showSettings\}/, "设置开关对读屏可见");
-  assert.match(DRAWER, /st\.autoAdvance === 0 \? t\("关"\)/, "0 显示「关」而不是 0 秒");
-  assert.equal(/from "siyuan"|updateScene|\.persist\(/.test(DRAWER), false, "不碰宿主/磁盘");
+  assert.match(MENU, /const AUTO_ADVANCE_SECONDS = 10;/, "10 秒/页写成一个常量");
+  assert.match(MENU, /role="switch"/, "开关用 button[role=switch]");
+  assert.equal(/from "siyuan"|updateScene|\.persist\(/.test(DRAWER + MENU), false, "不碰宿主/磁盘");
 });
 
-test("样式：新增开关/设置行/页级 mini 都有类，且用 accent 不用硬编码品牌色", () => {
+test("样式：设置气泡/开关/页级 mini 都有类，且用 accent 不用硬编码品牌色", () => {
   for (const cls of [
-    ".exs-present-settings",
+    ".exs-present-menu",
+    ".exs-present-scroll",
+    ".exs-present-scroll--more",
     ".exs-present-set",
     ".exs-present-set__label",
-    ".exs-present-set__val",
     ".exs-present-switch",
     ".exs-present-mini--muted",
     ".exs-present-close--on",
-    ".exs-present-set--disabled",
   ]) {
     assert.ok(CSS.includes(cls + " {") || CSS.includes(cls + ":"), `缺样式：${cls}`);
   }
-  assert.match(CSS, /\.exs-present-switch:checked \{[^}]*background: var\(--exs-accent\)/, "开关用主题强调色");
-  assert.match(CSS, /\.exs-present-set--range input\[type="range"\] \{[^}]*accent-color: var\(--exs-accent\)/, "滑杆同色");
+  assert.match(CSS, /\.exs-present-switch\[aria-checked="true"\] \{[^}]*background: var\(--exs-accent\)/, "开关用主题强调色");
+  assert.match(CSS, /\.exs-present-switch \{[^}]*padding: 0;[^}]*border: 0;/, "按钮式开关清掉原生外观");
 });
 
 test("i18n：设置面板与页级开关词条双语齐备", () => {
@@ -263,23 +277,24 @@ test("i18n：设置面板与页级开关词条双语齐备", () => {
   const en = json("i18n/en_US.json");
   for (const k of [
     "演示设置",
-    "幕布",
+    "画面",
+    "出场效果",
+    "播放",
+    "遮罩画框外",
+    "放映时隐藏网格",
     "逐条出场",
-    "打字机",
-    "打字光标",
-    "打字速度",
-    "镜头留白",
+    "打字机效果",
     "自动前进",
-    "关",
-    "{n} 毫秒/字",
-    "{n} 秒",
+    "每页停留 10 秒后自动翻页",
+    "开始演示时全屏",
+    "自动保存",
     "这一页整页一起出",
     "这一页逐条出场",
   ]) {
     assert.equal(zh[k], k, `zh 缺词条或值不等于 key：${k}`);
     assert.ok(typeof en[k] === "string" && en[k] !== k && en[k].length > 0, `en 缺词条：${k}`);
   }
-  const used = [...DRAWER.matchAll(/\bt\("([^"]+)"/g)].map((m) => m[1]);
+  const used = [...(DRAWER + MENU).matchAll(/\bt\("([^"]+)"/g)].map((m) => m[1]);
   for (const k of used) {
     assert.ok(k in zh, `zh_CN 缺键：${k}`);
     assert.ok(k in en, `en_US 缺键：${k}`);

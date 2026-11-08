@@ -1,6 +1,6 @@
 # Excali 白板（siyuan-excali-studio）
 
-思源笔记里的自建 [Excalidraw](https://excalidraw.com/) 白板：以 React 库方式集成进插件**原生页签**（非 iframe、非弹层），导出的 SVG **内嵌可再次编辑的场景**——既是正文里能看的图，也是能再次打开的工程图，与 excalidraw.com、集市 `siyuan-embed-excalidraw` 存的老图互认。
+思源笔记里的手绘白板与演示工具：原生页签承载 [Excalidraw](https://excalidraw.com/)（非 iframe、非弹层），导出的 SVG **内嵌可再次编辑的场景**——既是正文里能看的图，也是能再次打开的工程图，与 excalidraw.com、集市 `siyuan-embed-excalidraw` 存的老图互认。还能让 AI 一句话成图，把画框直接当成幻灯片放映。
 
 ## ✨ AI 绘图效果展示
 

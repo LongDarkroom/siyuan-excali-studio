@@ -41,6 +41,8 @@ function json(rel) {
 const APP = stripComments(src("studio/StudioApp.tsx"));
 const INDEX = stripComments(src("index.ts"));
 const DRAWER = stripComments(src("studio/PresentationDrawer.tsx"));
+const MENU = stripComments(src("studio/PresentationSettingsMenu.tsx"));
+const STAGE = stripComments(src("studio/PresentationStage.tsx"));
 const CSS = src("index.css");
 
 /** 造一块画框：默认 400×300，name/meta 按需覆盖 */
@@ -223,7 +225,17 @@ test("抽屉只读片单、只发意图；写数据与动镜头都在 StudioApp"
   assert.equal(DRAWER.includes("api"), false, "抽屉拿不到 imperative API");
   assert.equal(/from "siyuan"|updateScene|scrollToContent/.test(DRAWER), false, "不许直接写场景或动镜头");
   assert.match(DRAWER, /disabled=\{shown === 0\}/, "没有入片页时「开始演示」是灰的");
-  assert.match(DRAWER, /disabled=\{i === 0\}/, "第一页不许再上移");
+  // 第八十一轮：↑↓ 改页序退役，页序靠拖把手；键盘用户仍有 ↑↓ 兜底
+  assert.equal(/aria-label=\{t\("上移"\)\}/.test(DRAWER), false, "上移按钮已退役");
+  assert.equal(/aria-label=\{t\("下移"\)\}/.test(DRAWER), false, "下移按钮已退役");
+  assert.match(DRAWER, /data-grip=\{s\.id\}/, "每页左侧有拖拽把手");
+  assert.match(DRAWER, /onPointerDown=\{\(e\) => beginDrag\(e, s\.id, i\)\}/, "把手按下进入拖动（指针事件，不走 HTML5 DnD）");
+  assert.match(
+    DRAWER,
+    /if \(cur\?\.active && commit && target >= 0 && target !== cur\.from\) props\.onMove\(cur\.from, target\);/,
+    "松手才提交一次 onMove（单步撤销）；Esc/pointercancel 不提交",
+  );
+  assert.match(DRAWER, /const onGripKeyDown = \(e: React\.KeyboardEvent<HTMLButtonElement>, id: string, i: number\): void =>/, "把手可聚焦，↑↓ 当键盘兜底");
   assert.match(APP, /<PresentationDrawer/, "抽屉渲染在画布里");
   assert.match(APP, /openPresentation: \(\) => openPresentDrawer\(\)/, "宿主面板的演示动作经窄接口开抽屉（开时拉最新设置）");
   assert.match(INDEX, /if \(id === PRESENTATION\) \{[\s\S]{0,160}actions\.openPresentation\(\);/, "宿主：有活动画布才开抽屉");
@@ -254,13 +266,38 @@ test("抽屉的设置面板：逐条/幕布/打字机只发意图，值从宿主
   assert.match(src("studio/tab.tsx"), /onPresentationSetting=\{host\.onPresentationSetting\}/, "tab 透传写回");
 
   // 抽屉只读 props：不 import 宿主设置存储、不直接写盘
-  assert.equal(/from "\.\.\/index"|from "siyuan"|\.persist\(/.test(DRAWER), false, "抽屉不碰宿主/磁盘");
-  for (const label of ["幕布", "逐条出场", "打字机", "打字光标", "打字速度", "镜头留白", "自动前进"]) {
-    assert.ok(DRAWER.includes(label), `设置面板缺一项：${label}`);
+  assert.equal(/from "\.\.\/index"|from "siyuan"|\.persist\(/.test(DRAWER + MENU), false, "抽屉/设置列表不碰宿主或磁盘");
+  for (const label of [
+    "画面",
+    "遮罩画框外",
+    "放映时隐藏网格",
+    "出场效果",
+    "逐条出场",
+    "打字机效果",
+    "播放",
+    "自动前进",
+    "方向键沿边导航",
+    "开始演示时全屏",
+  ]) {
+    assert.ok(MENU.includes(label), `设置列表缺一项：${label}`);
   }
-  assert.match(DRAWER, /disabled=\{!st\.typewriter\}/, "打字机关掉时，光标与速度一起禁用");
+  assert.match(MENU, /role="switch"/, "开关是 button+role=switch：主题改不到 input 的样式");
+  assert.match(MENU, /aria-checked=\{props\.checked\}/, "开关态对读屏可见");
+  assert.equal(MENU.includes('type="range"'), false, "滑杆已退役（自动前进改开关）");
+  assert.match(MENU, /const AUTO_ADVANCE_SECONDS = 10;/, "自动前进固定 10 秒/页");
   assert.match(DRAWER, /onClick=\{\(\) => props\.onToggleReveal\(s\.id\)\}/, "每页的逐条/整页 mini 按钮");
   assert.match(DRAWER, /aria-pressed=\{s\.reveal === "auto"\}/, "开关态对读屏可见");
+});
+
+test("第八十轮：抽屉卡片有缩略图/序号/页名，双击改名只发意图", () => {
+  assert.match(DRAWER, /props\.thumbs\[s\.id\]/, "缩略图由宿主生成，抽屉只显示");
+  assert.match(DRAWER, /exs-present-card__no/, "卡片带序号角标");
+  assert.match(DRAWER, /onDoubleClick=\{\(\) => startRename\(s\.id, s\.name\)\}/, "双击页名进入改名");
+  assert.match(DRAWER, /props\.onRename\(cur\.id, name\)/, "改名交给宿主写场景");
+  assert.match(APP, /onRename=\{renameDeckSlide\}/, "宿主的改名回调接线");
+  assert.match(APP, /captureUpdate: CaptureUpdateAction\.IMMEDIATELY/, "改名走可撤销的正常场景更新");
+  assert.match(APP, /thumbSignature\(all, s\.id, bg\)/, "缩略图按签名去重");
+  assert.match(APP, /exportingFrame: frame as never/, "vendor 按画框裁切生成缩略图");
 });
 
 test("样式：右上角按钮走 vendor 扩展位，抽屉是画布内 absolute 浮层", () => {
@@ -271,6 +308,31 @@ test("样式：右上角按钮走 vendor 扩展位，抽屉是画布内 absolute
   assert.equal(/position: fixed/.test(drawer), false, "不许 fixed（第三十八轮色板的教训）");
   assert.match(drawer, /z-index: 8;/, "层级：压过画布 UI、低于思源 Dialog（≥11）");
   assert.match(CSS, /\.exs-root \{\s*\n\s*position: relative;\s*\n\s*\}/, ".exs-root 是定位含块");
+});
+
+test("抽屉默认居中浮窗：拖动记忆、双击回中，列表用渐隐滚动", () => {
+  assert.match(
+    CSS,
+    /\.exs-present-drawer \{[^}]*top: 50%;[^}]*left: 50%;[^}]*transform: translate\(-50%, -50%\);/,
+    "默认居中，不占画布右缘",
+  );
+  assert.match(
+    CSS,
+    /@keyframes exs-present-in-center \{[^}]*translate\(calc\(-50% \+ 12px\), -50%\)/,
+    "居中态的进场动画带上 -50% 基准，不会先闪到未居中位置",
+  );
+  assert.match(DRAWER, /exs-present-drawer--center/, "居中态有独立类名");
+  assert.match(DRAWER, /transform: "none"/, "拖过之后由内联位置接管，清掉居中位移");
+  assert.match(DRAWER, /useState<DrawerPos \| null>\(\(\) => readPos\(\)\)/, "首帧直接读记忆位，不先渲染再跳");
+  assert.match(DRAWER, /onDoubleClick=\{onHeadDoubleClick\}/, "双击头部回到居中");
+  // 第八十一轮返工：点一下头部（没拖动）曾把默认值 0,0 写进记忆 → 抽屉永远贴左上角
+  assert.match(DRAWER, /if \(o\.rx === 0 && o\.ry === 0\) return null;/, "读记忆时丢掉写坏的 0,0（回中）");
+  assert.match(DRAWER, /if \(!moved && Math\.hypot\(ev\.clientX - clientX0, ev\.clientY - clientY0\) < 3\) return;/, "3px 起步阈值：点一下不算拖");
+  assert.match(DRAWER, /if \(moved\) writePos\(last\);/, "只有真的拖过才落位");
+  assert.match(DRAWER, /let last: DrawerPos = \{\s*\n\s*rx: cbRect\.width > 0/, "落位起点是当前位置，不是 0,0");
+  assert.match(DRAWER, /<FadeScroll className="exs-present-drawer__body">/, "片单改用隐藏滚动条 + 底部渐隐");
+  const body = CSS.slice(CSS.indexOf(".exs-present-drawer__body {"), CSS.indexOf("}", CSS.indexOf(".exs-present-drawer__body {")));
+  assert.equal(/scrollbar-width/.test(body), false, "不再用系统细滚动条");
 });
 
 /* ------------------------------ ④ 文案 ------------------------------ */
@@ -288,27 +350,42 @@ test("i18n：本片词条双语齐备，中文原文即 key", () => {
     "按位置排序",
     "未命名页",
     "还没有演示页",
-    "先在画布上框住一页内容，再点右上角的 ▶ 建片单。",
-    "上移",
-    "下移",
+    "先在画布上框住一页内容，或点下方「＋ 新建页」按标准比例插一页。",
+    "空白页",
+    "新建页",
+    "新建标准画框",
+    "新建 {ratio} 画框",
+    "插到最后一页右侧，尺寸随现有页缩放",
+    "插入后可随时拖动、缩放，插入本身可撤销。",
+    "拖动调整页序",
+    "拖动调整页序（聚焦后可用 ↑↓）",
+    "宽屏",
+    "经典",
+    "近宽屏",
+    "竖版",
+    "已插入 {ratio} 画框 · {w}×{h}",
     "这一页不放映",
     "重新入片",
     "这一页整页一起出",
     "这一页逐条出场",
-    "点页名把镜头开过去；↑↓ 改页序，≡ 管整页还是逐条，眼睛管放不放。",
+    "拖动左侧把手改页序；双击页名改名；≡ 管整页还是逐条，眼睛管放不放。",
+    "双击重命名",
+    "把镜头开过去看这一页",
+    "生成预览…",
     "开始演示",
     "先画一个画框，再开始演示",
     "演示设置",
-    "幕布",
+    "画面",
+    "遮罩画框外",
+    "放映时隐藏网格",
+    "出场效果",
     "逐条出场",
-    "打字机",
-    "打字光标",
-    "打字速度",
-    "镜头留白",
+    "打字机效果",
+    "播放",
     "自动前进",
-    "关",
-    "{n} 毫秒/字",
-    "{n} 秒",
+    "每页停留 10 秒后自动翻页",
+    "开始演示时全屏",
+    "自动保存",
     "先打开一块白板，再放映",
   ];
   for (const k of keys) {
@@ -330,4 +407,99 @@ test("i18n：两份语言包都没有重复键（重复键会让 zh/en 键序断
     }
     assert.deepEqual(dup, [], `${rel} 有重复键：${dup.join(", ")}`);
   }
+});
+
+/* ------------------------------ ⑤ 2026-11-08：设置收敛 ------------------------------ */
+
+test("设置收敛为 7 个开关：预设/滑杆退役，整份复位通道一起删干净", () => {
+  const SETTINGS = stripComments(src("studio/settings.ts"));
+  const TAB = stripComments(src("studio/tab.tsx"));
+
+  assert.equal(SETTINGS.includes("SIMPLE_PRESENTATION"), false, "一键预设整块退役");
+  assert.equal(MENU.includes("onReset"), false, "设置列表不再接整份复位");
+  assert.equal(MENU.includes("RangeRow"), false, "滑杆组件退役");
+  assert.match(MENU, /onSetting\("autoAdvance", on \? AUTO_ADVANCE_SECONDS : 0\)/, "开关只写 10 / 0");
+  assert.equal(CSS.includes(".exs-present-presets {"), false, "预设按钮样式一起删");
+  assert.equal(CSS.includes(".exs-present-set--range"), false, "滑杆样式一起删");
+  assert.equal(APP.includes("resetPresentSettings"), false, "宿主不再有整份复位回调");
+  assert.equal(TAB.includes("onPresentationSettings"), false, "tab 不再透传整份写盘");
+  assert.equal(INDEX.includes("rememberPresentationSettings"), false, "index 不再保留整份写盘实现");
+  // 旧 data.json 里的 cursor/speed/fit 仍要被归一保留：运行时取景/打字机还在读它们
+  assert.match(SETTINGS, /cursor: boolOr\(r\.cursor/, "旧键保留，不因 UI 退役丢数据");
+  assert.match(SETTINGS, /speed: Math\.round\(clampNum\(r\.speed/);
+  assert.match(SETTINGS, /fit: clampNum\(r\.fit/);
+});
+
+test("i18n：2026-11-08 放映底栏词条双语齐备、两份键序一致", () => {
+  const zh = json("i18n/zh_CN.json");
+  const en = json("i18n/en_US.json");
+  const keys = [
+    "上一页",
+    "下一页",
+    "暂停自动前进",
+    "继续自动前进",
+    "← → 翻页 · 空格 下一步 · F 全屏 · Esc 退出",
+    "← → 翻页 · 空格 下一步 · P 暂停 · F 全屏 · Esc 退出",
+  ];
+  for (const k of keys) {
+    assert.equal(zh[k], k, `zh 缺词条或值不等于 key：${k}`);
+    assert.ok(typeof en[k] === "string" && en[k] !== k && en[k].length > 0, `en 缺词条：${k}`);
+  }
+  assert.deepEqual(Object.keys(zh), Object.keys(en), "两份语言包键序一致");
+});
+
+/* ------------------------------ ⑥ 第八十一轮：双列 + 拖拽 + 标准画框 ------------------------------ */
+
+test("抽屉改成双列浏览窗：宽度、网格、统一画幅都落在 CSS 上", () => {
+  const drawer = CSS.slice(CSS.indexOf(".exs-present-drawer {"), CSS.indexOf("}", CSS.indexOf(".exs-present-drawer {")));
+  assert.match(drawer, /width: 560px;/, "窄长条 300px 加宽成浏览窗");
+  assert.match(
+    CSS,
+    /\.exs-present-list \{[^}]*display: grid;[^}]*grid-template-columns: repeat\(auto-fill, minmax\(210px, 1fr\)\);/,
+    "双列网格：画布窄时自动退回一列",
+  );
+  assert.match(
+    CSS,
+    /\.exs-present-card__preview \{[^}]*aspect-ratio: 16 \/ 9;[^}]*height: auto;/,
+    "卡片画幅统一 16:9（不同画框比例靠 contain 留边，行高不再参差）",
+  );
+  assert.match(CSS, /\.exs-present-dragghost \{[^}]*position: absolute;/, "拖动替身相对抽屉定位（抽屉有 backdrop-filter，fixed 会被它当含块）");
+  assert.match(
+    CSS,
+    /\.exs-root\.exs-presenting \.exs-bottom-dock,[\s\S]{0,120}\.exs-root\.exs-presenting \.exs-script-rail \{\s*\n\s*display: none;/,
+    "放映中仍然整体让位（本轮没碰这条）",
+  );
+});
+
+test("拖拽改页序：把手在左、松手才提交、Esc 取消、键盘 ↑↓ 兜底", () => {
+  assert.match(
+    DRAWER,
+    /className="exs-present-grip"\s*\n\s*data-grip=\{s\.id\}/,
+    "每张卡左侧有独立把手（整卡可点，不能让拖动和选中打架）",
+  );
+  assert.match(DRAWER, /if \(e\.button !== 0\) return;/, "只认主键");
+  assert.match(DRAWER, /Math\.hypot\(ev\.clientX - cur\.startX, ev\.clientY - cur\.startY\) < 4/, "4px 起步阈值：点一下不算拖");
+  assert.match(DRAWER, /const targetAt = \(clientX: number, clientY: number\): number =>/, "落点按最近卡片中心算（双列里插入线不好读）");
+  assert.match(DRAWER, /if \(ev\.key !== "Escape"\) return;/, "Esc 取消拖动");
+  assert.match(DRAWER, /const delta = e\.key === "ArrowUp" \|\| e\.key === "ArrowLeft" \? -1/, "键盘 ↑/← 前移、↓/→ 后移");
+  assert.match(DRAWER, /props\.onMove\(i, to\);\s*\n\s*focusGrip\(id\);/, "键盘挪完焦点还给这一页");
+  assert.match(DRAWER, /if \(sc\) \{\s*\n\s*const r = sc\.getBoundingClientRect\(\);/, "拖到列表上下边缘自动滚动");
+});
+
+test("新建页：按固定比例插画框，一次 updateScene、随后飞过去", () => {
+  assert.match(DRAWER, /import \{[^}]*FRAME_RATIOS[^}]*\} from "\.\/frame-presets\.ts";/, "比例表是纯模块，抽屉只渲染");
+  assert.match(DRAWER, /FRAME_RATIOS\.map\(/, "比例按钮由 FRAME_RATIOS 生成，不手抄尺寸");
+  assert.match(DRAWER, /props\.onAddSlide\(ratio\);/, "插页只发意图，写场景在 StudioApp");
+  assert.match(DRAWER, /writeRatio\(ratio\)/, "记住上次比例");
+  assert.match(APP, /onAddSlide=\{addDeckSlide\}/, "抽屉接上宿主的新建页");
+  assert.match(APP, /const size = frameSizeFor\(ratio, anchor\);/, "尺寸沿用现有页的视觉体量（对角线缩放）");
+  assert.match(APP, /let at = nextFrameSpot\(boxes, anchor\);/, "落点在末页右侧；空板才回落到视口中心");
+  assert.match(APP, /makeElement\(\{\s*\n\s*type: "frame",/, "用插件自己的 makeElement 建画框");
+  assert.match(
+    APP,
+    /elements: \[\.\.\.all, el as never\],\s*\n\s*appState: \{ selectedElementIds: \{ \[id\]: true \} \} as never,\s*\n\s*captureUpdate: CaptureUpdateAction\.IMMEDIATELY,/,
+    "插入 + 选中一次落地 = 一个撤销点",
+  );
+  assert.match(APP, /window\.requestAnimationFrame\(\(\) => focusFrame\(id, presentSettings\.fit\)\);/, "新页在末页右侧，很可能在视口外：插完把镜头开过去");
+  assert.match(APP, /if \(s\.blank\) continue;/, "空画框没有包围盒可裁：跳过缩略图队列，卡片改显「空白页」");
 });

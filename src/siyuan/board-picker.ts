@@ -54,6 +54,7 @@ export function pickBoardFile(
 </div>`,
       destroyCallback: () => finish(null),
     });
+    dialog.element.classList.add("exs-board-picker-dialog");
 
     const input = dialog.element.querySelector<HTMLInputElement>(".exs-picker__search")!;
     const list = dialog.element.querySelector<HTMLElement>(".exs-picker__list")!;

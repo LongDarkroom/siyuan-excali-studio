@@ -74,7 +74,11 @@ test("T4：打开按主题挑槽位背景，落盘补当前主题槽位", () => 
 
 test("onChange 回写：只在网格真的翻转时发生", () => {
   assert.match(APP, /const gridRef = useRef\(gridModeEnabled\)/, "要用 ref 记住上次看到的值");
-  assert.match(APP, /if \(grid !== gridRef\.current\)/, "无条件回写 = 拖拽每帧一次 saveData");
+  assert.match(
+    APP,
+    /if \(!presentingRef\.current && grid !== gridRef\.current\)/,
+    "无条件回写 = 拖拽每帧一次 saveData；放映中网格是临时关掉的，更不能写回偏好",
+  );
   assert.match(APP, /gridRef\.current = grid;\s*onGridChange\(grid\);/, "翻转后先记再写，避免同值重入");
   assert.match(APP, /const grid = !!appState\.gridModeEnabled/, "缺省值要归成布尔，别把 undefined 写进设置");
   // onChange 的第二形参就是 appState（vendor 签名 (elements, appState, files)）

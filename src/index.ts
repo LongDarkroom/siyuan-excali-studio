@@ -1386,6 +1386,9 @@ export default class ExcaliStudioPlugin extends Plugin {
     const iconOf = (name: string): string => SCRIPT_ICONS[name] ?? ICON_SCRIPT_GEAR;
     const iconSvg = (d: string): string =>
       `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
+    // 使用说明折叠条：圆圈 i + 下箭头（展开时 CSS 旋转 180°）
+    const ICON_INFO = "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM12 8h.01M11 12h1v4h1";
+    const ICON_CHEVRON = "m6 9 6 6 6-6";
     // P2：行内设置抽屉（有声明参数的脚本才生成；change 委托落盘，不弹新 Dialog 防遮罩叠层）
     const settingsHtml = (s: ScriptInfo): string => {
       const specs = SCRIPT_SETTING_SPECS[s.name];
@@ -1434,36 +1437,41 @@ export default class ExcaliStudioPlugin extends Plugin {
     const actionRow = (a: RailActionMeta): string => {
       const on = pinnedActions.has(a.id);
       const labels = pinLabels(railActionMount(a) === "top-right", on);
-      return `<div class="b3-list-item exs-script-item${on ? " exs-script-item--pinned" : ""}" data-rail-action="${escapeAttr(
+      return `<div class="exs-script-item${on ? " exs-script-item--pinned" : ""}" data-rail-action="${escapeAttr(
         a.id,
-      )}" title="${escapeAttr(a.id)}"><div class="exs-script-item__head"><span class="b3-list-item__text"><span class="exs-script-item__icon">${iconSvg(
+      )}" title="${escapeAttr(a.id)}"><span class="exs-script-item__icon">${iconSvg(
         a.icon,
-      )}</span>${escapeHtml(t(a.title))}${on ? ` <span class="exs-script-pin" title="${labels.done}"></span>` : ""}</span><span class="exs-script-item__actions"><button type="button" class="b3-button b3-button--text${
-        on ? " exs-script-item__btn--on" : ""
-      }" data-act="pin" title="${on ? labels.done : labels.do}">${iconSvg(ICON_PIN)}</button></span></div><span class="exs-script-desc">${escapeHtml(
+      )}</span><div class="exs-script-item__main"><div class="exs-script-item__head"><span class="exs-script-item__title">${escapeHtml(
+        t(a.title),
+      )}</span>${on ? `<span class="exs-script-pin" title="${labels.done}">${t("已固定")}</span>` : ""}</div><span class="exs-script-desc">${escapeHtml(
         t(a.desc),
-      )}</span></div>`;
+      )}</span></div><span class="exs-script-item__actions"><button type="button" class="b3-button b3-button--text${
+        on ? " exs-script-item__btn--on" : ""
+      }" data-act="pin" title="${on ? labels.done : labels.do}">${iconSvg(ICON_PIN)}</button></span></div>`;
     };
     const actionBlock = RAIL_ACTIONS.map(actionRow).join("");
     const list = scripts
       .map((s, i) => {
         const specs = SCRIPT_SETTING_SPECS[s.name] ?? [];
         const isPinned = pinned.has(s.name);
-        return `<div class="b3-list-item exs-script-item${isPinned ? " exs-script-item--pinned" : ""}" data-idx="${i}" title="${escapeHtml(s.name)}"><div class="exs-script-item__head"><span class="b3-list-item__text"><span class="exs-script-item__icon">${iconSvg(
+        const labels = pinLabels(false, isPinned);
+        return `<div class="exs-script-item${isPinned ? " exs-script-item--pinned" : ""}" data-idx="${i}" title="${escapeHtml(s.name)}"><span class="exs-script-item__icon">${iconSvg(
           iconOf(s.name),
-        )}</span>${escapeHtml(s.title)}${s.onload ? ` <span class="exs-script-badge">${t("打开时自动运行")}</span>` : ""}${
-          isPinned ? ` <span class="exs-script-pin" title="${t("已固定到侧边栏")}"></span>` : ""
-        }</span><span class="exs-script-item__actions">${
+        )}</span><div class="exs-script-item__main"><div class="exs-script-item__head"><span class="exs-script-item__title">${escapeHtml(
+          s.title,
+        )}</span>${s.onload ? `<span class="exs-script-badge">${t("打开时自动运行")}</span>` : ""}${
+          isPinned ? `<span class="exs-script-pin" title="${labels.done}">${t("已固定")}</span>` : ""
+        }</div>${
+          s.description
+            ? `<span class="exs-script-desc">${escapeHtml(s.description)}</span>`
+            : `<span class="exs-script-item__meta">${escapeHtml(s.name)}</span>`
+        }</div><span class="exs-script-item__actions">${
           specs.length > 0
             ? `<button type="button" class="b3-button b3-button--text" data-act="gear" title="${t("脚本设置")}">${iconSvg(ICON_SCRIPT_GEAR)}</button>`
             : ""
         }<button type="button" class="b3-button b3-button--text${isPinned ? " exs-script-item__btn--on" : ""}" data-act="pin" title="${
-          isPinned ? t("已固定到侧边栏") : t("固定到侧边栏")
-        }">${iconSvg(ICON_PIN)}</button></span></div>${
-          s.description
-            ? `<span class="exs-script-desc">${escapeHtml(s.description)}</span>`
-            : `<span class="b3-list-item__meta">${escapeHtml(s.name)}</span>`
-        }${settingsHtml(s)}</div>`;
+          isPinned ? labels.done : labels.do
+        }">${iconSvg(ICON_PIN)}</button></span>${settingsHtml(s)}</div>`;
       })
       .join("");
     // P2v4：内置脚本更新提示条（installBuiltinScripts 已存在不覆盖 → 升级后磁盘脚本
@@ -1475,12 +1483,27 @@ export default class ExcaliStudioPlugin extends Plugin {
             "旧版内置脚本行为可能和插件不一致，重置会覆盖你在这些脚本里的修改（自建脚本不受影响）。",
           )}</span><button type="button" class="b3-button b3-button--text" data-act="reset">${t("重置为最新版")}</button></div>`
         : "";
+    // 第五十四轮：面板从「文档流」改「卡片列表」——分组题带数量与右侧说明；
+    //   每行一张卡：32px 图标衬底 + 标题/胶囊 + 两行描述 + 幽灵动作键。
+    const groupHead = (title: string, count: number, note: string): string =>
+      `<div class="exs-picker__group"><span class="exs-picker__group-title">${title}</span><span class="exs-picker__group-count">${count}</span><span class="exs-picker__group-note">${note}</span></div>`;
+    const guide = `<details class="exs-picker__guide"><summary><span class="exs-picker__guide-ic">${iconSvg(
+      ICON_INFO,
+    )}</span><span class="exs-picker__guide-text">${t(
+      "使用说明 · 先框选再跑，或先打开文档页签",
+    )}</span><span class="exs-picker__guide-chev">${iconSvg(ICON_CHEVRON)}</span></summary>${hint}</details>`;
     const dialog = new Dialog({
       title: t("拓展功能"),
-      width: "520px",
-      content: `<div class="exs-picker">${outdatedBar}${actionBlock}${hint}<div class="exs-picker__group">${t(
-        "脚本库",
-      )}</div><div class="b3-list b3-list--background exs-board-list">${list}</div></div>`,
+      width: "560px",
+      content: `<div class="exs-picker">${outdatedBar}${groupHead(
+        t("画布动作"),
+        RAIL_ACTIONS.length,
+        t("固定后出现在画布右缘"),
+      )}<div class="exs-picker__rows">${actionBlock}</div>${groupHead(
+        t("脚本库"),
+        scripts.length,
+        t("点一条立即执行"),
+      )}<div class="exs-picker__rows">${list}</div>${guide}</div>`,
       destroyCallback: () => {
         if (this.scriptPickerDialog === dialog) this.scriptPickerDialog = null;
         // 选择器关闭：竖条让位解除（真机 bug 修复——竖条曾浮在 Dialog 上竞合）
@@ -1502,10 +1525,11 @@ export default class ExcaliStudioPlugin extends Plugin {
       }
       const badge = item.querySelector(".exs-script-pin");
       if (pinned && !badge) {
-        const dot = document.createElement("span");
-        dot.className = "exs-script-pin";
-        dot.title = labels.done;
-        item.querySelector(".b3-list-item__text")?.appendChild(dot);
+        const chip = document.createElement("span");
+        chip.className = "exs-script-pin";
+        chip.textContent = t("已固定");
+        chip.title = labels.done;
+        item.querySelector(".exs-script-item__head")?.appendChild(chip);
       } else if (!pinned && badge) {
         badge.remove();
       }

@@ -36,6 +36,11 @@ export type Slide = {
    * 只存「例外」——默认按全局走，所以没写过元数据的老画框不用补数据。
    */
   reveal: "auto" | "all";
+  /**
+   * 第八十一轮：空画框（没有任何成员）。新建页插进来的就是这种。
+   * 预览图为空白，宿主不必去跑 exportToCanvas（空画框导出没有内容可裁）。
+   */
+  blank: boolean;
 };
 
 /** 只读接口：vendor 的 ExcalidrawElement 结构上满足它 */
@@ -48,6 +53,7 @@ export type FrameLike = {
   y: number;
   width?: number;
   height?: number;
+  frameId?: string | null;
   customData?: unknown;
 };
 
@@ -70,6 +76,12 @@ function metaOf(frame: FrameLike): { order?: unknown; included?: unknown; reveal
 /** 场景元素 → 片单。非 frame / 已删除的一律不看 */
 export function deckOf(elements: readonly FrameLike[]): Deck {
   const frames = elements.filter((e) => e.type === "frame" && !e.isDeleted);
+  // 有成员的画框不算空白页：成员是 frameId 回指画框的普通元素
+  const occupied = new Set<string>();
+  for (const e of elements) {
+    const fid = e.frameId;
+    if (!e.isDeleted && e.type !== "frame" && fid) occupied.add(fid);
+  }
   const slides = frames.map((f): Slide => {
     const meta = metaOf(f);
     return {
@@ -82,6 +94,7 @@ export function deckOf(elements: readonly FrameLike[]): Deck {
       order: typeof meta.order === "number" && Number.isFinite(meta.order) ? meta.order : null,
       included: meta.included !== false,
       reveal: meta.reveal === "all" ? "all" : "auto",
+      blank: !occupied.has(f.id),
     };
   });
   return { slides: sortSlides(slides), hasOrdered: slides.some((s) => s.order !== null) };
@@ -177,7 +190,7 @@ export function deckSignature(deck: Deck): string {
   return deck.slides
     .map(
       (s) =>
-        `${s.id}:${s.order ?? ""}:${s.included ? 1 : 0}:${s.reveal}:${s.name}:${Math.round(s.x)},${Math.round(s.y)}`,
+        `${s.id}:${s.order ?? ""}:${s.included ? 1 : 0}:${s.reveal}:${s.blank ? 1 : 0}:${s.name}:${Math.round(s.x)},${Math.round(s.y)}`,
     )
     .join("|");
 }

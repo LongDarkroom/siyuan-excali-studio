@@ -1,12 +1,13 @@
 /**
- * 第五十三轮·批 1B：镜头 + 幕布 + HUD + 键位打磨。
+ * 第五十三轮·批 1B + 第八十轮：镜头 + 遮罩 + 底栏 + 键位打磨。
  *
  * 断言分三段：
  * ① 接线：舞台只住在 .exs-canvas 里（含块跟画布走，不许 fixed）、放映留白进偏好、
- *    幕布可关、相机飞行窗内换页排队不丢输入、按住方向键不连翻；
+ *    遮罩颜色取画布底色、相机飞行窗内换页排队不丢输入、按住方向键不连翻；
  * ② 舞台实现：SVG mask 挖洞 + rAF 跟随相机（屏幕 = (场景 + scroll) × zoom），
- *    相机静止时不写 DOM；HUD 只读 props、只发意图；
- * ③ 样式与文案：幕布压画布、HUD 压幕布、控件可点而画布不被挡住；双语齐全。
+ *    相机静止时不写 DOM；底栏只读 props、只发意图（页码预览 / 设置 / 全屏 / 终止）；
+ * ③ 样式与文案：遮罩压画布、HUD 压遮罩、控件可点而画布不被挡住；气泡尾巴与
+ *    滚动条隐藏；双语齐全。
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -24,7 +25,7 @@ const CSS = src("index.css");
 
 /* ------------------------------ ① 接线 ------------------------------ */
 
-test("舞台住在画布里：幕布/HUD 跟着 .exs-canvas，不用 fixed", () => {
+test("舞台住在画布里：遮罩/HUD 跟着 .exs-canvas，不用 fixed", () => {
   assert.ok(APP.includes('from "./PresentationStage"'), "StudioApp 必须引入舞台层");
   const at = APP.indexOf("<PresentationStage");
   assert.ok(at > APP.indexOf('className="exs-canvas"'), "舞台在 .exs-canvas 之内");
@@ -33,21 +34,35 @@ test("舞台住在画布里：幕布/HUD 跟着 .exs-canvas，不用 fixed", () 
     "api={api}",
     "plan={presentPlan}",
     "titles={presentSnapRef.current?.titles ?? []}",
+    "frameIds={presentSnapRef.current?.plans.map((p) => p.frameId) ?? []}",
+    "thumbs={presentThumbs}",
     "page={presenting.page}",
-    "scrim={presentSnapRef.current?.scrim ?? true}",
+    "mask={presentScrim}",
+    "maskColor={presentMaskColor}",
+    "settings={presentSettings}",
+    "onSetting={changePresentSetting}",
+    "fullscreen={presentFullscreen}",
+    "onToggleFullscreen={toggleFullscreen}",
     "onJump={presentJump}",
     "onExit={exitPresentation}",
   ]) {
     assert.ok(APP.includes(prop), `舞台缺 prop：${prop}`);
   }
   assert.match(APP, /presenting && presentPlan \?/, "只在放映且有当前页时渲染");
-  const stageCss = CSS.slice(CSS.indexOf("批 1B：幕布"));
+  const stageCss = CSS.slice(CSS.indexOf("批 1B"));
   assert.equal(/\.exs-present-(scrim|hud)[^{]*\{[^}]*position:\s*fixed/.test(stageCss), false, "舞台不许脱离画布用 fixed");
 });
 
 test("页名在进片场时定格：放映中不跟着片单重算", () => {
   assert.match(APP, /titles: shown\.map\(\(s\) => t\(slideTitle\(s\)\)\)/, "HUD 用与 plans 同序的页名快照");
   assert.match(APP, /const presentPlan = presenting \? presentSnapRef\.current\?\.plans\[presenting\.page\] : undefined/);
+});
+
+test("遮罩换成画布底色：不再压黑，颜色按当前主题取", () => {
+  assert.match(APP, /const \[presentMaskColor, setPresentMaskColor\] = useState/, "遮罩颜色是独立状态");
+  assert.match(APP, /setPresentMaskColor\(presentBgRef\.current\(\)\)/, "进片场取当前画布底色（亮/暗主题各一色）");
+  assert.match(STAGE, /fill=\{props\.maskColor\}/, "颜色从 prop 写进 SVG 属性");
+  assert.equal(/\.exs-present-scrim__fill\s*\{[^}]*fill:/.test(CSS), false, "CSS 不许再定幕布颜色（会盖掉属性退回压黑）");
 });
 
 test("镜头：留白走进片场定格的偏好；飞行窗内换页排队，不丢输入", () => {
@@ -80,7 +95,7 @@ test("镜头：留白走进片场定格的偏好；飞行窗内换页排队，�
   );
 });
 
-test("点进度点：落到整页态（最后一条）；放映中旧排队先清", () => {
+test("点页码预览跳页：落到整页态（最后一条）；放映中旧排队先清", () => {
   assert.match(
     APP,
     /presentPendingRef\.current = null;\s*\n\s*presentGo\(navJump\(snap\.plans, cur, page\), "jump"\)/,
@@ -96,7 +111,7 @@ test("键位：按住不连翻，但重复事件照样吃干净", () => {
 
 /* ------------------------------ ② 舞台实现 ------------------------------ */
 
-test("幕布：SVG mask 挖洞，rAF 跟随相机", () => {
+test("遮罩：SVG mask 挖洞，rAF 跟随相机", () => {
   assert.match(STAGE, /requestAnimationFrame/, "相机动画期间要逐帧跟随");
   assert.match(STAGE, /cancelAnimationFrame/, "卸载必须停帧");
   assert.match(STAGE, /const sx = \(x \+ \(st\.scrollX \|\| 0\)\) \* zoom;/, "屏幕 =（场景 + scroll）× zoom");
@@ -111,28 +126,53 @@ test("幕布：SVG mask 挖洞，rAF 跟随相机", () => {
   assert.match(STAGE, /HOLE_PAD/, "洞要比画框外扩一圈");
 });
 
-test("幕布开关：关掉只留 HUD，rAF 也不空转", () => {
-  assert.match(STAGE, /if \(!props\.scrim\) return;/, "关幕布不启动跟随帧");
-  assert.match(STAGE, /\{props\.scrim \? \(\s*\n\s*<svg ref=\{svgRef\} className="exs-present-scrim"/, "关幕布不渲染 SVG");
+test("遮罩开关：关掉只留 HUD，rAF 也不空转", () => {
+  assert.match(STAGE, /if \(!props\.mask\) return;/, "关遮罩不启动跟随帧");
+  assert.match(STAGE, /\{props\.mask \? \(\s*\n\s*<svg ref=\{svgRef\} className="exs-present-scrim"/, "关遮罩不渲染 SVG");
   assert.match(STAGE, /<\/svg>\s*\n\s*\) : null\}/, "开关是渲染条件，不是 CSS 隐藏");
-  assert.match(STAGE, /className="exs-present-hud"/, "HUD 始终在（关幕布仍要翻页/退出）");
+  assert.match(STAGE, /className="exs-present-hud"/, "HUD 始终在（关遮罩仍要翻页/退出）");
 });
 
-test("HUD：页名 / 进度点 / 页码 / 退出，只读 props、只发意图", () => {
+test("底栏：翻页 / 页码预览 / 设置 / 全屏 / 终止，只读 props、只发意图", () => {
   for (const cls of [
-    "exs-present-hud__title",
-    "exs-present-hud__dots",
-    "exs-present-dot--on",
-    "exs-present-hud__count",
-    "exs-present-exit",
+    "exs-present-hud__bottom",
+    "exs-present-counter",
+    "exs-present-preview",
+    "exs-present-preview__row",
+    "exs-present-preview__row--on",
+    "exs-present-tool",
+    "exs-present-stop",
   ]) {
-    assert.ok(STAGE.includes(cls), `HUD 缺 ${cls}`);
+    assert.ok(STAGE.includes(cls), `底栏缺 ${cls}`);
   }
-  assert.match(STAGE, /aria-current=\{i === props\.page \? "step" : undefined\}/, "当前页对读屏可见");
-  assert.match(STAGE, /onClick=\{props\.onExit\}/, "退出只上报");
-  assert.match(STAGE, /onClick=\{\(\) => props\.onJump\(i\)\}/, "进度点只上报");
-  assert.equal(STAGE.includes("api.updateScene"), false, "舞台只读 appState，不改场景");
-  assert.equal(STAGE.includes("updateScene"), false);
+  assert.match(STAGE, /onClick=\{props\.onExit\}/, "终止只上报");
+  assert.match(STAGE, /onClick=\{\(\) => \{\s*\n\s*setPreviewOpen\(false\);\s*\n\s*props\.onJump\(i\);/, "预览行只上报");
+  assert.match(STAGE, /aria-selected=\{i === props\.page\}/, "当前页对读屏可见");
+  assert.match(STAGE, /props\.thumbs\[props\.frameIds\[i\] \?\? ""\]/, "预览行按画框 id 查缩略图");
+  assert.match(STAGE, /aria-expanded=\{previewOpen\}/, "页码按钮是预览开关");
+  assert.equal(STAGE.includes("updateScene"), false, "舞台只读 appState，不改场景");
+});
+
+test("设置齿轮：放映底栏与抽屉共用同一份列表，向上弹", () => {
+  assert.ok(STAGE.includes('from "./PresentationSettingsMenu"'), "共用设置组件");
+  assert.match(STAGE, /exs-present-menuhost exs-present-menuhost--up/, "放映里的气泡向上弹");
+  assert.match(STAGE, /onSetting=\{props\.onSetting\}/);
+  assert.match(STAGE, /<PresentationSettingsMenu/, "直接渲染共享列表");
+});
+
+test("全屏键：强调色实心，状态对读屏可见，与 F 键同一通道", () => {
+  assert.match(STAGE, /className=\{"exs-present-tool exs-present-tool--soft"/, "全屏走强调色按钮");
+  assert.match(STAGE, /title=\{props\.fullscreen \? t\("退出全屏"\) : t\("全屏演示"\)\}/);
+  assert.match(STAGE, /aria-pressed=\{props\.fullscreen\}/);
+  assert.match(STAGE, /onClick=\{props\.onToggleFullscreen\}/, "全屏只上报");
+  assert.match(APP, /const toggleFullscreen = useCallback/, "宿主有统一开关");
+  assert.match(APP, /applyFullscreen\(value as boolean\)/, "设置里的全屏即时生效");
+  assert.match(APP, /addEventListener\("fullscreenchange", sync\)/, "Esc / 宿主退全屏时状态回写");
+  assert.match(
+    APP,
+    /focusFrameRef\.current\(snap\.plans\[cur\.page\]\.frameId, snap\.fit\)/,
+    "全屏改变视口尺寸后按新视口重新取景（否则当前页偏出新画面）",
+  );
 });
 
 test("分层：vendor 只进类型，不碰思源 API", () => {
@@ -144,28 +184,151 @@ test("分层：vendor 只进类型，不碰思源 API", () => {
 
 /* ------------------------------ ③ 样式与文案 ------------------------------ */
 
-test("层级：幕布压画布（5）、HUD 压幕布（7），都低于抽屉（8）", () => {
+test("层级：遮罩压画布（5）、HUD 压遮罩（7），都低于抽屉（8）", () => {
   assert.match(CSS, /\.exs-canvas \.exs-present-scrim \{[^}]*position: absolute;[^}]*inset: 0;[^}]*z-index: 5;/);
   assert.match(CSS, /\.exs-canvas \.exs-present-hud \{[^}]*position: absolute;[^}]*inset: 0;[^}]*z-index: 7;/);
-  assert.match(CSS, /\.exs-present-scrim__fill \{[^}]*fill: rgba\(/, "幕布是半透明黑，不是纯黑");
+  assert.match(CSS, /\.exs-present-scrim__edge \{[^}]*stroke: rgba\(/, "洞边有一圈细描边，和画布不糊在一起");
   assert.match(CSS, /\.exs-present-hud \{[^}]*pointer-events: none;/, "HUD 整层不挡画布");
-  assert.match(CSS, /\.exs-present-exit \{[^}]*pointer-events: auto;/, "退出键可点");
   assert.match(CSS, /\.exs-present-hud__bottom \{[^}]*pointer-events: auto;/, "底栏可点");
-  assert.match(CSS, /\.exs-present-dot--on \{[^}]*width: 18px;[^}]*background: var\(--exs-accent\)/, "当前页的进度点拉长高亮");
+  assert.match(CSS, /\.exs-present-counter \{[^}]*pointer-events: auto;/, "页码可点");
+  assert.match(CSS, /\.exs-present-tool \{[^}]*pointer-events: auto;/, "齿轮/全屏可点");
+  assert.match(CSS, /\.exs-present-stop \{[^}]*pointer-events: auto;/, "终止可点");
+  assert.match(CSS, /\.exs-present-tool--soft \{[^}]*background: var\(--exs-accent\)/, "全屏用主题强调色实心");
+  assert.match(CSS, /\.exs-present-stop \{[^}]*background: var\(--exs-danger-container\)/, "终止用主题软红容器色");
 });
 
-test("i18n：新文案两份语言包都在，中文键值一致", () => {
+test("气泡：有小尾巴，原生滚动条藏起来，没到底才渐隐", () => {
+  assert.match(CSS, /\.exs-present-menu::before \{[^}]*transform: rotate\(45deg\)/, "尾巴是旋转方块");
+  assert.match(CSS, /\.exs-present-menuhost--up \.exs-present-menu::before \{[^}]*bottom: -5\.5px/, "向上的气泡尾巴在底部");
+  assert.match(CSS, /\.exs-present-drawer \.exs-present-menu::before \{[^}]*right: 39px/, "抽屉里的尾巴对准齿轮");
+  assert.match(CSS, /\.exs-present-scroll::-webkit-scrollbar \{\s*\n\s*display: none;/, "藏掉原生滚动条");
+  assert.match(CSS, /\.exs-present-scroll--more \{[^}]*mask-image: linear-gradient/, "没到底时底部渐隐");
+});
+
+test("i18n：底栏与设置词条两份语言包都在，中文键值一致", () => {
   const zh = json("i18n/zh_CN.json");
   const en = json("i18n/en_US.json");
-  for (const k of ["退出演示", "页码", "第 {n} 页"]) {
+  for (const k of [
+    "第 {n} / {total} 页",
+    "第 {n} 页",
+    "上一页",
+    "下一页",
+    "幻灯片预览",
+    "演示设置",
+    "全屏演示",
+    "退出全屏",
+    "终止演示",
+    "画面",
+    "出场效果",
+    "播放",
+  ]) {
     assert.ok(k in zh, `zh_CN 缺键：${k}`);
     assert.ok(k in en, `en_US 缺键：${k}`);
     assert.equal(zh[k], k, `中文值必须等于键：${k}`);
   }
   const used = [...STAGE.matchAll(/\bt\("([^"]+)"/g)].map((m) => m[1]);
-  assert.ok(used.length >= 3, `至少抓到 3 处 t()，实得 ${used.length}`);
+  assert.ok(used.length >= 8, `至少抓到 8 处 t()，实得 ${used.length}`);
   for (const k of used) {
     assert.ok(k in zh, `zh_CN 缺键：${k}`);
     assert.ok(k in en, `en_US 缺键：${k}`);
+  }
+});
+
+/* ------------------------------ ④ 2026-11-08：放映控件 ------------------------------ */
+
+test("底栏把翻页/暂停还给鼠标用户；键位提示自动退场，鼠标回顶部再唤回", () => {
+  for (const prop of [
+    "autoAdvance={presentSnapRef.current?.autoAdvance ?? 0}",
+    "paused={presentPaused}",
+    "onPrev={presentPrev}",
+    "onNext={() => presentNext()}",
+    "onTogglePause={togglePresentPause}",
+  ]) {
+    assert.ok(APP.includes(prop), `舞台缺 prop：${prop}`);
+  }
+
+  assert.match(STAGE, /onPrev: \(\) => void/);
+  assert.match(STAGE, /onNext: \(\) => void/);
+  assert.match(STAGE, /onTogglePause: \(\) => void/);
+  assert.match(STAGE, /onClick=\{props\.onPrev\}/, "上一页只上报");
+  assert.match(STAGE, /onClick=\{props\.onNext\}/, "下一页只上报");
+  assert.match(STAGE, /onClick=\{props\.onTogglePause\}/, "暂停只上报");
+  assert.match(STAGE, /\{props\.autoAdvance > 0 \? \(/, "没开自动前进时不给一个无效的暂停键");
+  assert.match(STAGE, /aria-pressed=\{props\.paused\}/, "暂停态对读屏可见");
+  assert.match(STAGE, /exs-present-hud__keys/, "全屏后仍有一行键位提示");
+  assert.match(STAGE, /P 暂停/);
+  assert.match(STAGE, /Esc 退出/);
+
+  // 2026-11-08：提示不再常驻——进片场 4.5s 淡出，鼠标回顶部 64px 再唤回
+  assert.match(STAGE, /const HINT_LINGER_MS = \d+;/);
+  assert.match(STAGE, /const HINT_REVEAL_BAND = \d+;/);
+  assert.match(STAGE, /const HINT_REHIDE_MS = \d+;/);
+  assert.match(STAGE, /e\.clientY - hud\.getBoundingClientRect\(\)\.top/, "以 HUD 顶边为基准量热区");
+  assert.match(STAGE, /setHintVisible\(true\)/, "回到带子里再露");
+  assert.match(STAGE, /setHintVisible\(false\)/, "到时淡出");
+  assert.match(STAGE, /exs-present-hud__keys--hidden/, "退场是加类");
+  assert.match(STAGE, /aria-hidden=\{!hintVisible\}/, "退场后对读屏也收起");
+  assert.match(CSS, /\.exs-present-hud__keys \{[^}]*transition: opacity/, "只过渡透明度（不改 display）");
+  assert.match(CSS, /\.exs-present-hud__keys--hidden \{[^}]*opacity: 0;/, "隐藏态只是透明");
+  assert.equal(
+    /\.exs-present-hud__keys--hidden \{[^}]*display:\s*none/.test(CSS),
+    false,
+    "不许 display:none——那是给画布和底栏挪位",
+  );
+
+  // 暂停是本次放映的运行时状态：不落盘、P 键可达、进退片场都清
+  assert.match(APP, /const presentPausedRef = useRef\(false\)/);
+  assert.match(APP, /const \[presentPaused, setPresentPaused\] = useState\(false\)/);
+  assert.match(APP, /pause: togglePresentPause/);
+  assert.match(APP, /case "P":[\s\S]{0,80}act = keys\.pause;/);
+  assert.match(APP, /presentPausedRef\.current = false;\s*\n\s*setPresentPaused\(false\)/);
+  const toggle = APP.slice(APP.indexOf("const togglePresentPause = useCallback"), APP.indexOf("presentNextRef.current = presentNext"));
+  assert.equal(toggle.includes("onPresentationSetting"), false, "暂停不动落盘偏好，下次开演仍按用户设的秒数");
+  assert.match(toggle, /else bumpAutoDeadline\(\);/, "恢复时重新排期");
+
+  for (const cls of [
+    ".exs-present-nav {",
+    ".exs-present-nav--on {",
+    ".exs-present-hud__keys {",
+    ".exs-present-hud__keys--hidden {",
+  ]) {
+    assert.ok(CSS.includes(cls), `样式缺 ${cls}`);
+  }
+  assert.match(CSS, /\.exs-present-nav \{[^}]*pointer-events: auto;/, "底栏按钮可点");
+  assert.match(CSS, /\.exs-present-hud__keys \{[^}]*pointer-events: none;/, "键位提示不挡画布");
+});
+
+test("HUD 与气泡跟着主题走：底栏用插件药丸材质，菜单实底不透白板", () => {
+  // 底栏材质与插件 .exs-bottom-bar 同源：亮色白药丸、暗色深药丸
+  assert.match(CSS, /\.exs-present-hud__bottom \{[^}]*background: var\(--island-bg-color\)/, "底栏用 island 底色");
+  assert.match(CSS, /\.exs-present-hud__bottom \{[^}]*border: 1px solid var\(--exs-pill-border\)/, "底栏用 pill 描边");
+  assert.match(CSS, /\.exs-present-hud__bottom \{[^}]*box-shadow: var\(--exs-pill-shadow\)/, "底栏用 pill 阴影");
+  // 页码是浅紫药丸，字色另取 HUD 强调色（accent 白字在浅紫上读不清）
+  assert.match(CSS, /\.exs-present-counter \{[^}]*background: var\(--exs-accent-container\)/, "页码是强调容器色");
+  assert.match(CSS, /\.exs-present-counter \{[^}]*color: var\(--exs-hud-accent-text\)/, "页码字色用 HUD 强调色");
+  // 预览与设置气泡：与插件菜单同源实底，亮/暗各一套
+  assert.match(CSS, /\.exs-present-preview \{[^}]*background: var\(--exs-menu-solid\)/, "预览用菜单实底");
+  assert.match(CSS, /\.exs-present-preview::after \{[^}]*background: var\(--exs-menu-solid\)/, "尾巴与面板同色");
+  assert.equal(
+    /\.exs-present-hud__bottom \.exs-present-menu/.test(CSS),
+    false,
+    "放映里的深玻璃例外已删——菜单必须跟主题，不许局部改写 token",
+  );
+  assert.equal(CSS.includes("rgba(24, 26, 31, 0.94)"), false, "旧深玻璃底色不留");
+  assert.equal(
+    /\.exs-present-(preview|menu)[^}]*backdrop-filter/.test(CSS),
+    false,
+    "气泡不再透出白板",
+  );
+  for (const token of [
+    "--exs-hud-accent-text",
+    "--exs-hud-accent-ring",
+    "--exs-hud-danger-text",
+    "--exs-hud-danger-container-hover",
+    "--exs-hud-hint-bg",
+    "--exs-hud-hint-border",
+    "--exs-hud-hint-shadow",
+  ]) {
+    assert.equal(CSS.split(token + ":").length - 1, 2, `${token} 必须亮/暗各一份`);
   }
 });

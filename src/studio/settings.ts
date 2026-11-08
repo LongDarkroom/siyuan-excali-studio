@@ -35,17 +35,26 @@ export function normalizeDirRef(dir: string): string {
  * 改一次所有白板共用；每页的出场方式另有画框元数据（见 presentation-plan）。
  */
 export type PresentationSettings = {
-  /** 幕布：放映时压暗画框以外的区域 */
+  /**
+   * 遮罩：放映时用**画布底色**盖住画框以外的内容（不是黑幕）。
+   * 键名沿用历史的 `scrim`——老 data.json 里已是 true 的用户无需迁移，
+   * 语义从「压暗」改成「同底色遮罩」，观感更接近 Excalidraw+ 的整页放映。
+   */
   scrim: boolean;
+  /**
+   * 第八十轮：放映时隐藏网格。网格是「编辑辅助」不是内容，放映默认应该干净；
+   * 进片场时关掉，退出无条件按进片场前的值还原（这一项不进 scene，不标脏）。
+   */
+  hideGrid: boolean;
   /** 默认逐条出场（页内条目按阅读顺序一条条出现） */
   reveal: boolean;
   /** 打字机：文字逐字出现 */
   typewriter: boolean;
-  /** 打字光标（跟在正在打的字后面闪） */
+  /** 打字光标（跟在正在打的字后面闪）。开关已从设置面板撤掉，保留键位给旧数据 */
   cursor: boolean;
-  /** 每个字之间的毫秒数 */
+  /** 每个字之间的毫秒数。速度滑杆已撤掉，保留键位给旧数据 */
   speed: number;
-  /** 镜头留白（0.5~1：画框在视口里占的比例） */
+  /** 镜头留白（0.5~1：画框在视口里占的比例）。滑杆已撤掉，保留键位给旧数据 */
   fit: number;
   /** 自动前进秒数（0 = 关） */
   autoAdvance: number;
@@ -63,6 +72,7 @@ export type PresentationSettings = {
 
 export const DEFAULT_PRESENTATION: PresentationSettings = {
   scrim: true,
+  hideGrid: true,
   reveal: true,
   // 打字机默认关：它进场时会先把文字清空再逐字打，一旦 rAF 中途被打断就容易留下
   // 半截或空文，用户体感就是「文字不显示」。作为可开关的特效留在齿轮里更稳妥。
@@ -77,6 +87,12 @@ export const DEFAULT_PRESENTATION: PresentationSettings = {
   // 方向键沿边导航默认关：没画箭头连线时它没有意义，开了反而让人以为方向键失灵
   directional: false,
 };
+
+/**
+ * 2026-11-08：取消「一键预设」。
+ * 放映偏好已收敛为 7 个开关，逐项调回来只要点七下；预设反而多两排按钮，
+ * 且对已落盘的旧 data.json 来说，改代码默认值本来也救不了老用户。
+ */
 
 function boolOr(v: unknown, fallback: boolean): boolean {
   return typeof v === "boolean" ? v : fallback;
@@ -93,6 +109,7 @@ export function normalizePresentationSettings(raw: unknown): PresentationSetting
   const d = DEFAULT_PRESENTATION;
   return {
     scrim: boolOr(r.scrim, d.scrim),
+    hideGrid: boolOr(r.hideGrid, d.hideGrid),
     reveal: boolOr(r.reveal, d.reveal),
     typewriter: boolOr(r.typewriter, d.typewriter),
     cursor: boolOr(r.cursor, d.cursor),

@@ -76,8 +76,10 @@ test("2026-10-22·Obsidian 式悬浮提示：双语药丸挂每枚按钮，替�
   // ④ 原生 title 不再出现在竖条按钮上（会与药丸双弹；色板 swatch 的那几个除外）
   const btnZone = RAIL.slice(RAIL.indexOf("exs-script-rail__btn"), RAIL.indexOf("exs-script-rail__menu"));
   assert.equal(/title=\{/.test(btnZone), false, "竖条按钮区不许残留原生 title");
-  // ⑤ 样式面：深色药丸、fixed、z-index 9（压过画布 UI、低于思源 Dialog）、不吃指针
+  // ⑤ 样式面：菜单同源实底（亮/暗各一套）、fixed、z-index 9（压过画布 UI、低于思源 Dialog）、不吃指针
   assert.match(CSS, /\.exs-rail-tip \{/, "药丸样式存在");
+  assert.match(CSS, /\.exs-rail-tip \{[^}]*background: var\(--exs-menu-solid\)/, "药丸跟主题走，不再硬编码深色");
+  assert.match(CSS, /\.exs-rail-tip \{[^}]*color: var\(--exs-text\)/, "文字与菜单同 token");
   assert.match(CSS, /\.exs-rail-tip \{[^}]*position: fixed/, "fixed 定位");
   assert.match(CSS, /\.exs-rail-tip \{[^}]*z-index: 9/, "层级 9：高于 vendor sidebar(5)、低于思源 Dialog(≥11)");
   assert.match(CSS, /\.exs-rail-tip \{[^}]*pointer-events: none/, "提示永不抢画布指针");
@@ -143,16 +145,17 @@ test("宿主：钉子清单落 pinnedActions 并广播；面板点动作 = 对�
   assert.match(INDEX, /showMessage\(t\("先打开一块白板，再往里插卡片"\)\)/, "没有活动画布时提示，不静默");
 });
 
-test("拓展功能面板：内置动作排顶部不设组题（标题即组题），脚本列表前有「脚本库」组题", () => {
-  // 第五十一轮拆两类：面板标题 =「拓展功能」，动作区不再包组题，脚本列表前加「脚本库」
-  assert.match(INDEX, /const actionBlock = RAIL_ACTIONS\.map\(actionRow\)\.join\(""\);/, "动作区裸行拼接（无组题）");
-  assert.equal(INDEX.includes('t("画布动作")'), false, "「画布动作」组题退役（标题即组题）");
+test("拓展功能面板：动作/脚本两组各有组题，说明折叠在底部", () => {
+  // 第五十四轮：卡片列表化——两组都在组题下，使用说明沉底折叠
+  assert.match(INDEX, /const actionBlock = RAIL_ACTIONS\.map\(actionRow\)\.join\(""\);/, "动作区裸行拼接（组题在容器层）");
+  assert.match(INDEX, /groupHead\(\s*t\("画布动作"\),\s*RAIL_ACTIONS\.length/, "「画布动作」组题带数量");
   assert.match(INDEX, /title: t\("拓展功能"\)/, "面板标题改「拓展功能」");
   assert.match(INDEX, /dialog\.element\.classList\.add\("exs-picker-dialog"\)/, "Apple 化 scope 类挂 Dialog 根");
-  assert.match(INDEX, /exs-picker__group">\$\{t\(\s*"脚本库",/, "脚本列表前的「脚本库」组题");
+  assert.match(INDEX, /groupHead\(\s*t\("脚本库"\),\s*scripts\.length/, "脚本列表前的「脚本库」组题带数量");
   assert.match(INDEX, /data-rail-action="\$\{escapeAttr\(/, "行标自己的 id");
   assert.match(INDEX, /const pinnedActions = new Set<string>\(this\.settings\.pinnedActions\);/, "行首固定态实时读设置");
-  assert.match(INDEX, /outdatedBar\}\$\{actionBlock\}\$\{hint\}/, "小节排在说明块之上（动作是入口，说明是脚注）");
+  assert.match(INDEX, /\$\{guide\}<\/div>/, "使用说明折叠条排在两组之后");
+  assert.match(INDEX, /<details class="exs-picker__guide">/, "说明是 details，默认收起");
   // 分流顺序是硬约束：动作行照抄了脚本行的类名，但没有 data-idx
   const clickBody = INDEX.slice(INDEX.indexOf('dialog.element.addEventListener("click", (e)'), INDEX.indexOf('dialog.element.addEventListener("contextmenu"'));
   assert.ok(clickBody.indexOf("[data-rail-action]") > -1 && clickBody.indexOf('closest?.(".exs-script-item")') > clickBody.indexOf("[data-rail-action]"), "点击：动作分支必须先于脚本分支");
@@ -164,7 +167,18 @@ test("拓展功能面板：内置动作排顶部不设组题（标题即组题�
   assert.equal((INDEX.match(/toggle\("exs-script-item--pinned"/g) ?? []).length, 1, "固定态 paint 只有一份，抄第二遍迟早分叉");
   assert.match(CSS, /\.exs-picker__group \{/, "分组标题有样式");
   assert.match(CSS, /\.exs-picker-dialog \.b3-dialog__container \{[^}]*border-radius: 12px;/, "面板容器 Apple 圆角");
-  assert.match(CSS, /\.exs-picker-dialog \.exs-script-item__icon \{[^}]*border-radius: 6px;/, "行首图标衬底");
+  assert.match(
+    CSS,
+    /\.exs-script-item__icon \{[^}]*width: 32px;[^}]*border-radius: 9px;/,
+    "行首 32px 图标衬底（品牌紫浅底）",
+  );
+  assert.match(CSS, /\.exs-picker__guide summary \{/, "说明折叠条有样式");
+  // 第五十四轮回归：脚本行曾多打一个 </div>，把 rows/picker/弹窗祖先逐层提前闭合，
+  // 后半截卡片和说明整块甩到弹窗外。设置抽屉也必须留在卡片内（grid-column: 1/-1）。
+  assert.match(INDEX, /<\/button><\/span>\$\{settingsHtml\(s\)\}<\/div>`/, "脚本行：设置抽屉在卡片内闭合");
+  assert.equal(/<\/div>\$\{settingsHtml\(s\)\}<\/div>/.test(INDEX), false, "脚本行不许再有多余的闭合 div");
+  assert.match(CSS, /\.exs-picker-dialog \.b3-dialog__body,[\s\S]*?min-height: 0;/, "面板内容挂 __body 且可收缩");
+  assert.match(CSS, /\.exs-picker-dialog \.b3-dialog__container \{[^}]*max-height: calc\(100vh - 48px\);/, "面板高度封顶");
 });
 
 test("菜单：☰ 里的插入白板卡片撤干净，入口只剩竖条与脚本库", () => {
@@ -178,13 +192,21 @@ test("菜单：☰ 里的插入白板卡片撤干净，入口只剩竖条与脚�
 test("i18n：拓展功能词条双语齐备，中文原文即 key", () => {
   const zh = json("i18n/zh_CN.json");
   const en = json("i18n/en_US.json");
-  const keys = ["拓展功能", "拓展功能…", ...RAIL_ACTIONS.flatMap((a) => [a.title, a.desc])];
+  const keys = [
+    "拓展功能",
+    "拓展功能…",
+    "画布动作",
+    "已固定",
+    "点一条立即执行",
+    "固定后出现在画布右缘",
+    "使用说明 · 先框选再跑，或先打开文档页签",
+    ...RAIL_ACTIONS.flatMap((a) => [a.title, a.desc]),
+  ];
   for (const k of keys) {
     assert.ok(k in zh, `zh_CN 缺键：${k}`);
     assert.equal(zh[k], k, `值必须等于键：${k}`);
     assert.ok(en[k] && en[k] !== k, `en_US 该是真英文：${k}`);
   }
-  assert.equal("画布动作" in zh, false, "「画布动作」组题词条已随拆分退役");
   assert.equal("运行脚本…" in zh, false, "「运行脚本…」旧入口词条已更名退役");
   assert.equal("插入白板卡片…" in zh, false, "带省略号的旧菜单词条已随 ☰ 入口退出");
   assert.equal("插入白板卡片…" in en, false, "en_US 同样不留旧词条");

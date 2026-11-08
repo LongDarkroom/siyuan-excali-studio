@@ -56,6 +56,7 @@ test("filterBoardEntries：文件名子串、大小写不敏感、空词原样",
 
 test("board-picker：Dialog + IME 守卫 + 防抖 + 键盘导航 + 已打开角标", () => {
   assert.match(BOARD_PICKER, /new Dialog\(\{/, "用思源原生 Dialog：遮罩 / ✕ / Esc 都归它管");
+  assert.match(BOARD_PICKER, /classList\.add\("exs-board-picker-dialog"\)/, "scope 类挂 Dialog 根上（Apple UI 样式只在自家弹窗生效）");
   assert.match(BOARD_PICKER, /destroyCallback: \(\) => finish\(null\)/, "✕ / 遮罩 / Esc 关闭 = 取消");
   assert.match(BOARD_PICKER, /if \(settled\) return;/, "finish 幂等：destroyCallback 与列表点击可能同时到");
   assert.match(BOARD_PICKER, /compositionstart/, "中文 IME 组字守卫：拼音串期间不重渲染");

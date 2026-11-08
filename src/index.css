@@ -168,7 +168,20 @@ body.exs-mobile-open {
 .exs-picker {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
+  max-height: min(68vh, 620px);
+  padding: 2px;
+  margin: -2px;
+  overflow: auto;
+}
+
+.exs-picker::-webkit-scrollbar {
+  width: 6px;
+}
+
+.exs-picker::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--b3-scroll-color, rgba(0, 0, 0, 0.18));
 }
 
 /* 脚本参数输入框（inputPrompt）：number 型隐藏浏览器微调箭头——
@@ -190,10 +203,10 @@ body.exs-mobile-open {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--b3-theme-surface, rgba(0, 0, 0, 0.03));
-  border: 0.5px solid var(--b3-theme-primary, #1a8fff);
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--b3-theme-primary, #1a8fff) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--b3-theme-primary, #1a8fff) 22%, transparent);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -319,103 +332,248 @@ body.exs-mobile-open {
   background: color-mix(in srgb, var(--b3-theme-primary, #1a8fff) 12%, transparent);
 }
 
-/* 第四十一轮：脚本库里的「画布动作」小节标题（分组用，比说明块轻一档） */
+/* 分组题：标题（600）+ 数量 + 右侧说明；行之间用一个 14px 的组间距隔开 */
 .exs-picker__group {
-  margin-top: 2px;
-  font-size: 11px;
-  line-height: 1.4;
-  letter-spacing: 0.02em;
-  opacity: 0.6;
-  padding: 0 2px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 4px 0;
 }
 
-/* 第三十四轮：脚本选择器的使用说明块（常驻顶部，对标 Obsidian ea-scripts 的说明形态） */
-.exs-picker__hint {
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.04));
+.exs-picker__group-title {
   font-size: 12px;
-  line-height: 1.7;
-  opacity: 0.85;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--b3-theme-on-surface, #5f6268);
+}
+
+.exs-picker__group-count {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.5;
+}
+
+.exs-picker__group-note {
+  margin-left: auto;
+  font-size: 11.5px;
+  opacity: 0.5;
+}
+
+.exs-picker__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 使用说明：折叠条（默认收起，展开后是原说明正文） */
+.exs-picker__guide {
+  border-radius: 12px;
+  background: var(--b3-theme-surface, rgba(0, 0, 0, 0.03));
+}
+
+.exs-picker__guide summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: var(--b3-theme-on-surface, #5f6268);
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.exs-picker__guide summary::-webkit-details-marker {
+  display: none;
+}
+
+.exs-picker__guide summary:hover {
+  background: var(--b3-list-item-hover, rgba(0, 0, 0, 0.03));
+}
+
+.exs-picker__guide-ic,
+.exs-picker__guide-chev {
+  flex: none;
+  display: flex;
+  color: var(--b3-theme-on-surface-light, #909296);
+}
+
+.exs-picker__guide-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.exs-picker__guide-chev {
+  transition: transform 160ms ease;
+}
+
+.exs-picker__guide[open] .exs-picker__guide-chev {
+  transform: rotate(180deg);
+}
+
+/* 折叠条里的说明正文（原常驻说明块退役，内容原样搬进来） */
+.exs-picker__hint {
+  padding: 0 12px 12px 40px;
+  color: var(--b3-theme-on-surface-light, #909296);
+  font-size: 12px;
+  line-height: 1.75;
 }
 
 .exs-picker__hint b {
-  display: block;
-  margin-bottom: 2px;
+  color: var(--b3-theme-on-surface, #5f6268);
+  font-weight: 600;
 }
 
-/* 脚本条目的说明文字行（两行截断；无说明回落文件名 meta） */
+/* 第五十四轮：拓展功能面板——一张行卡片（32px 图标衬底 + 标题/胶囊 + 两行描述 +
+   幽灵动作键）。设置抽屉跨满整行（grid-column: 1 / -1）。 */
 .exs-script-item {
-  flex-direction: column;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  background: var(--b3-theme-background, #fff);
+  box-shadow: 0 0 0 1px var(--b3-border-color, rgba(0, 0, 0, 0.08)), 0 1px 2px rgba(0, 0, 0, 0.03);
+  cursor: pointer;
+  transition: box-shadow 140ms ease, background-color 140ms ease;
 }
 
-/* 第三十五轮：条目标题行首的脚本专属图标（内联 svg，随主题色） */
+.exs-script-item:hover {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--b3-theme-on-background, #222) 14%, transparent),
+    0 6px 18px rgba(0, 0, 0, 0.07);
+}
+
+.exs-script-item--pinned {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--exs-picker-accent, #6965db) 35%, transparent),
+    0 4px 14px color-mix(in srgb, var(--exs-picker-accent, #6965db) 10%, transparent);
+}
+
 .exs-script-item__icon {
-  display: inline-flex;
-  vertical-align: -3px;
-  margin-right: 6px;
-  opacity: 0.8;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-top: 1px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--exs-picker-accent, #6965db) 11%, transparent);
+  color: var(--exs-picker-accent, #6965db);
+}
+
+.exs-script-item__icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.exs-script-item__main {
+  min-width: 0;
+}
+
+.exs-script-item__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 18px;
+}
+
+.exs-script-item__title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--b3-theme-on-background, #222);
+}
+
+.exs-script-item__meta {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+  opacity: 0.5;
 }
 
 .exs-script-desc {
-  overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 3px;
   font-size: 12px;
-  line-height: 1.5;
-  opacity: 0.66;
+  line-height: 1.6;
+  opacity: 0.68;
 }
 
-/* 第三十四轮：脚本条目的「已固定」圆点（右键/行尾按钮可固定到右缘侧边栏） */
+/* 「已固定」与「打开时自动运行」都是 18px 小胶囊：固定态用品牌紫，自动运行走中性色 */
+.exs-script-pin,
+.exs-script-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
 .exs-script-pin {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--b3-theme-primary, #1a8fff);
-  display: inline-block;
-  vertical-align: middle;
+  background: color-mix(in srgb, var(--exs-picker-accent, #6965db) 12%, transparent);
+  color: var(--exs-picker-accent, #6965db);
+}
+
+.exs-script-badge {
+  background: color-mix(in srgb, var(--b3-theme-on-background, #222) 7%, transparent);
+  color: var(--b3-theme-on-surface, #5f6268);
 }
 
 /* P2 脚本库：行尾动作按钮组（固定开关 + 设置）+ 行内设置抽屉。
    抽屉是行内展开不是新 Dialog——思源每层 Dialog 都有遮罩，会叠层变暗。 */
-.exs-script-item__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.exs-script-item__head .b3-list-item__text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
 .exs-script-item__actions {
   flex: none;
   display: flex;
+  align-items: center;
   gap: 2px;
+  margin-top: -1px;
 }
 
 .exs-script-item__actions .b3-button {
-  padding: 4px 5px;
-  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--b3-theme-on-surface-light, #909296);
   line-height: 1;
 }
 
+.exs-script-item__actions .b3-button:hover {
+  background: var(--b3-list-item-hover, rgba(0, 0, 0, 0.05));
+  color: var(--b3-theme-on-surface, #5f6268);
+}
+
 .exs-script-item__actions .b3-button svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .exs-script-item__actions .exs-script-item__btn--on {
-  color: var(--b3-theme-primary, #1a8fff);
-  background: var(--b3-theme-primary-light, rgba(26, 143, 255, 0.12));
+  color: var(--exs-picker-accent, #6965db);
+  background: color-mix(in srgb, var(--exs-picker-accent, #6965db) 12%, transparent);
 }
 
 .exs-script-settings {
-  margin-top: 8px;
+  grid-column: 1 / -1;
+  margin-top: 2px;
   padding: 10px 12px;
   border-radius: 8px;
   background: var(--b3-theme-surface, rgba(0, 0, 0, 0.03));
@@ -617,20 +775,25 @@ body.exs-mobile-open {
    （vendor sidebar 5）、低于思源 Dialog（≥11，竖条被让位时提示同步收，不会撞上）。
    pointer-events:none——提示永不抢画布指针；translate(-100%,-50%) 让药丸右缘
    贴近按钮左缘（style.left 已预留 10px 间距），窄画布时由 JS 实测宽度往内夹。 */
+/* 2026-11-08：药丸从硬编码深色改成与插件菜单同源的实底——
+   亮色片场里不再吊一块黑，暗色下降一档读起来也不刺 */
 .exs-rail-tip {
   position: fixed;
   z-index: 9;
   transform: translate(-100%, -50%);
   max-width: 62vw;
-  padding: 4px 9px;
-  border-radius: 6px;
-  background: rgba(24, 24, 27, 0.94);
-  color: #fff;
-  font-size: 12px;
+  padding: 5px 10px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 8px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
+  font-size: 11.5px;
+  font-weight: 500;
   line-height: 1.5;
+  letter-spacing: -0.01em;
   white-space: nowrap;
   pointer-events: none;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--exs-menu-shadow);
   animation: exs-rail-tip-in 100ms ease;
 }
 
@@ -1233,69 +1396,249 @@ body.exs-mobile-open {
   }
 }
 
-/* 命名对话框（新建/重命名共用 promptFileName，挂在思源 Dialog 内）。
-   Apple UI 化：容器圆角 + 层叠阴影 + 素/实心主次按钮；「位置」行做成浅底信息条，
-   贴边根因是思源 content 内边距随主题浮动，这里对 content 显式给死。 */
-.exs-name-dialog .b3-dialog__container {
-  overflow: hidden;
-  border-radius: 12px;
-  box-shadow: 0 0 0 1px var(--b3-border-color, rgba(0, 0, 0, 0.1)), 0 2px 8px rgba(0, 0, 0, 0.08),
-    0 12px 40px rgba(0, 0, 0, 0.2);
+/* 2026-11-08 第八十一轮：思源 Dialog 弹窗统一 Apple UI（命名对话框 + 打开白板）。
+   两个弹窗都挂在 body 层，拿不到 .exs-root 的 --exs-*，品牌紫在这里按明暗显式给。
+   思源现行内容挂 __body（老版本是 __content），两代选择器都收——只写 __content
+   就是上版「输入框和按钮贴着弹窗边」的根因。 */
+.exs-name-dialog,
+.exs-board-picker-dialog {
+  --exs-dlg-accent: #6965db;
+  --exs-dlg-accent-hover: #5a56d1;
+  --exs-dlg-on-accent: #ffffff;
+  --exs-dlg-accent-soft: rgba(105, 101, 219, 0.12);
+  --exs-dlg-accent-line: rgba(105, 101, 219, 0.3);
+  --exs-dlg-focus: rgba(105, 101, 219, 0.25);
+  --exs-dlg-line: var(--b3-border-color, rgba(0, 0, 0, 0.09));
+  --exs-dlg-ink: var(--b3-theme-on-background, #22252a);
+  --exs-dlg-ink-2: var(--b3-theme-on-surface, #5f6268);
+  --exs-dlg-surface: var(--b3-theme-surface, rgba(0, 0, 0, 0.04));
+  --exs-dlg-hover: var(--b3-theme-background-light, rgba(0, 0, 0, 0.05));
+  --exs-dlg-field: var(--b3-theme-background, #ffffff);
 }
-.exs-name-dialog .b3-dialog__header {
-  padding: 16px 24px 0;
+
+html[data-theme-mode="dark"] .exs-name-dialog,
+html[data-theme-mode="dark"] .exs-board-picker-dialog {
+  --exs-dlg-accent: #a8a5ff;
+  --exs-dlg-accent-hover: #bab7ff;
+  --exs-dlg-on-accent: #1b1b1f;
+  --exs-dlg-accent-soft: rgba(168, 165, 255, 0.18);
+  --exs-dlg-accent-line: rgba(168, 165, 255, 0.36);
+  --exs-dlg-focus: rgba(168, 165, 255, 0.32);
+  --exs-dlg-hover: rgba(255, 255, 255, 0.06);
+  --exs-dlg-field: rgba(255, 255, 255, 0.04);
+}
+
+.exs-name-dialog .b3-dialog__container,
+.exs-board-picker-dialog .b3-dialog__container {
+  overflow: hidden;
+  border: 0;
+  border-radius: 13px;
+  box-shadow: 0 0 0 0.5px var(--exs-dlg-line), 0 3px 10px rgba(0, 0, 0, 0.06),
+    0 18px 48px rgba(0, 0, 0, 0.2);
+}
+
+/* 思源 header 自带一条分隔线；Apple 观感不要它，标题下直接留白 */
+.exs-name-dialog .b3-dialog__header,
+.exs-board-picker-dialog .b3-dialog__header {
+  padding: 16px 22px 0;
+  border-bottom: 0;
   font-size: 15px;
   font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--exs-dlg-ink);
 }
-.exs-name-dialog .b3-dialog__content {
-  padding: 14px 24px 20px;
+
+.exs-name-dialog .b3-dialog__body,
+.exs-name-dialog .b3-dialog__content,
+.exs-board-picker-dialog .b3-dialog__body,
+.exs-board-picker-dialog .b3-dialog__content {
+  padding: 14px 22px 20px;
 }
-.exs-name-dialog .exs-name-input {
-  border-radius: 8px;
-  padding: 7px 11px;
-  font-size: 14px;
+
+.exs-name-dialog .exs-picker {
+  gap: 10px;
 }
+
+.exs-name-dialog .exs-name-input,
+.exs-board-picker-dialog .exs-picker__search {
+  box-sizing: border-box;
+  width: 100%;
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--exs-dlg-line);
+  border-radius: 9px;
+  background: var(--exs-dlg-surface);
+  color: var(--exs-dlg-ink);
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 32px;
+  box-shadow: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.exs-name-dialog .exs-name-input:focus,
+.exs-board-picker-dialog .exs-picker__search:focus {
+  border-color: var(--exs-dlg-accent);
+  background: var(--exs-dlg-field);
+  box-shadow: 0 0 0 3px var(--exs-dlg-focus);
+  outline: none;
+}
+
 .exs-name-tip {
   display: flex;
   align-items: center;
-  padding: 7px 10px;
-  border-radius: 8px;
-  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.04));
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: var(--exs-dlg-hover);
   font-size: 12px;
-  color: var(--b3-theme-on-surface-light, #888);
+  color: var(--exs-dlg-ink-2);
 }
+
 .exs-name-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
 }
-.exs-name-dialog .exs-name-cancel {
-  padding: 5px 14px;
-  border: none;
-  border-radius: 8px;
-  box-shadow: none;
-  background: transparent;
-  color: var(--b3-theme-on-surface, #444);
-}
-.exs-name-dialog .exs-name-cancel:hover {
-  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.06));
-}
+
+.exs-name-dialog .exs-name-cancel,
 .exs-name-dialog .exs-name-ok {
-  padding: 5px 18px;
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 16px;
   border: none;
   border-radius: 8px;
   box-shadow: none;
-  background: var(--b3-theme-primary, #1a8fff);
-  color: #fff;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 30px;
 }
+
+.exs-name-dialog .exs-name-cancel {
+  background: transparent;
+  color: var(--exs-dlg-ink-2);
+  font-weight: 500;
+}
+
+.exs-name-dialog .exs-name-cancel:hover {
+  background: var(--exs-dlg-hover);
+  color: var(--exs-dlg-ink);
+}
+
+.exs-name-dialog .exs-name-ok {
+  padding: 0 18px;
+  background: var(--exs-dlg-accent);
+  color: var(--exs-dlg-on-accent);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+}
+
 .exs-name-dialog .exs-name-ok:hover {
-  filter: brightness(0.94);
+  background: var(--exs-dlg-accent-hover);
+}
+
+.exs-name-dialog .exs-name-ok:focus-visible,
+.exs-name-dialog .exs-name-cancel:focus-visible {
+  outline: 2px solid var(--exs-dlg-accent);
+  outline-offset: 2px;
+}
+
+/* 「打开白板…」：搜索常驻、列表自己滚（外框不再跟着滚），行做成 Apple 列表行 */
+.exs-board-picker-dialog .b3-dialog__container {
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+}
+
+.exs-board-picker-dialog .b3-dialog__body,
+.exs-board-picker-dialog .b3-dialog__content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.exs-board-picker-dialog .exs-picker {
+  gap: 10px;
+  min-height: 0;
+  max-height: min(64vh, 560px);
+  overflow: hidden;
+}
+
+.exs-board-picker-dialog .exs-picker__list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  padding: 4px;
+  overflow: auto;
+}
+
+.exs-board-picker-dialog .exs-picker__item {
+  height: 42px;
+  padding: 0 10px;
+  border-radius: 9px;
+  color: var(--exs-dlg-ink);
+  font-size: 13.5px;
+}
+
+.exs-board-picker-dialog .exs-picker__item:hover {
+  background: var(--exs-dlg-hover);
+}
+
+.exs-board-picker-dialog .exs-picker__item.b3-list-item--focus {
+  background: var(--exs-dlg-accent-soft);
+  color: var(--exs-dlg-ink);
+  box-shadow: inset 0 0 0 1px var(--exs-dlg-accent-line);
+}
+
+.exs-board-picker-dialog .exs-picker__icon {
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  border-radius: 7px;
+  background: var(--exs-dlg-hover);
+  color: var(--exs-dlg-ink-2);
+}
+
+.exs-board-picker-dialog .exs-picker__item.b3-list-item--focus .exs-picker__icon {
+  background: transparent;
+  color: var(--exs-dlg-accent);
+}
+
+.exs-board-picker-dialog .exs-picker__item .b3-list-item__meta {
+  color: var(--exs-dlg-ink-2);
+  font-size: 11.5px;
+  opacity: 0.8;
+}
+
+.exs-board-picker-dialog .exs-picker__badge {
+  margin-right: 7px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--exs-dlg-accent);
+  background: var(--exs-dlg-accent-soft);
+}
+
+.exs-board-picker-dialog .exs-picker__empty {
+  min-height: 160px;
+  color: var(--exs-dlg-ink-2);
+  font-size: 13px;
 }
 
 /* 第五十一轮：拓展功能面板（原「脚本库」）Apple UI 化——scope 挂 .exs-picker-dialog。
-   容器/标题/内容边距与命名对话框同口径；组题小字、行圆角、图标衬底统一。 */
+   第五十四轮：内容改成卡片列表，品牌紫进面板变量（明暗两档显式给）。 */
+.exs-picker-dialog {
+  --exs-picker-accent: #6965db;
+}
+html[data-theme-mode="dark"] .exs-picker-dialog {
+  --exs-picker-accent: #a8a5ff;
+}
 .exs-picker-dialog .b3-dialog__container {
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   overflow: hidden;
   border-radius: 12px;
   box-shadow: 0 0 0 1px var(--b3-border-color, rgba(0, 0, 0, 0.1)), 0 2px 8px rgba(0, 0, 0, 0.08),
@@ -1306,50 +1649,17 @@ body.exs-mobile-open {
   font-size: 15px;
   font-weight: 600;
 }
+/* 思源现行内容直接挂 __body（老版本才是 __content），两代选择器都收；
+   __body 是 flex 列，必须 min-height:0，否则超长脚本列表会把弹窗撑出屏幕。 */
+.exs-picker-dialog .b3-dialog__body,
 .exs-picker-dialog .b3-dialog__content {
+  flex: 1;
+  min-height: 0;
   padding: 14px 24px 20px;
+  overflow: hidden;
 }
 .exs-picker-dialog .exs-picker {
-  gap: 10px;
-}
-.exs-picker-dialog .exs-picker__group {
-  margin: 4px 2px 0;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  opacity: 0.55;
-}
-.exs-picker-dialog .exs-board-list {
-  border-radius: 10px;
-  padding: 4px;
-}
-.exs-picker-dialog .exs-board-list .b3-list-item {
-  border-radius: 8px;
-}
-.exs-picker-dialog .exs-script-item__icon {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.04));
-  align-items: center;
-  justify-content: center;
-  margin-right: 8px;
-  vertical-align: middle;
-  opacity: 1;
-}
-.exs-picker-dialog .exs-script-item__icon svg {
-  width: 14px;
-  height: 14px;
-}
-.exs-picker-dialog .exs-picker__hint {
-  border-radius: 8px;
-  opacity: 1;
-  color: var(--b3-theme-on-surface-light, #888);
-}
-/* .exs-board-list 是脚本选择器（openScriptPicker）的列表容器；旧的 .exs-board-item
-   随「打开白板…」重写成 .exs-picker__item 一起删了（第十三轮）。 */
-.exs-board-list {
-  max-height: 320px;
-  overflow: auto;
+  min-height: 0;
 }
 
 /* 2026-11-06：版本更新弹窗（双栏全历史）。
@@ -2057,9 +2367,12 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
   --exs-accent-on: #ffffff;
   --exs-focus-ring: rgba(105, 101, 219, 0.45);
 
-  --exs-menu-solid: #fbfbfd;
+  /* 2026-11-08 菜单质感轮：纯白面板 + 三层阴影（贴边 0.5px / 近影 3px / 远影 44px）。
+     近白 #fbfbfd 与画布 #f6f6f4 只差一点，浅灰画布上浮不起来。 */
+  --exs-menu-solid: #ffffff;
   --exs-menu-border: rgba(0, 0, 0, 0.09);
-  --exs-menu-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06);
+  --exs-menu-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 3px 8px rgba(0, 0, 0, 0.06),
+    0 18px 44px rgba(0, 0, 0, 0.18);
   --exs-text: #1d1d1f;
   --exs-text-secondary: rgba(60, 60, 67, 0.62);
   --exs-hover: rgba(0, 0, 0, 0.055);
@@ -2067,6 +2380,15 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
   --exs-separator: rgba(0, 0, 0, 0.09);
   --exs-danger: #d70015;
   --exs-danger-container: rgba(255, 59, 48, 0.1);
+
+  /* 放映 HUD 专用：页码/终止要更高的文字对比度，提示是独立玻璃 */
+  --exs-hud-accent-text: #4b45d6;
+  --exs-hud-accent-ring: rgba(75, 69, 214, 0.22);
+  --exs-hud-danger-text: #c01a1a;
+  --exs-hud-danger-container-hover: rgba(255, 59, 48, 0.18);
+  --exs-hud-hint-bg: rgba(255, 255, 255, 0.84);
+  --exs-hud-hint-border: rgba(0, 0, 0, 0.08);
+  --exs-hud-hint-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
 
   /* 第三十四轮·液态玻璃（脚本侧边栏）：亮色一套 */
   --exs-glass-bg: rgba(255, 255, 255, 0.66);
@@ -2089,7 +2411,7 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
     0 7px 14px 0 rgba(0, 0, 0, 0.05);
   --exs-pill-tile: #ececf4;
   --exs-pill-tile-hover: #e2e2ec;
-  --exs-pill-radius: 12px;
+  --exs-pill-radius: 10px;
 }
 
 .exs-root[data-theme-mode="dark"] {
@@ -2103,7 +2425,8 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
 
   --exs-menu-solid: #2c2c2e;
   --exs-menu-border: rgba(255, 255, 255, 0.12);
-  --exs-menu-shadow: 0 12px 32px rgba(0, 0, 0, 0.42), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --exs-menu-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.5), 0 3px 8px rgba(0, 0, 0, 0.4),
+    0 18px 44px rgba(0, 0, 0, 0.55);
   --exs-text: #f5f5f7;
   --exs-text-secondary: rgba(235, 235, 245, 0.6);
   --exs-hover: rgba(255, 255, 255, 0.08);
@@ -2111,6 +2434,15 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
   --exs-separator: rgba(255, 255, 255, 0.1);
   --exs-danger: #ff6961;
   --exs-danger-container: rgba(255, 69, 58, 0.16);
+
+  /* 放映 HUD 专用：深色页码用更亮的紫，终止沿用旧版的浅红 */
+  --exs-hud-accent-text: #c9c6ff;
+  --exs-hud-accent-ring: rgba(201, 198, 255, 0.22);
+  --exs-hud-danger-text: #ff8a84;
+  --exs-hud-danger-container-hover: rgba(255, 69, 58, 0.26);
+  --exs-hud-hint-bg: rgba(35, 35, 41, 0.78);
+  --exs-hud-hint-border: rgba(255, 255, 255, 0.12);
+  --exs-hud-hint-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 
   /* 第三十四轮·液态玻璃（脚本侧边栏）：暗色一套 */
   --exs-glass-bg: rgba(40, 40, 43, 0.62);
@@ -2127,7 +2459,7 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
     0 7px 14px 0 rgba(0, 0, 0, 0.25);
   --exs-pill-tile: hsl(240, 8%, 20%);
   --exs-pill-tile-hover: hsl(240, 8%, 26%);
-  --exs-pill-radius: 12px;
+  --exs-pill-radius: 10px;
 }
 
 /* 焦点环：深色主题在 .theme--dark 上会重设该变量，两套都要盖 */
@@ -2152,7 +2484,6 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
   box-shadow: var(--exs-menu-shadow);
   color: var(--exs-text);
   font-family: var(--exs-font-ui);
-  -webkit-font-smoothing: antialiased;
   animation: exs-menu-appear 120ms ease-out;
 }
 
@@ -2161,13 +2492,14 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
   min-width: 0;
   height: 36px;
   padding: 0 10px 0 12px;
-  border-radius: 6px;
+  border-radius: 8px;
   background-color: transparent;
   color: var(--exs-text);
   font-family: var(--exs-font-ui);
   font-size: 15px;
+  /* 2026-11-08：字重回到常规 400，只保留字距 0 与抽屉统一；500 读着发沉 */
   font-weight: 400;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   transition: background-color 120ms ease, color 120ms ease;
 }
 
@@ -2180,6 +2512,7 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
   color: var(--exs-text-secondary);
   font-family: var(--exs-font-ui);
   font-size: 13px;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
   transition: color 120ms ease;
@@ -2226,7 +2559,7 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
 }
 
 .exs-root .excalidraw .context-menu-item-separator {
-  margin: 4px 8px;
+  margin: 6px 12px;
   border: none;
   border-top: 0.5px solid var(--exs-separator);
 }
@@ -2248,7 +2581,6 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
   box-shadow: var(--exs-menu-shadow);
   color: var(--exs-text);
   font-family: var(--exs-font-ui);
-  -webkit-font-smoothing: antialiased;
   animation: exs-menu-appear 120ms ease-out;
 }
 
@@ -2264,11 +2596,12 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
   margin: 1px 4px;
   padding: 0 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--exs-text);
   font-family: var(--exs-font-ui);
   font-size: 15px;
-  letter-spacing: -0.01em;
+  font-weight: 400;
+  letter-spacing: 0;
   transition: background-color 120ms ease, color 120ms ease;
 }
 
@@ -2283,13 +2616,17 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
   height: 36px;
   margin: 1px 4px;
   width: calc(100% - 8px);
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
 .exs-root .excalidraw .dropdown-menu .dropdown-menu-item-base {
   font-family: var(--exs-font-ui);
   font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0;
   color: var(--exs-text);
 }
 
@@ -2302,6 +2639,7 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
   color: var(--exs-text-secondary);
   font-family: var(--exs-font-ui);
   font-size: 13px;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2335,7 +2673,7 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
    只能按「容器直下、无 class 的 div」命中，并用 !important 压内联值 */
 .exs-root .excalidraw .dropdown-menu-container > div:not([class]) {
   height: 0 !important;
-  margin: 5px 8px !important;
+  margin: 6px 10px !important;
   background: transparent !important;
   border-top: 0.5px solid var(--exs-separator);
 }
@@ -2646,8 +2984,13 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 }
 
 /* ☰ 帽 = wrapper 出白 pill 左帽（描边/阴影/3px 内衬），trigger 缩成内嵌灰块
-   （fork filledButtonOnCanvas：bg=--color-surface-low + 白环，这里白环并入帽底） */
+   （fork filledButtonOnCanvas：bg=--color-surface-low + 白环，这里白环并入帽底）。
+   2026-11-08：帽与右侧 pill 明确同高——旧写法帽没定高、bar 又按 content-box 算，
+   实际一个 44 一个 50，接缝处有 3px 台阶。现在两边都 border-box 40px（32 键 + 3×2
+   内衬 + 1×2 描边）。 */
 .exs-root .excalidraw .App-menu_top__left > div:first-child {
+  box-sizing: border-box;
+  height: calc(2rem + 8px);
   padding: 3px;
   border: 1px solid var(--exs-pill-border);
   border-right: none;
@@ -2657,6 +3000,8 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 }
 
 .exs-root .excalidraw .main-menu-trigger {
+  width: 2rem;
+  height: 2rem;
   border: none;
   border-radius: 8px;
   background: var(--exs-pill-tile);
@@ -2674,6 +3019,26 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   margin-top: 0;
 }
 
+/* 小啾啾：只给 ☰ 这一枚菜单，指向下方的灰 ☰ 块。挂在 .dropdown-menu 包装层上
+   （.dropdown-menu-container 是 Island，自带 overflow-y:auto，尾巴放进去会被裁）。
+   菱形底 + 右下描边 = 两条斜边，与菜单底边无缝接上；z-index 压过容器内联的 2。 */
+.exs-root .excalidraw .App-menu_top__left > div:first-child .dropdown-menu::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  bottom: -6px;
+  z-index: 3;
+  width: 12px;
+  height: 12px;
+  border-right: 1px solid var(--exs-menu-border);
+  border-bottom: 1px solid var(--exs-menu-border);
+  border-bottom-right-radius: 2px;
+  background: var(--exs-menu-solid);
+  transform: rotate(45deg);
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.05));
+  pointer-events: none;
+}
+
 /* vendor footer 左列退役：zoom/undo/redo 全部收进自家底栏 */
 .exs-root .excalidraw .layer-ui__wrapper__footer-left {
   display: none !important;
@@ -2689,7 +3054,8 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
    底对齐排一行），主 pill 宽度伸缩时 zoom 自然被推走/靠拢 */
 .exs-root .exs-bottom-dock {
   position: absolute;
-  left: calc(1rem + 2.25rem + 7px);
+  /* 帽宽 = 2rem 键 + 3px×2 内衬 + 1px×2 描边 = 2.5rem */
+  left: calc(1rem + 2.5rem);
   bottom: 1rem;
   z-index: 8;
   display: flex;
@@ -2697,13 +3063,17 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   gap: 8px;
 }
 
-/* 主 pill：bar 本体就是右半 pill——左缘开口接 ☰ 帽，右边自带圆角与描边 */
+/* 主 pill：bar 本体就是右半 pill——左缘开口接 ☰ 帽，右边自带圆角与描边。
+   clip-path 只裁左缘：bar 自己的阴影会越过接缝盖到帽上（肉眼一条灰竖带），
+   左右两半各自投影必然出缝；裁掉内侧、留下外侧就是一条连续阴影。 */
 .exs-root .exs-bottom-bar {
   display: flex;
   align-items: center;
-  height: calc(2.25rem + 6px);
+  box-sizing: border-box;
+  height: calc(2rem + 8px);
   padding: 3px;
   overflow: hidden;
+  clip-path: inset(-40px -40px -40px 0);
   border: 1px solid var(--exs-pill-border);
   border-left: none;
   border-radius: 0 var(--exs-pill-radius) var(--exs-pill-radius) 0;
@@ -2722,7 +3092,7 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 }
 
 .exs-root.exs-selection .exs-sel-group {
-  max-width: 6.75rem; /* 3 键 × 2.25rem */
+  max-width: 6rem; /* 3 键 × 2rem */
   opacity: 1;
 }
 
@@ -2732,8 +3102,8 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2rem;
+  height: 2rem;
   padding: 0;
   border: none;
   border-radius: 8px;
@@ -2758,7 +3128,8 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 .exs-root .exs-zoom-pill {
   display: flex;
   align-items: center;
-  height: calc(2.25rem + 6px);
+  box-sizing: border-box;
+  height: calc(2rem + 8px);
   padding: 3px;
   overflow: hidden;
   border: 1px solid var(--exs-pill-border);
@@ -2962,16 +3333,17 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 
 .exs-present-drawer {
   position: absolute;
-  top: 52px;
-  right: 10px;
-  bottom: 12px;
-  /* 可拖动：默认仍钉在右缘占满高度（bottom 定位），一旦被拖动就由内联样式接管
-     left/top 并把 right/bottom 置auto，此时靠 max-height 收住，别再拉满整列 */
+  /* 默认居中浮窗：打开演示抽屉不该先把画布右缘占掉；拖过就由内联 left/top 接管 */
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  /* 拖动后由内联样式接管 left/top 并把 right/bottom 置auto，此时靠 max-height 收住 */
   max-height: calc(100% - 64px);
   z-index: 8;
   display: flex;
   flex-direction: column;
-  width: 268px;
+  /* 第八十一轮：窄长条改成双列浏览窗，一屏能看全整场片单 */
+  width: 560px;
   max-width: calc(100% - 20px);
   border-radius: 16px;
   background: var(--exs-glass-bg);
@@ -2987,6 +3359,11 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   animation: exs-present-in 180ms ease-out;
 }
 
+/* 居中态：位移动画要带上 -50% 的基准，否则进场先跳到未居中的位置再滑回来 */
+.exs-present-drawer--center {
+  animation-name: exs-present-in-center;
+}
+
 /* 拖动中：跟手、不要动画插值、提亮一点阴影表示「拎着」 */
 .exs-present-drawer--dragging {
   animation: none;
@@ -2998,6 +3375,13 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   from {
     opacity: 0;
     transform: translateX(12px);
+  }
+}
+
+@keyframes exs-present-in-center {
+  from {
+    opacity: 0;
+    transform: translate(calc(-50% + 12px), -50%);
   }
 }
 
@@ -3027,8 +3411,12 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 
 .exs-present-drawer__meta {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
   font-size: 11px;
   color: var(--exs-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .exs-present-close {
@@ -3055,81 +3443,207 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 .exs-present-drawer__body {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 0 8px 4px;
-  scrollbar-width: thin;
+  /* 滚动条由 .exs-present-scroll 藏掉；这里只管内边距与裁切 */
+  padding: 0 8px 6px;
 }
 
 .exs-present-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+  /* 双列网格：宽窗口两列、画布窄时自动退回一列 */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 2px 4px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.exs-present-row {
+/* 第八十轮：每页一张缩略图卡片（对标 Excalidraw+ 的 Slides 面板）
+   第八十一轮：左边多一根拖拽把手，卡片本体缩进一列 */
+.exs-present-card {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 2px;
-  border-radius: 9px;
-  transition: background-color 120ms ease;
+  padding: 4px 6px 4px 2px;
+  border-radius: 12px;
+  transition: background-color 120ms ease, opacity 120ms ease, box-shadow 120ms ease;
 }
 
-.exs-present-row:hover {
+.exs-present-card:hover {
   background: var(--exs-hover);
 }
 
-.exs-present-row--active {
+.exs-present-card--active {
   background: var(--exs-accent-subtle);
 }
 
-.exs-present-row--off .exs-present-row__name,
-.exs-present-row--off .exs-present-row__no {
-  opacity: 0.45;
+/* 拖动中：原位留一个淡影，告诉用户「它被拎起来了」 */
+.exs-present-card--dragging {
+  opacity: 0.4;
 }
 
-.exs-present-row__main {
-  flex: 1;
-  min-width: 0;
+/* 松手就落在这张卡的位置：整块高亮 + 描边，比一条插入线在双列里更好读 */
+.exs-present-card--drop {
+  background: var(--exs-accent-subtle);
+  box-shadow: inset 0 0 0 1.5px var(--exs-accent);
+}
+
+.exs-present-card--off .exs-present-card__preview,
+.exs-present-card--off .exs-present-card__name {
+  opacity: 0.42;
+}
+
+/* 拖拽把手：只在 hover/聚焦时提亮，平时安静地待在左边 */
+.exs-present-grip {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 4px 6px 8px;
+  justify-content: center;
+  width: 16px;
+  padding: 0;
   border: 0;
+  border-radius: 7px;
   background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
+  color: var(--exs-text-secondary);
+  opacity: 0.5;
+  cursor: grab;
+  touch-action: none;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.exs-present-card:hover .exs-present-grip {
+  opacity: 1;
+}
+
+.exs-present-grip:hover {
+  background: var(--exs-hover-strong);
+  color: var(--exs-text);
+}
+
+.exs-present-grip:active {
+  cursor: grabbing;
+}
+
+.exs-present-grip:focus-visible {
+  outline: 2px solid var(--exs-accent);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
+.exs-present-card__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.exs-present-card__preview {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  /* 统一 16:9：不同画框比例靠 contain 留边，不再一页高一块低一块 */
+  aspect-ratio: 16 / 9;
+  height: auto;
+  padding: 0;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 9px;
+  background: var(--exs-hover);
+  overflow: hidden;
   cursor: pointer;
 }
 
-.exs-present-row__no {
-  flex: none;
-  min-width: 17px;
-  height: 17px;
-  border-radius: 5px;
-  background: var(--exs-hover-strong);
+.exs-present-card__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.exs-present-card__ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  font-size: 11px;
   color: var(--exs-text-secondary);
+}
+
+/* 空画框（新建页）：斜细纹一眼看出「这里还什么都没有」，不误以为是预览没画完 */
+.exs-present-card__blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent 0 8px,
+    var(--exs-hover-strong) 8px 9px
+  );
+  font-size: 11px;
+  color: var(--exs-text-secondary);
+}
+
+/* 序号角标：压在缩略图左上角，亮图暗图都读得清 */
+.exs-present-card__no {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  min-width: 16px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(10, 12, 16, 0.62);
+  color: rgba(255, 255, 255, 0.94);
   font-size: 10.5px;
   font-weight: 600;
-  line-height: 17px;
+  line-height: 1.45;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
-.exs-present-row--active .exs-present-row__no {
-  background: var(--exs-accent-container);
-  color: var(--exs-accent-on-container);
+.exs-present-card__foot {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-top: 4px;
+  padding: 0 2px;
 }
 
-.exs-present-row__name {
+.exs-present-card__name {
+  flex: 1;
   min-width: 0;
-  font-size: 13px;
+  padding: 3px 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--exs-text);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.exs-present-card__name:hover {
+  background: var(--exs-hover-strong);
+}
+
+.exs-present-card__rename {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--exs-accent);
+  border-radius: 6px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
+  font-family: inherit;
+  font-size: 12.5px;
+  outline: none;
 }
 
 .exs-present-mini {
@@ -3174,57 +3688,164 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   color: var(--exs-text);
 }
 
-.exs-present-settings {
+/* ---------- 第八十轮：统一设置气泡（抽屉齿轮 / 放映齿轮共用） ---------- */
+
+.exs-present-menuhost {
+  position: relative;
+  display: flex;
+  flex: none;
+}
+
+.exs-present-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: -8px;
+  z-index: 20;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin: 0 8px 6px;
-  padding: 8px 8px 6px;
-  border-radius: 10px;
-  background: var(--exs-hover);
+  box-sizing: border-box;
+  width: 292px;
+  max-height: min(58vh, 404px);
+  padding: 10px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 14px;
+  background: var(--exs-menu-solid);
+  box-shadow: var(--exs-menu-shadow);
+  color: var(--exs-text);
+  font-family: var(--exs-font-ui);
+  animation: exs-present-pop 140ms ease-out;
+  transform-origin: top right;
+}
+
+/* 小啾啾：旋转 45° 的方块，一半压在面板底下，只留朝外那两条描边 */
+.exs-present-menu::before {
+  content: "";
+  position: absolute;
+  top: -5.5px;
+  right: 12px;
+  box-sizing: border-box;
+  width: 10px;
+  height: 10px;
+  border-top: 0.5px solid var(--exs-menu-border);
+  border-left: 0.5px solid var(--exs-menu-border);
+  border-radius: 2px 0 0 0;
+  background: var(--exs-menu-solid);
+  transform: rotate(45deg);
+}
+
+.exs-present-menuhost--up .exs-present-menu {
+  top: auto;
+  bottom: calc(100% + 12px);
+  transform-origin: bottom right;
+}
+
+.exs-present-menuhost--up .exs-present-menu::before {
+  top: auto;
+  bottom: -5.5px;
+  border-top: 0;
+  border-left: 0;
+  border-right: 0.5px solid var(--exs-menu-border);
+  border-bottom: 0.5px solid var(--exs-menu-border);
+  border-radius: 0 0 2px 0;
+}
+
+@keyframes exs-present-pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+/* 抽屉头部齿轮后面还跟着关闭键：气泡贴抽屉右缘，尾巴挪回齿轮正下方 */
+.exs-present-drawer .exs-present-menu {
+  right: -34px;
+}
+
+.exs-present-drawer .exs-present-menu::before {
+  right: 39px;
+}
+
+.exs-present-menu__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.exs-present-menu__head span {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--exs-text-secondary);
+}
+
+/* 隐藏原生滚动条；没滚到底时底部渐隐，告诉用户下面还有 */
+.exs-present-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.exs-present-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.exs-present-scroll--more {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+}
+
+.exs-present-menu__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 2px;
+}
+
+.exs-present-group {
+  padding: 8px 2px 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-group:first-child {
+  padding-top: 2px;
 }
 
 .exs-present-set {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 26px;
+  box-sizing: border-box;
+  min-height: 28px;
+  padding: 0 2px;
   font-size: 12px;
   color: var(--exs-text);
+  cursor: pointer;
 }
 
 .exs-present-set__label {
-  flex: none;
-  width: 62px;
-  color: var(--exs-text-secondary);
-}
-
-.exs-present-set--range input[type="range"] {
   flex: 1;
   min-width: 0;
-  height: 18px;
-  accent-color: var(--exs-accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.exs-present-set__val {
-  flex: none;
-  width: 62px;
-  text-align: right;
-  font-size: 11px;
-  color: var(--exs-text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-.exs-present-set--disabled {
-  opacity: 0.45;
-}
-
+/* 开关是 button[role=switch]：主题会改写 input[type=checkbox]，按钮不在那条规则里 */
 .exs-present-switch {
   position: relative;
   flex: none;
+  display: block;
+  box-sizing: border-box;
   margin-left: auto;
   width: 34px;
   height: 20px;
+  padding: 0;
+  border: 0;
   border-radius: 10px;
   background: var(--exs-hover-strong);
   appearance: none;
@@ -3246,16 +3867,17 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   transition: transform 140ms ease;
 }
 
-.exs-present-switch:checked {
+.exs-present-switch[aria-checked="true"] {
   background: var(--exs-accent);
 }
 
-.exs-present-switch:checked::after {
+.exs-present-switch[aria-checked="true"]::after {
   transform: translateX(14px);
 }
 
-.exs-present-switch:disabled {
-  cursor: default;
+.exs-present-switch:focus-visible {
+  outline: 2px solid var(--exs-accent);
+  outline-offset: 2px;
 }
 
 .exs-present-empty {
@@ -3285,12 +3907,208 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 }
 
 .exs-present-drawer__foot {
+  display: flex;
+  gap: 8px;
   padding: 8px 12px 12px;
   border-top: 1px solid var(--exs-separator);
 }
 
+/* 新建页：次级按钮（实心紫只留给「开始演示」） */
+.exs-present-newhost {
+  position: relative;
+  flex: none;
+  display: flex;
+}
+
+.exs-present-newbtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid var(--exs-menu-border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--exs-text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.exs-present-newbtn:hover,
+.exs-present-newbtn--on {
+  background: var(--exs-hover);
+  border-color: var(--exs-accent);
+}
+
+/* 比例气泡：往上弹，尾巴朝左下（贴着新建按钮） */
+.exs-present-newmenu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 20;
+  box-sizing: border-box;
+  width: 300px;
+  padding: 10px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 14px;
+  background: var(--exs-menu-solid);
+  box-shadow: var(--exs-menu-shadow);
+  color: var(--exs-text);
+  font-family: var(--exs-font-ui);
+  animation: exs-present-pop 140ms ease-out;
+  transform-origin: bottom left;
+}
+
+.exs-present-newmenu::before {
+  content: "";
+  position: absolute;
+  bottom: -5.5px;
+  left: 22px;
+  box-sizing: border-box;
+  width: 10px;
+  height: 10px;
+  border-right: 0.5px solid var(--exs-menu-border);
+  border-bottom: 0.5px solid var(--exs-menu-border);
+  border-radius: 0 0 2px 0;
+  background: var(--exs-menu-solid);
+  transform: rotate(45deg);
+}
+
+.exs-present-newmenu__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 2px 8px;
+}
+
+.exs-present-newmenu__head b {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.exs-present-newmenu__head span {
+  font-size: 10.5px;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-newmenu__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.exs-present-ratio {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--exs-menu-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--exs-text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.exs-present-ratio:hover {
+  background: var(--exs-hover);
+}
+
+.exs-present-ratio--on {
+  border-color: var(--exs-accent);
+  background: var(--exs-accent-subtle);
+}
+
+.exs-present-ratio__value {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.exs-present-ratio__name {
+  font-size: 10.5px;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-newmenu__foot {
+  padding: 8px 2px 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--exs-text-secondary);
+}
+
+/* 拖拽幽灵：跟着指针走的一张小卡（absolute 相对抽屉，别用 fixed） */
+.exs-present-dragghost {
+  position: absolute;
+  z-index: 30;
+  width: 176px;
+  box-sizing: border-box;
+  padding: 6px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 12px;
+  background: var(--exs-menu-solid);
+  box-shadow: var(--exs-menu-shadow);
+  transform: translate(-50%, -58%) rotate(-1.5deg);
+  pointer-events: none;
+}
+
+.exs-present-dragghost__img,
+.exs-present-dragghost__ph {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  background: var(--exs-hover);
+}
+
+.exs-present-dragghost__img {
+  object-fit: contain;
+}
+
+.exs-present-dragghost__ph {
+  border: 0.5px dashed var(--exs-menu-border);
+}
+
+.exs-present-dragghost__no {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  min-width: 16px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(10, 12, 16, 0.62);
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.exs-present-dragghost__name {
+  display: block;
+  margin-top: 4px;
+  padding: 0 2px;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--exs-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .exs-present-play {
   display: flex;
+  flex: 1;
   align-items: center;
   justify-content: center;
   gap: 7px;
@@ -3323,10 +4141,11 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   display: none;
 }
 
-/* ---------- 批 1B：幕布 + HUD ----------
+/* ---------- 批 1B / 第八十轮：幕布 + HUD ----------
 
-   幕布是 SVG mask：一整块半透明黑，当前页画框处挖洞（洞的坐标由 rAF 每帧更新，
-   跟着相机动画走）。两层都挂在 .exs-canvas 里，z-index 5/7：
+   幕布是 SVG mask：一整块**画布底色**，当前页画框处挖洞（洞的坐标由 rAF 每帧更新，
+   跟着相机动画走），于是画框外的内容被同色盖住，看上去是「整页翻过去」而不是
+   「黑幕上开一扇窗」。两层都挂在 .exs-canvas 里，z-index 5/7：
    压过画布与 vendor 网格，低于抽屉（8）与思源 Dialog。 */
 
 .exs-canvas .exs-present-scrim {
@@ -3338,13 +4157,11 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   pointer-events: none;
 }
 
-.exs-present-scrim__fill {
-  fill: rgba(9, 11, 15, 0.55);
-}
-
+/* 填充色由组件按画布底色写进 fill 属性（亮/暗主题各自一色）：
+   CSS 不许在这里再定颜色，否则会盖掉属性、退回「压黑幕布」的观感 */
 .exs-present-scrim__edge {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.14);
+  stroke: rgba(128, 128, 128, 0.45);
   stroke-width: 1;
 }
 
@@ -3362,104 +4179,322 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 
 .exs-present-hud__top {
   display: flex;
-  justify-content: flex-end;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   width: 100%;
 }
 
-.exs-present-exit {
+/* 2026-11-08：进片场先露 4.5s，之后淡出；鼠标进画布顶部 64px 再唤回。
+   只切 opacity——不 display:none，画布与底栏都不会因为提示退场而位移。 */
+.exs-present-hud__keys {
+  padding: 7px 12px;
+  border: 1px solid var(--exs-hud-hint-border);
+  border-radius: 999px;
+  background: var(--exs-hud-hint-bg);
+  box-shadow: var(--exs-hud-hint-shadow);
+  color: var(--exs-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  transition: opacity 240ms ease;
+}
+
+.exs-present-hud__keys--hidden {
+  opacity: 0;
+}
+
+/* 2026-11-08：HUD 翻页 / 暂停键，跟着底栏同一套主题 token */
+.exs-present-nav {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 0;
   border-radius: 50%;
-  background: rgba(20, 22, 26, 0.62);
-  color: rgba(255, 255, 255, 0.88);
+  background: transparent;
+  color: var(--exs-text-secondary);
   font-family: inherit;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
   pointer-events: auto;
-  backdrop-filter: blur(10px);
   transition: background-color 120ms ease, color 120ms ease;
 }
 
-.exs-present-exit:hover {
-  background: rgba(40, 43, 49, 0.82);
-  color: #fff;
+.exs-present-nav:hover {
+  background: var(--exs-hover);
+  color: var(--exs-text);
 }
 
+.exs-present-nav--on {
+  background: var(--exs-accent);
+  color: var(--exs-accent-on);
+}
+
+/* 第八十轮底栏：‹ / 第 n / N 页 ▾ / › / ⚙ / ⛶ / ■ 终止演示
+   2026-11-08：材质与插件底栏 .exs-bottom-bar 同源（island + pill 描边/阴影），
+   亮色白药丸、暗色深药丸，不再在亮色主题里放一块深色玻璃。 */
 .exs-present-hud__bottom {
   display: flex;
   align-items: center;
-  gap: 14px;
-  max-width: min(720px, 80%);
-  padding: 8px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  gap: 6px;
+  max-width: min(940px, 96%);
+  padding: 7px 10px;
+  border: 1px solid var(--exs-pill-border);
   border-radius: 999px;
-  background: rgba(20, 22, 26, 0.66);
-  color: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  background: var(--island-bg-color);
+  color: var(--exs-text);
+  box-shadow: var(--exs-pill-shadow);
   pointer-events: auto;
-  backdrop-filter: blur(12px);
 }
 
-.exs-present-hud__title {
-  flex: 0 1 auto;
-  max-width: 34vw;
-  overflow: hidden;
-  font-size: 12.5px;
-  font-weight: 550;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.exs-present-hud__dots {
+/* 页码 = 预览开关：点一下就展开缩略图气泡 */
+.exs-present-counter {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 6px;
-  max-width: 46vw;
-  overflow-x: auto;
-  scrollbar-width: none;
+  box-sizing: border-box;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--exs-accent-container);
+  color: var(--exs-hud-accent-text);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
-.exs-present-hud__dots::-webkit-scrollbar {
-  display: none;
+.exs-present-counter:hover,
+.exs-present-counter--on {
+  box-shadow: inset 0 0 0 1px var(--exs-hud-accent-ring);
 }
 
-.exs-present-dot {
+.exs-present-counter svg {
+  opacity: 0.9;
+  transition: transform 160ms ease;
+}
+
+.exs-present-counter--on svg {
+  transform: rotate(180deg);
+}
+
+/* 页码预览气泡：最多露 3 行，往下滚看更多
+   2026-11-08：与插件菜单同源实底（--exs-menu-*），亮/暗主题各取一套，
+   不再固定深玻璃——否则亮色片场里会透出白板，观感割裂。 */
+.exs-present-preview {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 12px);
+  z-index: 21;
+  box-sizing: border-box;
+  width: 328px;
+  padding: 6px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 14px;
+  background: var(--exs-menu-solid);
+  box-shadow: var(--exs-menu-shadow);
+  color: var(--exs-text);
+  font-family: var(--exs-font-ui);
+  transform: translateX(-50%);
+  animation: exs-present-preview-in 140ms ease-out;
+}
+
+.exs-present-preview::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5.5px;
+  box-sizing: border-box;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-right: 0.5px solid var(--exs-menu-border);
+  border-bottom: 0.5px solid var(--exs-menu-border);
+  border-radius: 0 0 2px 0;
+  background: var(--exs-menu-solid);
+  transform: rotate(45deg);
+}
+
+@keyframes exs-present-preview-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+}
+
+.exs-present-preview__list {
+  max-height: 170px;
+}
+
+.exs-present-preview__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.exs-present-preview__row:hover {
+  background: var(--exs-hover);
+}
+
+.exs-present-preview__row--on {
+  background: var(--exs-accent-subtle);
+}
+
+.exs-present-preview__thumb {
+  display: flex;
   flex: none;
-  width: 7px;
-  height: 7px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 82px;
+  height: 46px;
+  border: 0.5px solid var(--exs-separator);
+  border-radius: 6px;
+  background: var(--exs-hover);
+  overflow: hidden;
+}
+
+.exs-present-preview__thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.exs-present-preview__thumb .exs-present-card__ph {
+  font-size: 10px;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-preview__no {
+  flex: none;
+  min-width: 16px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-preview__row--on .exs-present-preview__no {
+  color: var(--exs-hud-accent-text);
+}
+
+.exs-present-preview__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 齿轮 / 全屏：透明底 + 主题 token；全屏用强调色实心，终止用软红 */
+.exs-present-tool {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--exs-text-secondary);
   cursor: pointer;
-  transition: width 160ms ease, background-color 160ms ease;
+  pointer-events: auto;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
-.exs-present-dot:hover {
-  background: rgba(255, 255, 255, 0.55);
+.exs-present-tool:hover {
+  background: var(--exs-hover);
+  color: var(--exs-text);
 }
 
-.exs-present-dot--past {
-  background: rgba(255, 255, 255, 0.45);
+.exs-present-tool--on {
+  background: var(--exs-hover-strong);
+  color: var(--exs-text);
 }
 
-.exs-present-dot--on {
-  width: 18px;
+.exs-present-tool--soft {
   background: var(--exs-accent);
+  color: var(--exs-accent-on);
 }
 
-.exs-present-hud__count {
+.exs-present-tool--soft:hover,
+.exs-present-tool--soft.exs-present-tool--on {
+  background: var(--exs-accent-hover);
+  color: var(--exs-accent-on);
+}
+
+.exs-present-tool--soft.exs-present-tool--on {
+  box-shadow: 0 0 0 2px var(--exs-focus-ring), 0 2px 8px rgba(105, 101, 219, 0.28);
+}
+
+.exs-present-hud__sep {
   flex: none;
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
-  color: rgba(255, 255, 255, 0.62);
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--exs-separator);
+}
+
+.exs-present-stop {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--exs-danger-container);
+  color: var(--exs-hud-danger-text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.exs-present-stop:hover {
+  background: var(--exs-hud-danger-container-hover);
+}
+
+.exs-present-stop__mark {
+  width: 9px;
+  height: 9px;
+  border-radius: 2.5px;
+  background: currentColor;
 }
 
 /* ---------- 2026-10-25 交互框：拖拽提示条 ---------- */
