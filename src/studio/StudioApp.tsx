@@ -820,9 +820,9 @@ export function StudioApp(props: StudioProps) {
       const isFull = !!doc.fullscreenElement;
       presentFullscreenRef.current = isFull;
       setPresentFullscreen(isFull);
-      // 视口尺寸变了：之前按窗口算的 scroll/zoom 会让当前页偏出新画面。
-      // 等一帧让全屏布局落地再按新视口重新对准；focusFrame 自己量容器，
-      // 不依赖 vendor 那套异步更新的 appState 宽高。
+      // 重新取景统一交给下面的 ResizeObserver（尺寸稳定 120ms 后）。
+      // 这里是兜底：没有 ResizeObserver 的环境才退回「事件后一帧取景」。
+      if (typeof ResizeObserver !== "undefined") return;
       const snap = presentSnapRef.current;
       const nav = presentNavRef.current;
       if (!snap || !nav) return;
@@ -836,6 +836,50 @@ export function StudioApp(props: StudioProps) {
     doc.addEventListener("fullscreenchange", sync);
     return () => doc.removeEventListener("fullscreenchange", sync);
   }, []);
+
+  /**
+   * 放映中画布尺寸变化 → 等尺寸稳定后重新对准当前页。
+   *
+   * 为什么不在 fullscreenchange 里一次性取景：macOS 的原生全屏是带过渡动画的，
+   * fullscreenchange 在动画开始时触发，之后尺寸还会连着变几百毫秒；只在事件后
+   * 一帧取景会对到动画中间的尺寸上，动画结束就停歪了（表现为「要点一下翻页再
+   * 翻回来才居中」）。也不能读 appState 宽高：vendor 由 ResizeObserver→setState
+   * 异步更新，实测尺寸变化后还要再等 1–2 帧才准。这里直接观察画布容器，
+   * 停稳 120ms 再取景；focusFrame 量的也是同一块 DOM。
+   */
+  useEffect(() => {
+    if (!presenting) return;
+    const target = canvasRef.current;
+    if (!target || typeof ResizeObserver === "undefined") return;
+    let lastW = 0;
+    let lastH = 0;
+    let timer = 0;
+    const settle = (): void => {
+      timer = 0;
+      const snap = presentSnapRef.current;
+      // 排队中的那一页才是用户要看的（与 presentNext 的基准一致）
+      const cur = presentPendingRef.current?.nav ?? presentNavRef.current;
+      if (!presentingRef.current || !snap || !cur) return;
+      presentCamUntilRef.current = performance.now() + PRESENT_CAM_MS;
+      focusFrameRef.current(snap.plans[cur.page].frameId, snap.fit);
+    };
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[entries.length - 1]?.contentRect;
+      if (!r) return;
+      // 首次回调也要排一次：有的平台全屏是瞬时的（没有过渡帧），只认「尺寸变化」
+      // 会一次都收不到，第一页就停在旧视口上。
+      if (Math.abs(r.width - lastW) < 1 && Math.abs(r.height - lastH) < 1) return;
+      lastW = r.width;
+      lastH = r.height;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(settle, 120);
+    });
+    ro.observe(target);
+    return () => {
+      ro.disconnect();
+      window.clearTimeout(timer);
+    };
+  }, [presenting]);
   const presentNextRef = useRef<() => void>(() => {});
   /** 键盘监听只注册一次，处理器每帧换 —— 避免每次翻页重绑 window 监听 */
   const presentKeysRef = useRef<{

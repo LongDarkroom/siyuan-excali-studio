@@ -198,7 +198,10 @@ test("打字中按 next：第一下补完不翻页；自动前进在打字/飞�
   const advance = next.indexOf("navNext(snap.plans, snap.graph, cur, direction)", ret);
   assert.ok(typing > 0 && finish > typing && ret > finish && advance > ret, "先补完 → return → 第二下才翻页");
 
-  const timer = APP.slice(APP.indexOf("const timer = window.setInterval"), APP.indexOf("}, [presenting]);"));
+  // 从 interval 起点往后找收尾：文件里还有别的以 `}, [presenting]);` 收尾的 effect（尺寸观察），
+  // 不设起点会截到空串。
+  const timerAt = APP.indexOf("const timer = window.setInterval");
+  const timer = APP.slice(timerAt, APP.indexOf("}, [presenting]);", timerAt));
   assert.match(
     timer,
     /if \(typingRef\.current \|\| presentPendingRef\.current \|\| presentPausedRef\.current\) return;/,

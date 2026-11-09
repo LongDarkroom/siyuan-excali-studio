@@ -233,6 +233,34 @@ test("全屏切换首帧按真实视口取景（不读 vendor 滞后的 appState
   assert.match(APP, /const vh = box && box\.height > 0 \? box\.height : st\.height \|\| 800;/, "量不到才回落 appState 高");
 });
 
+test("全屏动画期间不抢跑：尺寸停稳 120ms 后再对当前页取景", () => {
+  // 第八十三轮：macOS 原生全屏 fullscreenchange 在动画开始时触发，之后尺寸还会变
+  // 几百毫秒；事件后一帧取景会对到中间尺寸上（表现为「翻一页再翻回来才居中」）。
+  // 改由 ResizeObserver 观察画布容器，最后一次变化停稳 120ms 再取景；
+  // fullscreenchange 里的一帧取景只留作没有 ResizeObserver 时的兜底。
+  assert.match(
+    APP,
+    /if \(typeof ResizeObserver !== "undefined"\) return;/,
+    "有 ResizeObserver 时事件处理器不直接取景（避免对到动画中间尺寸）",
+  );
+  assert.match(
+    APP,
+    /useEffect\(\(\) => \{\s*\n\s*if \(!presenting\) return;\s*\n\s*const target = canvasRef\.current;/,
+    "只在放映中观察画布容器",
+  );
+  assert.match(APP, /const ro = new ResizeObserver\(/, "用 ResizeObserver 跟踪尺寸，不轮询");
+  assert.equal(APP.includes("primed"), false, "首次回调不跳过：瞬时全屏（无过渡帧）只会有这一次回调");
+  assert.match(APP, /ro\.observe\(target\)/, "观察的是画布容器（focusFrame 量的同一块 DOM）");
+  assert.match(APP, /window\.clearTimeout\(timer\);\s*\n\s*timer = window\.setTimeout\(settle, 120\);/, "连续变化只留最后一次，停稳 120ms 才取景");
+  assert.match(APP, /if \(!presentingRef\.current \|\| !snap \|\| !cur\) return;/, "定时器到点时已退出放映/换页为空则不取景");
+  assert.match(
+    APP,
+    /presentCamUntilRef\.current = performance\.now\(\) \+ PRESENT_CAM_MS;[\s\S]{0,120}focusFrameRef\.current\(snap\.plans\[cur\.page\]\.frameId, snap\.fit\)/,
+    "重新对准的是当前页（同一个 focusFrame 口径）",
+  );
+  assert.match(APP, /ro\.disconnect\(\)/, "退出放映或重挂时断开观察");
+});
+
 test("抽屉只读片单、只发意图；写数据与动镜头都在 StudioApp", () => {
   assert.match(DRAWER, /import \{ slideTitle, type Deck \} from "\.\/presentation-plan";/, "抽屉只认片单类型");
   assert.equal(DRAWER.includes("api"), false, "抽屉拿不到 imperative API");
