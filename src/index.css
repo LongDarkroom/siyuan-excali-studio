@@ -3364,6 +3364,15 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   animation-name: exs-present-in-center;
 }
 
+/*
+ * 进场动画只播一次：播完就落这个类。必须在 --center 之后（同为单类名，
+ * 靠顺序压过 animation-name）；否则松手撤掉 --dragging 时 animation-name
+ * 会从 none 变回去，浏览器把进场动画重播一遍——表现是松手闪一下。
+ */
+.exs-present-drawer--settled {
+  animation: none;
+}
+
 /* 拖动中：跟手、不要动画插值、提亮一点阴影表示「拎着」 */
 .exs-present-drawer--dragging {
   animation: none;

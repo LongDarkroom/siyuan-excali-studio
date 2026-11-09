@@ -164,6 +164,12 @@ export function PresentationDrawer(props: {
   const listRef = useRef<HTMLOListElement | null>(null);
   const [pos, setPos] = useState<DrawerPos | null>(() => readPos());
   const [dragging, setDragging] = useState(false);
+  /**
+   * 进场动画只播一次。`--dragging` 里有 `animation: none`，松手撤掉这个类会让
+   * `animation-name` 从 none 变回 `exs-present-in`——浏览器当成一条新动画从头播，
+   * 表现就是松手闪一下。播完（或一开始就被抓住）就落 settled，之后类名怎么变都不重播。
+   */
+  const [settled, setSettled] = useState(false);
 
   const onHeadPointerDown = useCallback((e: React.PointerEvent) => {
     // 头部有设置/关闭两个按钮：点在按钮上不启动拖动，否则点按钮会变成拖面板
@@ -180,6 +186,8 @@ export function PresentationDrawer(props: {
     const top0 = selfRect.top - cbRect.top;
     const clientX0 = e.clientX;
     const clientY0 = e.clientY;
+    // 抓住即算入场结束：动画被 pointerdown 打断时不会有 animationend
+    setSettled(true);
     setDragging(true);
     const clamp = (v: number, max: number): number => Math.min(Math.max(0, v), Math.max(0, max));
     // 起点必须是**当前位置**：默认值 0,0 会让「点一下头部」把抽屉钉到左上角
@@ -400,8 +408,13 @@ export function PresentationDrawer(props: {
       className={
         "exs-present-drawer" +
         (pos ? "" : " exs-present-drawer--center") +
+        (settled ? " exs-present-drawer--settled" : "") +
         (dragging ? " exs-present-drawer--dragging" : "")
       }
+      // 只认自己那条进场动画：卡片/气泡若也有动画，冒泡上来的不算
+      onAnimationEnd={(e) => {
+        if (e.target === e.currentTarget) setSettled(true);
+      }}
       style={posStyle}
       role="complementary"
       aria-label={t("演示")}

@@ -335,6 +335,23 @@ test("抽屉默认居中浮窗：拖动记忆、双击回中，列表用渐隐�
   assert.equal(/scrollbar-width/.test(body), false, "不再用系统细滚动条");
 });
 
+test("抽屉拖动松手不重播进场动画（松手闪一下）", () => {
+  assert.match(DRAWER, /const \[settled, setSettled\] = useState\(false\);/, "有「已入场」标记");
+  assert.match(DRAWER, /settled \? " exs-present-drawer--settled" : ""/, "已入场后挂 --settled");
+  assert.match(
+    DRAWER,
+    /onAnimationEnd=\{\(e\) => \{\s*\n\s*if \(e\.target === e\.currentTarget\) setSettled\(true\);/,
+    "只认自己那条进场动画，子元素冒泡不算",
+  );
+  assert.match(DRAWER, /setSettled\(true\);\s*\n\s*setDragging\(true\);/, "抓住即算入场结束：打断动画时不会有 animationend");
+  assert.match(CSS, /\.exs-present-drawer--settled \{\s*\n\s*animation: none;/, "--settled 把动画关死");
+  // 同为单类名选择器，靠书写顺序压过 --center 的 animation-name
+  assert.ok(
+    CSS.indexOf(".exs-present-drawer--settled") > CSS.indexOf(".exs-present-drawer--center"),
+    "--settled 必须排在 --center 之后",
+  );
+});
+
 /* ------------------------------ ④ 文案 ------------------------------ */
 
 test("i18n：本片词条双语齐备，中文原文即 key", () => {
