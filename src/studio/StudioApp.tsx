@@ -723,6 +723,8 @@ export function StudioApp(props: StudioProps) {
   const presentNavRef = useRef<NavState | null>(null);
   /** 相机飞行窗：窗内收到的换页意图先记在 pending，落地后再追 */
   const presentCamUntilRef = useRef(0);
+  /** 上一次取景用的视口宽高：尺寸没变就别重新取景（否则会把飞行中的镜头重新起帧，一顿一弹） */
+  const presentFitSizeRef = useRef<{ w: number; h: number } | null>(null);
   const presentPendingRef = useRef<{ nav: NavState; kind: PresentNav } | null>(null);
   const presentGoRef = useRef<(nav: NavState, kind?: PresentNav) => void>(() => {});
   /** 已经落到场景上的游标：算「这一步新露出谁」不能拿可能过期一帧的 state */
@@ -846,9 +848,15 @@ export function StudioApp(props: StudioProps) {
    * 翻回来才居中」）。也不能读 appState 宽高：vendor 由 ResizeObserver→setState
    * 异步更新，实测尺寸变化后还要再等 1–2 帧才准。这里直接观察画布容器，
    * 停稳 120ms 再取景；focusFrame 量的也是同一块 DOM。
+   *
+   * 挂载只看「在不在放映」这个布尔值：presenting 是游标对象，每翻一步都会换新，
+   * 拿它当依赖会在每次翻页时重挂观察器——重挂会立刻回调一次、120ms 后又把正在
+   * 飞行的镜头重新起帧，观感就是「一顿一弹」。另外取景前先比视口：和上一次取景
+   * 用的尺寸一样就什么都不做。
    */
+  const presentActive = presenting !== null;
   useEffect(() => {
-    if (!presenting) return;
+    if (!presentActive) return;
     const target = canvasRef.current;
     if (!target || typeof ResizeObserver === "undefined") return;
     let lastW = 0;
@@ -860,6 +868,11 @@ export function StudioApp(props: StudioProps) {
       // 排队中的那一页才是用户要看的（与 presentNext 的基准一致）
       const cur = presentPendingRef.current?.nav ?? presentNavRef.current;
       if (!presentingRef.current || !snap || !cur) return;
+      const box = canvasRef.current?.querySelector<HTMLElement>(".excalidraw")?.getBoundingClientRect();
+      const fitted = presentFitSizeRef.current;
+      if (box && box.width > 0 && fitted && Math.abs(box.width - fitted.w) < 1 && Math.abs(box.height - fitted.h) < 1) {
+        return;
+      }
       presentCamUntilRef.current = performance.now() + PRESENT_CAM_MS;
       focusFrameRef.current(snap.plans[cur.page].frameId, snap.fit);
     };
@@ -879,7 +892,7 @@ export function StudioApp(props: StudioProps) {
       ro.disconnect();
       window.clearTimeout(timer);
     };
-  }, [presenting]);
+  }, [presentActive]);
   const presentNextRef = useRef<() => void>(() => {});
   /** 键盘监听只注册一次，处理器每帧换 —— 避免每次翻页重绑 window 监听 */
   const presentKeysRef = useRef<{
@@ -1137,6 +1150,7 @@ export function StudioApp(props: StudioProps) {
       const box = canvasRef.current?.querySelector<HTMLElement>(".excalidraw")?.getBoundingClientRect();
       const vw = box && box.width > 0 ? box.width : st.width || 1200;
       const vh = box && box.height > 0 ? box.height : st.height || 800;
+      presentFitSizeRef.current = { w: vw, h: vh };
       // zoom 口径同 vendor：min(可用宽/bound宽, 可用高/bound高) * viewportZoomFactor
       const zoom = Math.min((vw * fit) / bw, (vh * fit) / bh);
       const cx = x0 + bw / 2, cy = y0 + bh / 2;

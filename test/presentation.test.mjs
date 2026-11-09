@@ -245,14 +245,25 @@ test("全屏动画期间不抢跑：尺寸停稳 120ms 后再对当前页取景"
   );
   assert.match(
     APP,
-    /useEffect\(\(\) => \{\s*\n\s*if \(!presenting\) return;\s*\n\s*const target = canvasRef\.current;/,
+    /useEffect\(\(\) => \{\s*\n\s*if \(!presentActive\) return;\s*\n\s*const target = canvasRef\.current;/,
     "只在放映中观察画布容器",
   );
+  // 第八十三轮返工：presenting 是游标对象，每翻一步都换新。拿它当依赖会在每次
+  // 翻页时重挂观察器 → 立刻回调一次 → 120ms 后把飞行中的镜头重新起帧（一顿一弹）。
+  assert.match(APP, /const presentActive = presenting !== null;/, "用稳定布尔值表达「在放映」");
+  assert.match(APP, /\}, \[presentActive\]\);/, "观察器只随进/出放映挂载，不随翻页重挂");
   assert.match(APP, /const ro = new ResizeObserver\(/, "用 ResizeObserver 跟踪尺寸，不轮询");
   assert.equal(APP.includes("primed"), false, "首次回调不跳过：瞬时全屏（无过渡帧）只会有这一次回调");
   assert.match(APP, /ro\.observe\(target\)/, "观察的是画布容器（focusFrame 量的同一块 DOM）");
   assert.match(APP, /window\.clearTimeout\(timer\);\s*\n\s*timer = window\.setTimeout\(settle, 120\);/, "连续变化只留最后一次，停稳 120ms 才取景");
   assert.match(APP, /if \(!presentingRef\.current \|\| !snap \|\| !cur\) return;/, "定时器到点时已退出放映/换页为空则不取景");
+  // 视口和上一次取景用的尺寸一致就别动：镜头可能还在飞，重新起帧就是那下弹跳
+  assert.match(APP, /presentFitSizeRef\.current = \{ w: vw, h: vh \};/, "focusFrame 记下本次取景用的视口");
+  assert.match(
+    APP,
+    /Math\.abs\(box\.width - fitted\.w\) < 1 && Math\.abs\(box\.height - fitted\.h\) < 1/,
+    "尺寸没变不重新取景",
+  );
   assert.match(
     APP,
     /presentCamUntilRef\.current = performance\.now\(\) \+ PRESENT_CAM_MS;[\s\S]{0,120}focusFrameRef\.current\(snap\.plans\[cur\.page\]\.frameId, snap\.fit\)/,
