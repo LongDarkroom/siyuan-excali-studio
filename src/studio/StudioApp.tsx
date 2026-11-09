@@ -821,7 +821,8 @@ export function StudioApp(props: StudioProps) {
       presentFullscreenRef.current = isFull;
       setPresentFullscreen(isFull);
       // 视口尺寸变了：之前按窗口算的 scroll/zoom 会让当前页偏出新画面。
-      // 等一帧让 vendor 收完 resize，再按新视口把同一页重新对准。
+      // 等一帧让全屏布局落地再按新视口重新对准；focusFrame 自己量容器，
+      // 不依赖 vendor 那套异步更新的 appState 宽高。
       const snap = presentSnapRef.current;
       const nav = presentNavRef.current;
       if (!snap || !nav) return;
@@ -1085,8 +1086,13 @@ export function StudioApp(props: StudioProps) {
       const bw = x1 - x0, bh = y1 - y0;
       if (!(bw > 0) || !(bh > 0)) return;
       const st = api.getAppState();
-      const vw = st.width || 1200;
-      const vh = st.height || 800;
+      // 全屏切换后 vendor 的 width/height 是 ResizeObserver → setState 异步更新的，
+      // fullscreenchange（或点 ⛶）后一帧读 appState 仍是旧视口：按旧视口算出的
+      // zoom/scroll 会让当前页既不居中也不铺满，要翻一页再翻回来才对。
+      // 直接量 vendor 容器（updateDOMRect 量的也是它），布局提交后就是真实尺寸。
+      const box = canvasRef.current?.querySelector<HTMLElement>(".excalidraw")?.getBoundingClientRect();
+      const vw = box && box.width > 0 ? box.width : st.width || 1200;
+      const vh = box && box.height > 0 ? box.height : st.height || 800;
       // zoom 口径同 vendor：min(可用宽/bound宽, 可用高/bound高) * viewportZoomFactor
       const zoom = Math.min((vw * fit) / bw, (vh * fit) / bh);
       const cx = x0 + bw / 2, cy = y0 + bh / 2;

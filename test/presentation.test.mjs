@@ -220,6 +220,19 @@ test("镜头收成 focusFrame：自算 fit 直接写 appState（不依赖 scroll
   assert.match(APP, /focusFrame\(slide\.id, presentSettings\.fit\)/, "抽屉跳页委托 focusFrame，并透传设置的取景系数（滑块对跳页生效）");
 });
 
+test("全屏切换首帧按真实视口取景（不读 vendor 滞后的 appState 宽高）", () => {
+  // 根因（第八十二轮）：全屏后 vendor 的 width/height 由 ResizeObserver → setState
+  // 异步更新；fullscreenchange 后一帧读 appState 还是旧视口，第一页就不居中/不铺满，
+  // 要翻下一页再翻回来才对。取景必须直接量 vendor 容器（updateDOMRect 同口径）。
+  assert.match(
+    APP,
+    /querySelector<HTMLElement>\("\.excalidraw"\)\?\.getBoundingClientRect\(\)/,
+    "focusFrame 量的是画布容器真实尺寸",
+  );
+  assert.match(APP, /const vw = box && box\.width > 0 \? box\.width : st\.width \|\| 1200;/, "量不到才回落 appState 宽");
+  assert.match(APP, /const vh = box && box\.height > 0 \? box\.height : st\.height \|\| 800;/, "量不到才回落 appState 高");
+});
+
 test("抽屉只读片单、只发意图；写数据与动镜头都在 StudioApp", () => {
   assert.match(DRAWER, /import \{ slideTitle, type Deck \} from "\.\/presentation-plan";/, "抽屉只认片单类型");
   assert.equal(DRAWER.includes("api"), false, "抽屉拿不到 imperative API");
