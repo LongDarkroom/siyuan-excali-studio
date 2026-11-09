@@ -28,6 +28,9 @@ const FILES = [
   "CHANGELOG.md",
   "library-import.html",
   "lib-import.js",
+  // AGPL-3.0-or-later：分发时必须随包附许可证全文与第三方声明（字体许可在 fonts/ 内）
+  "LICENSE",
+  "THIRD-PARTY-NOTICES.md",
 ];
 // embed/：画布内嵌思源块的 Embeddable 渲染页（copy-dist 从 src-embed/siyuan/ 拷来）
 // demo/：AI 绘图效果图（README 效果展示引用；集市渲染 README 相对路径需同包）

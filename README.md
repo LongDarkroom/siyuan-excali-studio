@@ -85,10 +85,18 @@ node scripts/excali-board.mjs append --workspace <WS> --board 标题 --plan plan
 | LXGW WenKai Lite 霞鹜文楷 | 中文正文 | SIL OFL 1.1 · [lxgw/LxgwWenKai](https://github.com/lxgw/LxgwWenKai) |
 | Smiley Sans 得意黑 | 中文展示体 | SIL OFL 1.1 · [atelier-anchor/smiley-sans](https://github.com/atelier-anchor/smiley-sans) |
 | Caveat / Yusei Magic / Zen Kurenaido / Patrick Hand | 拉丁手写装饰 | SIL OFL 1.1 |
-| Comic Shanns | 拉丁手写体 | Excalidraw 生态免费字体 |
+| Comic Shanns | 拉丁手写体 | MIT · [shannpersand/comic-shanns](https://github.com/shannpersand/comic-shanns) |
 
 Canvas 内核为 [Excalidraw](https://github.com/excalidraw/excalidraw)（MIT），本插件含其定制构建产物 `engine.js`（含中文文案补丁与扩展字体注册）。
 
+逐族版权声明与许可证全文见 [`fonts/COPYRIGHTS.md`](fonts/COPYRIGHTS.md)（随发布包分发，满足 OFL 1.1 第 2 条「每份副本须含版权声明与许可证」）。
+
 ## 开源许可
 
-本插件源码以 MIT 许可发布（见仓库 `LICENSE`）。
+本插件源码以 **GNU Affero General Public License v3.0 或任何更新版本**发布（SPDX：`AGPL-3.0-or-later`），许可证全文见仓库 `LICENSE`。
+
+    Copyright (C) 2026 LongDarkroom
+
+通俗地说：可以自由使用、修改、再分发（包括商用），但分发修改版或通过网络向用户提供修改版时，必须以同样的许可证开源并给出对应源码，不能做成闭源分支。已经发布过的历史 MIT 版本仍按 MIT 授权，本次改证只适用于今后的版本。
+
+随包分发的第三方组件（Excalidraw、React、pako、字体等）仍按各自许可证授权，声明与全文见 `THIRD-PARTY-NOTICES.md` 与 `fonts/COPYRIGHTS.md`（两者均随发布包分发）。
