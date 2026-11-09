@@ -1,77 +1,91 @@
-# Excali 白板（siyuan-excali-studio）
+# Excali 白板
 
-思源笔记里的手绘白板与演示工具：原生页签承载 [Excalidraw](https://excalidraw.com/)（非 iframe、非弹层），导出的 SVG **内嵌可再次编辑的场景**——既是正文里能看的图，也是能再次打开的工程图，与 excalidraw.com、集市 `siyuan-embed-excalidraw` 存的老图互认。还能让 AI 一句话成图，把画框直接当成幻灯片放映。
+**在思源笔记里，把想法画成一张随时能改、能放映、能放进文档的图。**
 
-## ✨ AI 绘图效果展示
+Excali 白板（`siyuan-excali-studio`）把 [Excalidraw](https://excalidraw.com/) 装进思源的**原生页签**——不是 iframe、不是弹层。它保存的 SVG **内嵌完整可编辑场景**：既是正文里能直接看的图，也是能再次打开的工程图，与 excalidraw.com、集市 `siyuan-embed-excalidraw` 存的老图互认。
 
-以下作品全部由 AI 通过本插件的结构化绘图管线生成，风格可固化、可复用。
+> [!NOTE]
+> 一张白板就是工作空间里的一份 SVG 文件。改一次，文档里的图跟着更新；再打开它，每个元素都还能单独拖动、改色、改字。**不是截图，不是位图。**
 
-**人生蓝图** —— 放射状思维导图（7 领域 · 34 条目 · 可变粗细笔触）：
+## 一张画布，四件事
 
-![人生蓝图](demo/human-blueprint-preview.png)
+| 你想做的事 | Excali 白板怎么做 |
+|---|---|
+| 随手画 | 原生 Excalidraw 画布，16 款中英文字体，跟随思源明暗主题 |
+| 讲给人听 | 画布上的画框直接当幻灯片放映，不用另存 PPT |
+| 让 AI 画 | 一句话 → 结构化管线 → 原生矢量元素，产物仍可编辑 |
+| 写进文档 | 复制引用粘进正文，点一下回到画布继续画 |
 
-**掌控习惯** —— 整页信息图（书籍要点 · 习惯回路表 · 陷阱对照）：
+### 一、画框，就是幻灯片
 
-![掌控习惯](demo/atomic-habits-preview.png)
+![演示功能：画框即幻灯片，一页一框，点开就演](demo/feature-presentation.png)
 
-## 功能特性
+不用导出、不用切软件：在画布上框一块内容，就是一个画框，也就是一页。
 
-### 白板核心
+- 页序默认按阅读顺序（先上后下、同行先左后右）；画了箭头就**按箭头走**，能分叉、能绕回
+- 每页可选「整页一起出」或「逐条出场」，配幕布、打字机、镜头留白、自动前进、全屏
+- 改完内容，放映里立刻生效——**画完就能放，改完还能放**
 
-- 三个入口进白板：左侧 dock 白板库、顶栏图标、文档右键「最近打开」
-- 新建即命名：先弹命名框，空画布自动建档并打开，从第一帧起就归属文件
-- 自动保存：停笔约 1 秒防抖落盘，`⌘/Ctrl+S` 立即强存，关页签自动冲刷不丢改动
-- 保存位置可自定义（默认 `data/assets/excali/`），页签图标实时显示白板缩略图
-- 页签布局记忆，重启思源后恢复原样
+### 二、一句话，落成一张可编辑的图
 
-### 画布与兼容
+![AI 联动：五步管线与四条通道，产物是内嵌场景的 SVG](demo/feature-ai-drawing.png)
 
-- Excalidraw 0.18.1 原生页签集成，跟随思源明暗主题，中文手写字体回落链开箱可用
-- 16 款字体：中文小赖体、霞鹜文楷、得意黑 + 多款拉丁手写体
-- 导出 PNG / JPEG / WebP / SVG；SVG 内嵌场景，任何时候都能再次编辑
-- 直接打开 Obsidian Excalidraw 格式文件（1v1 / 1v2 payload，压缩与空场景容错）
-- 图片拖放入画布、剪贴板粘贴；文档里的白板嵌入图点击即开
-- 移动端（iPad / 手机）用全屏浮层承载同一套画板，桌面与移动行为一致
+AI 不是往画布里塞一张位图，而是走一条确定性管线：**plan DSL → 风格包 → 自动布局 → 渲染 → 内嵌场景的 SVG**。产物是原生元素，随时能改。
 
-### 演示与折叠
-
-- **演示模式**：画布上框一块内容 = 一页幻灯片。页单默认按阅读顺序，像翻讲义；每页可选「整页一起出」或「逐条出场」，配幕布、打字机、镜头留白、自动前进、全屏
-- **按箭头走**：画框之间画了箭头，放映就沿箭头走——能分叉，也能绕回；没连箭头的页按页序继续放
-- **文本折叠**：Notion 式折叠列表，折叠头左侧一个圆点控制钮，收起/展开跟着文件一起存
-
-### AI 绘图
-
-- 结构化管线：plan DSL → 风格包 → 自动布局 → 渲染，一次成图
-- 四条通道：思源内置智能体 `excali_*` / 内核 MCP / 无头 CLI / `ea.*` 脚本
-- 外部风格包：`data/assets/excali-styles/*.json`（diff-only 继承），内置 pencil / marker / blueprint 三预设
+- 四条入口：思源内置智能体 `excali_*` / 内核 MCP / 无头 CLI / `ea.*` 脚本，四条入口共用同一份计划
+- 外部风格包 `data/assets/excali-styles/*.json`（diff-only 继承），内置 pencil / marker / blueprint 三预设
+- CLI 可离线批量生成，同一套风格与布局可复用于不同主题
 - 素材库：官方组件面板 + 自建组件本地持久化 + 磁盘变更热刷新
 
-### 进阶：脚本引擎
+### 三、画完就进文档，点开还能继续画
 
-- 脚本即文档：`data/assets/excali-scripts/*.md`，`ea` API v1（55+ 方法）
-- 文件头 `@excalidraw-onload` 的脚本在画布就绪时自动运行
+![思源联动：白板复制引用进文档，点击再回到可编辑画布](demo/feature-siyuan-integration.png)
+
+☰ 菜单「**复制此白板的引用**」把 `![白板](assets/excali/x.svg)` 放进剪贴板，粘到思源正文里就是一块白板图片。插件会给它加上 `Excali` 徽标和「用 Excali 白板打开 ↗」，点一下回到可编辑画布。
+
+- 导出 PNG / JPEG / WebP / SVG，支持 1–3 倍缩放、透明底、仅导出选中、下载或复制到剪贴板；SVG 可勾选内嵌可编辑场景
+- 数据源仍是那一份 SVG，改一次，文档里同步更新
+- 图片拖放入画布、剪贴板粘贴；文档里的白板嵌入图点击即开；移动端（iPad / 手机）用全屏浮层承载同一套画板
+
+## 能力一览
+
+| 分组 | 能力 |
+|---|---|
+| 白板核心 | 三个入口（dock 白板库 / 顶栏图标 / 文档右键「最近打开」）、新建即命名、停笔约 1 秒防抖自动保存、`⌘/Ctrl+S` 强存、关页签自动冲刷、保存位置可自定义、页签缩略图与布局记忆 |
+| 画布与兼容 | Excalidraw 0.18.1 原生集成、跟随明暗主题、16 款中英文字体（小赖体 / 霞鹜文楷 / 得意黑等）、直接打开 Obsidian Excalidraw 文件（1v1 / 1v2 payload，压缩与空场景容错）、Notion 式文本折叠列表 |
+| 演示 | 画框即页、按箭头走、逐条出场、幕布 / 打字机 / 镜头留白 / 自动前进 / 全屏 |
+| AI 绘图 | plan DSL 五步管线、agent / mcp / cli / script 四通道、外部风格包、素材库 |
+| 脚本引擎 | `data/assets/excali-scripts/*.md`，`ea` API v1（55+ 方法）；文件头写 `@excalidraw-onload` 的脚本在画布就绪时自动运行 |
+| 导出与联动 | PNG / JPEG / WebP / SVG、复制到剪贴板、复制白板引用、文档内白板块点击即开、移动端一致体验 |
 
 ## 快速开始
 
-1. 思源集市搜索「Excali 白板」安装；或从 [Release](https://github.com/LongDarkroom/siyuan-excali-studio/releases) 下载 `package.zip`，在思源「设置 → 集市 → 已下载」中导入
-2. 顶栏白板图标或 dock「+」新建画布，即写即存
-3. AI 绘图：对思源内置智能体说「帮我画一张 XX 思维导图」，或用 CLI：
+1. 思源集市搜索「Excali 白板」安装；或从 [Release](https://github.com/LongDarkroom/siyuan-excali-studio/releases) 下载 `package.zip`，在「设置 → 集市 → 已下载」中导入
+2. 点顶栏白板图标，或在 dock 白板库点「+」，起个名字就开始画，即写即存
+3. 想让 AI 画：对思源内置智能体说「帮我画一张 XX 思维导图」；或用 CLI 离线批量生成：
 
 ```bash
-# Node 22.6+；--workspace 指向含 data/ 的工作空间
-node scripts/excali-board.mjs list   --workspace <WS> [--query 关键词] [--list-styles]
-node scripts/excali-board.mjs create --workspace <WS> --plan plan.json [--title 名称] [--style 包名]
-node scripts/excali-board.mjs append --workspace <WS> --board 标题 --plan plan.json
+# Node 22.6+；--workspace 指向含 data/ 的思源工作空间
+node scripts/excali-board.mjs list   --workspace /path/to/思源工作空间 --list-styles
+node scripts/excali-board.mjs create --workspace /path/to/思源工作空间 --plan plan.json --title 名称 --style 包名
+node scripts/excali-board.mjs append --workspace /path/to/思源工作空间 --board 标题 --plan plan.json
 ```
+
+## 社区与反馈
+
+使用问题与功能建议，欢迎来这里交流。
+
+| 渠道 | 地址 |
+|---|---|
+| B 站 | [微光突围](https://space.bilibili.com/39780528) |
+| QQ 群 | **123795105** |
 
 ## 数据与保存
 
-- **保存即文件**：每张白板是 `data/assets/excali/` 下的一份 SVG 文件（内嵌场景），重命名、同步都走普通文件
-- **一块板一个文件**：第五十四轮起不再写 `.bak` 备份档；落盘前有「正文逐字 + 载荷语义」两道等价门，
-  打开没动、只是 vendor 归一化或换主题背景造成的差异不会重写文件。误删/写坏靠思源自身的
-  数据历史兜底；老用户库里的存量 `.bak*` 仍被列表排除、被重命名/删除带走，解码失败页的
-  「从备份恢复」也照常能用
-- 开发细节与发版验收清单见 [`docs/`](docs/) 目录
+- **保存即文件**：每张白板是 `data/assets/excali/` 下的一份 SVG 文件（内嵌场景），重命名、同步、备份都走普通文件
+- **一块板一个文件**：不再写 `.bak` 备份档；落盘前有「正文逐字 + 载荷语义」两道等价门，打开没动、只是 vendor 归一化或换主题背景造成的差异不会重写文件。误删／写坏靠思源自身的数据历史兜底；老用户库里的存量 `.bak*` 仍被列表排除、被重命名／删除带走，解码失败页的「从备份恢复」也照常能用
+- **与生态互认**：与 excalidraw.com、集市 `siyuan-embed-excalidraw` 存的老图互相打开
+- 开发细节与发版验收清单见仓库 [docs/](https://github.com/LongDarkroom/siyuan-excali-studio/tree/main/docs) 目录
 
 ## 字体授权与致谢
 
@@ -89,14 +103,10 @@ node scripts/excali-board.mjs append --workspace <WS> --board 标题 --plan plan
 
 Canvas 内核为 [Excalidraw](https://github.com/excalidraw/excalidraw)（MIT），本插件含其定制构建产物 `engine.js`（含中文文案补丁与扩展字体注册）。
 
-逐族版权声明与许可证全文见 [`fonts/COPYRIGHTS.md`](fonts/COPYRIGHTS.md)（随发布包分发，满足 OFL 1.1 第 2 条「每份副本须含版权声明与许可证」）。
+逐族版权声明与许可证全文见 `fonts/COPYRIGHTS.md`（随发布包分发，满足 OFL 1.1 第 2 条「每份副本须含版权声明与许可证」）。
 
 ## 开源许可
 
-本插件源码以 **GNU Affero General Public License v3.0 或任何更新版本**发布（SPDX：`AGPL-3.0-or-later`），许可证全文见仓库 `LICENSE`。
+本插件源码直接使用 **AGPL-3.0-or-later**（GNU Affero General Public License v3.0 或任何更新版本），`Copyright (C) 2026 LongDarkroom`，许可证全文见仓库 `LICENSE`。
 
-    Copyright (C) 2026 LongDarkroom
-
-通俗地说：可以自由使用、修改、再分发（包括商用），但分发修改版或通过网络向用户提供修改版时，必须以同样的许可证开源并给出对应源码，不能做成闭源分支。已经发布过的历史 MIT 版本仍按 MIT 授权，本次改证只适用于今后的版本。
-
-随包分发的第三方组件（Excalidraw、React、pako、字体等）仍按各自许可证授权，声明与全文见 `THIRD-PARTY-NOTICES.md` 与 `fonts/COPYRIGHTS.md`（两者均随发布包分发）。
+随包分发的第三方组件（Excalidraw、字体等）按各自许可证授权，声明与全文见 `THIRD-PARTY-NOTICES.md`、`fonts/COPYRIGHTS.md`。
