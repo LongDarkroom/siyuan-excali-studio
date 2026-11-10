@@ -28,7 +28,9 @@ import {
   motionTotalMs,
   poseOf,
   resolveEffect,
+  rowHotspots,
   rowsSignature,
+  sequenceGroups,
   setMotionPatch,
   stepOfUnit,
 } from "../src/studio/presentation-motion.ts";
@@ -148,9 +150,47 @@ test("同号合并成一次按键；编过步的先出，没编的排在后面�
   assert.equal(step0.find((p) => p.id === "second")?.opacity, 0);
 });
 
+test("出场顺序预览：步号升序、未编步合成一组排最后；整页只留一组", () => {
+  const row = (key, label, step) => ({ key: `e:${key}`, ids: [key], label, effect: "fade", auto: true, step });
+  const rows = [row("a", "A", 2), row("b", "B", null), row("c", "C", 1), row("d", "D", 2)];
+  assert.deepEqual(sequenceGroups(rows, false), [
+    { key: "s:1", step: 1, labels: ["C"] },
+    { key: "s:2", step: 2, labels: ["A", "D"] },
+    { key: "auto", step: null, labels: ["B"] },
+  ]);
+  assert.deepEqual(sequenceGroups([], false), [], "空页没有预览");
+  assert.deepEqual(
+    sequenceGroups(rows, true),
+    [{ key: "all", step: null, labels: [], together: true }],
+    "整页模式顺序与步号都不作数",
+  );
+});
+
 test("页面上的步号来自画框内元素，别页的编排不参与", () => {
   const all = [frame("f1"), frame("f2", { x: 600 }), el("a", { ...meta({ step: 3 }) }), el("b", { frameId: "f2", ...meta({ step: 1 }) })];
   assert.deepEqual(planPage(all, "f1").units.map((u) => u.key), ["s:3"], "f2 的步号不许混进 f1 的计划");
+});
+
+/* ------------------------------ 本页预览热区 ------------------------------ */
+
+test("行包围盒：绑定文字算进容器那条，热区按画框百分比且裁掉框外部分", () => {
+  const all = [
+    frame("f1"),
+    el("box", { x: 100, y: 50, width: 100, height: 50 }),
+    { ...el("label", { type: "text", containerId: "box", x: 100, y: 50, width: 120, height: 20 }), text: "标题" },
+    el("outside", { x: 500, y: 10, width: 50, height: 50 }),
+    el("edge", { x: 380, y: 250, width: 100, height: 50 }),
+  ];
+  const rows = pageRows(all, "f1");
+  const box = rows.find((r) => r.key === "e:box");
+  assert.deepEqual(box.box, { x: 100, y: 50, w: 120, h: 50 }, "标签比容器宽时包围盒取并集");
+
+  const spots = rowHotspots(rows, { x: 0, y: 0, w: 400, h: 300 });
+  const byKey = new Map(spots.map((s) => [s.key, s]));
+  assert.deepEqual(byKey.get("e:box"), { key: "e:box", left: 25, top: 16.7, width: 30, height: 16.7 });
+  assert.equal(byKey.has("e:outside"), false, "整块在画框外的条不给热区（列表里还在）");
+  assert.deepEqual(byKey.get("e:edge"), { key: "e:edge", left: 95, top: 83.3, width: 5, height: 16.7 }, "跨框边的热区裁到框内");
+  assert.deepEqual(rowHotspots(rows, { x: 0, y: 0, w: 0, h: 0 }), [], "没几何就不画热区");
 });
 
 /* ------------------------------ 错峰分组 ------------------------------ */
@@ -227,7 +267,8 @@ test("中断先落终态：换页 / 跳页 / 退出都不得把元素留在半�
   const at = APP.indexOf("const finishMotion");
   const body = APP.slice(at, APP.indexOf("const startMotion", at));
   assert.match(body, /motionRef\.current = null;[\s\S]{0,80}window\.cancelAnimationFrame\(m\.raf\)/, "先摘状态再取消 rAF");
-  assert.match(body, /opacity: m\.target\.get\(id\) \?\? OPACITY_DEFAULT/, "终态回元素自己的原始透明度");
+  assert.match(body, /const want = m\.target\.get\(id\) \?\? OPACITY_DEFAULT;/, "终态取元素自己的原始透明度");
+  assert.match(body, /out\.push\(\{ id, x: b\.x, y: b\.y, opacity: want \}\)/, "坐标回基准、透明度回落定值");
   assert.match(APP, /finishMotion\(\);\s*\n\s*const patches = buildRunPatches\(/, "presentApply 第一件事就是收尾");
   const exit = APP.slice(APP.indexOf("const exitPresentation"), APP.indexOf("const presentNext = useCallback"));
   assert.match(exit, /finishMotion\(\);[\s\S]{0,120}applyFullscreen\(false\)/, "退出也先收尾，且早于回填");
@@ -252,12 +293,44 @@ test("快照与复原都带上坐标：退出后白板不许歪", () => {
   assert.match(exit, /if \(op === undefined && text === undefined && pose === undefined\) return e;/, "没动过的元素不产生无谓写入");
 });
 
-test("抽屉：四档效果 + 自动 + 步号，同值不写", () => {
-  assert.match(DRAWER, /EFFECT_IDS\.map\(\(id\) =>/, "四档一排");
-  assert.match(DRAWER, /aria-pressed=\{!r\.auto && r\.effect === id\}/, "选中态要既对上档、又不是默认档");
-  assert.match(DRAWER, /onClick=\{\(\) => props\.onRowMotion\(r\.ids, \{ effect: null \}\)\}/, "A = 清掉显式档回自动");
-  assert.match(DRAWER, /if \(next !== row\.step\) props\.onRowMotion\(row\.ids, \{ step: next \}\);/, "同值不写（一次写入一个撤销点）");
-  assert.match(DRAWER, /const \[motionOpen, setMotionOpen\] = useState\(false\)/, "默认收起：浮层不常驻占位");
+test("抽屉：效果按钮说人话 + 菜单 + 步号，同值不写", () => {
+  assert.match(DRAWER, /className=\{"exs-present-fxbtn"/, "每行只有一个效果按钮（不再是一排看不懂的图标）");
+  assert.match(DRAWER, /\{r\.auto \? `\$\{t\("自动"\)\} · \$\{t\(EFFECT_LABELS\[r\.effect\]\)\}` : t\(EFFECT_LABELS\[r\.effect\]\)\}/, "自动档显示成「自动 · 浮现」");
+
+  assert.match(DRAWER, /aria-haspopup="menu"/, "效果按钮打开菜单");
+  assert.match(DRAWER, /EFFECT_IDS\.map\(\(id\) =>/, "菜单里四档齐全");
+  assert.match(DRAWER, /props\.onRowMotion\(cur\.row\.ids, \{ effect \}\)/, "菜单选项写入效果");
+  assert.match(DRAWER, /effect === null \? cur\.row\.auto : !cur\.row\.auto && cur\.row\.effect === effect/, "同值不写（自动档也不重复写）");
+  assert.match(DRAWER, /if \(next !== row\.step\) props\.onRowMotion\(row\.ids, \{ step: next \}\);/, "步号同值不写");
+  assert.equal(DRAWER.includes("FX_ICONS"), false, "四枚字形退役：图标认不出「会怎么飞」");
+});
+
+test("本页编排画布：热区 ↔ 右栏行双向联动，右键直接换效果", () => {
+  assert.match(DRAWER, /rowHotspots\(props\.rows, \{ x: selSlide\.x, y: selSlide\.y, w: selSlide\.w, h: selSlide\.h \}\)/, "热区来自行的场景包围盒");
+  assert.match(DRAWER, /e\.stopPropagation\(\);\s*\n\s*selectRow\(s\.key\);/, "点热区 = 选中同一行");
+  assert.match(DRAWER, /data-rowkey=\{r\.key\}/, "行列表带 key，选中时能滚到可见");
+  assert.match(DRAWER, /onContextMenu=\{\(e\) => \{\s*\n\s*e\.preventDefault\(\);\s*\n\s*e\.stopPropagation\(\);\s*\n\s*if \(r\) openFxMenu\(r, e\.clientX, e\.clientY\);/, "右键热区直接开效果菜单");
+  assert.match(DRAWER, /noteStage\(t\("这里是画框空白处，点带编号的元素。"\)\)/, "点空白处要有解释，不是没反应");
+  assert.match(
+    DRAWER,
+    /const stageEmpty = !selSlide \|\| selSlide\.blank \|\| props\.rows\.length === 0;/,
+    "空白页没有可点的东西，别让用户对着空地找编号",
+  );
+  assert.match(
+    DRAWER,
+    /\{stageEmpty \? null : \(\s*\n\s*<div className="exs-present-stage__foot">/,
+    "空页连「点元素」底注一起收起",
+  );
+  assert.match(
+    DRAWER,
+    /view === "page"\s*\n\s*\? t\("画面只做预览：改位置或文字请回画布；翻页点上方 ‹ ›。"\)/,
+    "本页视图底注不再提看不见的缩略图",
+  );
+  assert.match(APP, /stageThumbs=\{presentStageThumbs\}/, "宿主递本页高清预览");
+  assert.match(APP, /maxWidthOrHeight: big \? STAGE_MAX : THUMB_MAX/, "同一串行队列出两种尺寸");
+  assert.match(CSS, /\.exs-present-stage__canvas \{[^}]*position: relative;/, "热区以画布为定位基准");
+  assert.match(CSS, /\.exs-present-hotspot::before \{[^}]*inset: -6px;/, "细线/箭头的热区要外扩");
+  assert.match(CSS, /\.exs-present-mrow--sel \{[^}]*border-color: var\(--exs-accent\);/, "选中行与热区同色环");
 });
 
 /* ------------------------------ ③ 分层与文案 ------------------------------ */
@@ -269,21 +342,57 @@ test("presentation-motion 是纯逻辑：不碰 React / vendor / vendor 类型",
   assert.equal(M.includes("@excalidraw"), false);
   assert.equal(M.includes("../i18n"), false);
   const runtime = [...M.matchAll(/^import (?!type).* from "([^"]+)";$/gm)].map((m) => m[1]);
-  assert.deepEqual(runtime, ["./presentation-plan.ts"], "运行期只许依赖片单纯逻辑（对 run 只能 import type，反向就成环）");
+  assert.deepEqual(
+    runtime,
+    ["./presentation-plan.ts", "./presentation-draw.ts"],
+    "运行期只许依赖片单纯逻辑（对 run 只能 import type，反向就成环；draw 是几何纯函数可以进）",
+  );
 });
 
-test("样式：编排区按主题 token，控件不靠位移", () => {
-  assert.match(CSS, /\.exs-present-motion \{[^}]*border: 1px solid var\(--exs-menu-border\);/);
-  assert.match(CSS, /\.exs-present-motion__list \{[^}]*max-height: 190px;[^}]*overflow-y: auto;/, "条目多就内部滚，别把抽屉顶出画布");
-  assert.match(CSS, /\.exs-present-fx--on \{[^}]*background: var\(--exs-accent-container\);[^}]*color: var\(--exs-accent-on-container\);/);
+test("样式：右栏常驻、行列表与顺序预览各自限高，控件不靠位移", () => {
+  assert.match(CSS, /\.exs-present-inspector \{[^}]*border-left: 0\.5px solid var\(--exs-separator\);/, "右栏用分隔线而不是整块卡片");
+  assert.match(CSS, /\.exs-present-inspector__rows \{[^}]*max-height: 58%;[^}]*overscroll-behavior: contain;/, "行多就内部滚，给顺序预览留位置");
+  assert.match(CSS, /\.exs-present-inspector__rows--muted \{[^}]*opacity: 0\.45;/, "整页模式压暗行列表");
+  assert.match(CSS, /\.exs-present-fxbtn \{[^}]*box-sizing: border-box;[^}]*width: 82px;/, "效果按钮按最长档定宽，切档不位移");
+  assert.match(CSS, /\.exs-present-fxbtn__text \{[^}]*text-overflow: ellipsis;/, "名字超长截断，不挤走步号");
   assert.match(CSS, /\.exs-present-mrow__step \{[^}]*box-sizing: border-box;/, "本仓库没有全局 box-sizing，定宽输入框必须自己声明");
   assert.match(CSS, /\.exs-present-mrow__label \{[^}]*flex: 1;[^}]*text-overflow: ellipsis;/, "名字最长，独占弹性宽度");
+  assert.match(CSS, /\.exs-present-seg__btn--on \{[^}]*background: var\(--exs-menu-solid\);/, "分段选中态用实心底色，不靠位移");
+  assert.match(CSS, /\.exs-present-seq__chip \{[^}]*text-overflow: ellipsis;/, "长名字截断，别把分组撑破");
+});
+
+test("窄窗回退：容器查询把右栏落到片单下方，顺序预览让位", () => {
+  assert.match(
+    CSS,
+    /\.exs-present-drawer \{[^}]*container-type: inline-size;/,
+    "抽屉是查询容器：思源右 Dock 开着时视口宽度不等于画布宽度",
+  );
+  assert.match(
+    CSS,
+    /@container \(max-width: 1000px\) \{[\s\S]{0,320}grid-template-rows: minmax\(0, 1fr\) minmax\(0, 260px\);/,
+    "窄窗改成上下两行",
+  );
+  assert.match(CSS, /@container \(max-width: 1000px\) \{[\s\S]{0,1200}\.exs-present-seq \{\s*\n\s*display: none;/, "窄窗先砍顺序预览");
 });
 
 test("i18n：四档效果名与编排说明双语齐备，英文确实是英文", () => {
   const zh = json("i18n/zh_CN.json");
   const en = json("i18n/en_US.json");
-  const keys = [...Object.values(EFFECT_LABELS), "出场编排", "按类型自动", "第几步出场"];
+  const keys = [
+    ...Object.values(EFFECT_LABELS),
+    "出场编排",
+    "按类型自动",
+    "第几步出场",
+    "淡入并微微上移，最克制。",
+    "带一点过冲再定住，最醒目。",
+    "从下方升上来，位移更大。",
+    "从左滑入，适合箭头和连线。",
+    "跟着元素类型走：文本浮现、图形弹入、图片升起、箭头滑入。",
+    "本页",
+    "页单",
+    "哪些元素能编排？",
+    "画框里的每个文字、图形、图片、箭头都算一条。",
+  ];
   for (const k of keys) {
     assert.equal(zh[k], k, `zh 缺词条或值不等于 key：${k}`);
     assert.ok(typeof en[k] === "string" && en[k] !== k, `en 缺词条：${k}`);

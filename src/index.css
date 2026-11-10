@@ -4167,14 +4167,16 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  /* 拖动后由内联样式接管 left/top 并把 right/bottom 置auto，此时靠 max-height 收住 */
-  max-height: calc(100% - 64px);
+  /* 拖动后由内联样式接管 left/top 并把 right/bottom 置auto，此时靠高度收住 */
+  height: min(840px, calc(100% - 24px));
   z-index: 8;
   display: flex;
   flex-direction: column;
-  /* 第八十一轮：窄长条改成双列浏览窗，一屏能看全整场片单 */
-  width: 560px;
-  max-width: calc(100% - 20px);
+  /* 第八十四轮：横向双栏窗口——左边片单自己滚，右边编排常驻 */
+  width: min(1180px, calc(100% - 24px));
+  max-width: calc(100% - 24px);
+  /* 窄画布回退用容器查询：媒体查询量的是视口，思源右 Dock/分栏时对不上 */
+  container-type: inline-size;
   border-radius: 16px;
   background: var(--exs-glass-bg);
   -webkit-backdrop-filter: blur(18px) saturate(160%);
@@ -4279,21 +4281,71 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   color: var(--exs-text);
 }
 
+/* 双栏主体：左片单吃余宽、右编排定宽 340；窄窗由下方容器查询改成上下叠 */
 .exs-present-drawer__body {
   flex: 1;
   min-height: 0;
-  /* 滚动条由 .exs-present-scroll 藏掉；这里只管内边距与裁切 */
-  padding: 0 8px 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
+
+/* 一页都没有时不摆空的双栏：只放一张说明卡 */
+.exs-present-drawer__body--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 12px;
+}
+
+.exs-present-drawer__slides {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 2px 4px 8px 12px;
+}
+
+/* 页单工具条：页数 + 两栏/三栏住在片单里，切本页/页单不牵动抽屉头部 */
+.exs-present-pagetools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px 8px 2px;
+}
+
+.exs-present-pagetools__count {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--exs-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 片单独立滚动：页多也只滚左边，右栏的编排入口永远在原位 */
+.exs-present-drawer__scroll {
+  flex: 1;
+  min-height: 0;
+  overscroll-behavior: contain;
 }
 
 .exs-present-list {
-  /* 双列网格：宽窗口两列、画布窄时自动退回一列 */
+  /* 默认三栏（宽窗 auto-fill 兜底、画布窄时自动退回）；两栏由页单工具条切 */
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 2px 4px;
+  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  gap: 8px;
   margin: 0;
-  padding: 0;
+  padding: 2px 6px 6px 2px;
   list-style: none;
+  align-content: start;
+}
+
+/* 两栏：缩略图约放大 1.5 倍，页内小字也看得清；窄窗叠放时同样只排两栏 */
+.exs-present-list[data-cols="2"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 /* 第八十轮：每页一张缩略图卡片（对标 Excalidraw+ 的 Slides 面板）
@@ -4517,11 +4569,12 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   color: var(--exs-text);
 }
 
-/* 批 1C/1E：整页模式的那条「逐条」按钮压暗；设置区的推子与开关 */
-.exs-present-mini--muted {
-  opacity: 0.4;
+/* 第八十七轮：页卡播放键——它是「进片场」，hover 用强调色和眼睛/改名区分开 */
+.exs-present-mini--play:hover:not(:disabled) {
+  color: var(--exs-accent);
 }
 
+/* 批 1C/1E：设置区的推子与开关 */
 .exs-present-close--on {
   background: var(--exs-hover);
   color: var(--exs-text);
@@ -4738,86 +4791,183 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 }
 
 /*
- * 第八十二轮：出场编排区（抽屉里，选中页每条 = 一行「效果 + 步号」）。
- * 卡片描边 + 内部分隔线，口径同拓展面板那批；整块默认收起，展开才有高度——
- * 抽屉是压在画布上的浮层，常驻控件等于永久少一块画布。
+ * 第八十四轮：右栏「出场编排」检查器（常驻）。
+ * 页多时毛病在左边片单——编排入口原先压在列表底部，要一路滚下去才够得到；
+ * 现在片单自己滚，右栏固定不动。窄窗把它落到片单下方（见文件末尾的容器查询）。
  */
-.exs-present-motion {
-  box-sizing: border-box;
-  margin: 8px 6px 2px;
-  border: 1px solid var(--exs-menu-border);
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.exs-present-motion__head {
+.exs-present-inspector {
+  min-width: 0;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  box-sizing: border-box;
-  width: 100%;
-  padding: 7px 9px;
-  border: 0;
-  background: transparent;
-  color: var(--exs-text-secondary);
-  font-family: inherit;
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
+  flex-direction: column;
+  border-left: 0.5px solid var(--exs-separator);
+  background: color-mix(in srgb, var(--exs-menu-solid) 38%, transparent);
 }
 
-.exs-present-motion__head:hover {
-  background: var(--exs-hover);
-  color: var(--exs-text);
+.exs-present-inspector__head {
+  flex: none;
+  padding: 10px 14px;
+  border-bottom: 0.5px solid var(--exs-separator);
 }
 
-.exs-present-motion__head--on {
-  color: var(--exs-text);
+.exs-present-inspector__top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
-.exs-present-motion__page {
+.exs-present-inspector__title {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.exs-present-inspector__page {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--exs-text-secondary);
   text-overflow: ellipsis;
-  font-size: 11px;
+  white-space: nowrap;
 }
 
-/* 条数徽标：让用户展开前就知道这一页值不值得点开 */
-.exs-present-motion__count {
+/* 条数徽标：正文之外最常被扫一眼的信息 */
+.exs-present-inspector__count {
   flex: none;
-  min-width: 18px;
-  padding: 1px 5px;
-  border-radius: 9px;
-  background: var(--exs-hover-strong);
+  min-width: 20px;
+  box-sizing: border-box;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--exs-hover);
   color: var(--exs-text-secondary);
-  font-size: 10.5px;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.exs-present-inspector__sub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.exs-present-inspector__hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--exs-text-secondary);
+}
+
+/* 逐条/整页分段：排在提示右边，不另起一行抢高度 */
+.exs-present-seg {
+  flex: none;
+  display: flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--exs-hover);
+}
+
+.exs-present-seg__btn {
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color 110ms ease, color 110ms ease;
+}
+
+.exs-present-seg__btn:hover {
+  color: var(--exs-text);
+}
+
+.exs-present-seg__btn--on {
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* 行列表：条目多就自己滚，给下面的「出场顺序」留位置 */
+.exs-present-inspector__rows {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 58%;
+  margin: 0;
+  padding: 6px 10px 6px 8px;
+  overscroll-behavior: contain;
+}
+
+/* 整页模式：行照旧列着，但压暗且不能改——切回逐条才好使 */
+.exs-present-inspector__rows--muted {
+  opacity: 0.45;
+}
+
+.exs-present-inspector__rows--muted button,
+.exs-present-inspector__rows--muted input {
+  cursor: default;
+}
+
+.exs-present-mrows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.exs-present-inspector__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 22px 12px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--exs-text-secondary);
   text-align: center;
 }
 
-.exs-present-motion__empty {
-  padding: 8px 10px 10px;
-  border-top: 1px solid var(--exs-separator);
-  font-size: 11.5px;
-  line-height: 1.6;
-  color: var(--exs-text-secondary);
+.exs-present-inspector__empty b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--exs-text);
 }
 
-.exs-present-motion__list {
-  max-height: 190px;
-  margin: 0;
-  padding: 2px 0 4px;
-  overflow-y: auto;
-  border-top: 1px solid var(--exs-separator);
-  list-style: none;
+.exs-present-inspector__foot {
+  flex: none;
+  padding: 8px 14px 9px;
+  border-top: 0.5px solid var(--exs-separator);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--exs-text-secondary);
 }
 
 .exs-present-mrow {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
+  box-sizing: border-box;
+  min-height: 36px;
+  padding: 4px 6px 4px 8px;
+  border: 0.5px solid transparent;
+  border-radius: 9px;
+  transition: background-color 110ms ease, border-color 110ms ease;
+}
+
+.exs-present-mrow:hover {
+  background: color-mix(in srgb, var(--exs-menu-solid) 66%, transparent);
+  border-color: var(--exs-separator);
+}
+
+/* 编过步的行提亮一点：一眼看出哪些已经排进队了 */
+.exs-present-mrow--on {
+  background: color-mix(in srgb, var(--exs-menu-solid) 82%, transparent);
+  border-color: var(--exs-menu-border);
 }
 
 /* 名字最长（用户自己的文字），所以它独占弹性宽度并截断；控件按最长档预留不位移 */
@@ -4831,57 +4981,104 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   color: var(--exs-text);
 }
 
-.exs-present-mrow__fx {
+/* 行号：和本页画面上的徽标同号，扫一眼就能对上 */
+.exs-present-mrow__no {
   flex: none;
-  display: flex;
-  align-items: center;
-  gap: 1px;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--exs-hover);
+  color: var(--exs-text-secondary);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
-.exs-present-fx {
+/* 当前选中的条：和画面热区同色环，不用猜「刚才点的是哪一条」 */
+.exs-present-mrow--sel {
+  background: color-mix(in srgb, var(--exs-menu-solid) 92%, transparent);
+  border-color: var(--exs-accent);
+  box-shadow: 0 0 0 2px var(--exs-focus-ring);
+}
+
+/*
+ * 效果按钮：说人话（自动 · 浮现 / 弹入 …）。
+ * 定宽 82 是按最长档「自动 · 浮现」预留的——切档时控件不位移；
+ * 文本溢出就截断，别把步号输入框挤出行外。
+ */
+.exs-present-fxbtn {
   flex: none;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 2px;
   box-sizing: border-box;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--exs-text-secondary);
+  width: 82px;
+  height: 25px;
+  padding: 0 5px 0 7px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 6px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
   font-family: inherit;
   font-size: 11px;
-  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
+  transition: background-color 110ms ease, border-color 110ms ease, opacity 110ms ease;
 }
 
-.exs-present-fx:hover {
+.exs-present-fxbtn:hover:not(:disabled) {
   background: var(--exs-hover-strong);
-  color: var(--exs-text);
+  border-color: var(--exs-menu-border);
 }
 
-.exs-present-fx--on {
-  background: var(--exs-accent-container);
-  color: var(--exs-accent-on-container);
+.exs-present-fxbtn--auto {
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-fxbtn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.exs-present-fxbtn__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.exs-present-fxbtn__caret {
+  flex: none;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--exs-text-secondary);
 }
 
 .exs-present-mrow__step {
   flex: none;
   box-sizing: border-box;
-  width: 34px;
-  height: 22px;
-  padding: 0 3px;
-  border: 1px solid var(--exs-menu-border);
+  width: 36px;
+  height: 25px;
+  padding: 0 4px;
+  border: 0.5px solid var(--exs-menu-border);
   border-radius: 6px;
   background: var(--exs-menu-solid);
   color: var(--exs-text);
   font-family: inherit;
   font-size: 11.5px;
   text-align: center;
+  font-variant-numeric: tabular-nums;
   outline: none;
   appearance: textfield;
+}
+
+.exs-present-mrow__step:disabled {
+  color: var(--exs-text-secondary);
 }
 
 .exs-present-mrow__step::-webkit-inner-spin-button,
@@ -4895,19 +5092,536 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   box-shadow: 0 0 0 3px var(--exs-focus-ring);
 }
 
-.exs-present-tip {
-  margin: 6px 6px 2px;
-  padding: 0 4px;
+/* ------------------------- 第八十五轮：本页编排画布 ------------------------- */
+
+.exs-present-drawer__slides--stage {
+  padding: 4px 12px 10px;
+}
+
+.exs-present-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.exs-present-stage__bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.exs-present-stage__nav {
+  flex: none;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 6px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.exs-present-stage__nav:hover:not(:disabled) {
+  background: var(--exs-hover-strong);
+}
+
+.exs-present-stage__nav:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.exs-present-stage__pageno {
+  flex: none;
   font-size: 11px;
-  line-height: 1.6;
+  font-weight: 600;
+  color: var(--exs-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.exs-present-stage__pagetotal {
+  font-weight: 400;
   color: var(--exs-text-secondary);
+}
+
+.exs-present-stage__pagename {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--exs-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exs-present-stage__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 0;
+}
+
+.exs-present-stage__canvas {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  border: 0.5px solid var(--exs-separator);
+  border-radius: 8px;
+  background: var(--exs-menu-solid);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.exs-present-stage__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+
+.exs-present-stage__ph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11.5px;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-stage__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 18px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--exs-text-secondary);
+  text-align: center;
+}
+
+.exs-present-stage__empty b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--exs-text);
+}
+
+/* 整页模式：画面只做预览，热区压暗但仍可点（点一下还是能定位到右栏那一行） */
+.exs-present-stage__canvas--muted .exs-present-hotspot {
+  opacity: 0.5;
+}
+
+.exs-present-stage__foot {
+  flex: none;
+  min-height: 16px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-stage__note {
+  color: var(--exs-accent);
+}
+
+/*
+ * 热区：严格按元素包围盒定位（百分比），::before 把可点范围外扩 6px——
+ * 细线/箭头本身只有几个像素高，没有这块外扩根本点不中。
+ * 视觉上默认只描一条淡虚线；悬浮/选中才实心高亮。
+ */
+.exs-present-hotspot {
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  outline: 1px dashed color-mix(in srgb, var(--exs-accent) 34%, transparent);
+  outline-offset: -1px;
+  cursor: pointer;
+  transition: background-color 120ms ease, outline-color 120ms ease, box-shadow 120ms ease;
+}
+
+.exs-present-hotspot::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+
+.exs-present-hotspot:hover,
+.exs-present-hotspot--hot {
+  background: color-mix(in srgb, var(--exs-accent) 10%, transparent);
+  outline: 1.5px solid var(--exs-accent);
+}
+
+.exs-present-hotspot--on {
+  background: color-mix(in srgb, var(--exs-accent) 16%, transparent);
+  outline: 2px solid var(--exs-accent);
+  box-shadow: 0 0 0 3px var(--exs-focus-ring);
+}
+
+.exs-present-hotspot__no {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 0.5px solid var(--exs-accent);
+  border-radius: 5px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.exs-present-hotspot--on .exs-present-hotspot__no {
+  background: var(--exs-accent-container);
+  color: var(--exs-accent-on-container);
+}
+
+/* 效果菜单：挂在抽屉根上，绝对定位（不进行列表的滚动裁剪） */
+.exs-present-fxmenu {
+  position: absolute;
+  z-index: 20;
+  box-sizing: border-box;
+  width: 232px;
+  padding: 6px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 10px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2), 0 1px 3px rgba(0, 0, 0, 0.12);
+  font-family: var(--exs-font-ui);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.exs-present-fxmenu__head {
+  padding: 3px 8px 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-fxmenu__sep {
+  height: 0.5px;
+  margin: 4px;
+  background: var(--exs-separator);
+}
+
+.exs-present-fxopt {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.exs-present-fxopt:hover,
+.exs-present-fxopt--on {
+  background: var(--exs-hover);
+}
+
+.exs-present-fxopt__name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--exs-text);
+}
+
+.exs-present-fxopt__hint {
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--exs-text-secondary);
+  white-space: normal;
+}
+
+.exs-present-fxopt__check {
+  flex: none;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--exs-accent);
+}
+
+/* 悬浮说明：白底浮层，不靠原生 title 的慢弹出 */
+.exs-present-fxtip {
+  position: absolute;
+  z-index: 24;
+  box-sizing: border-box;
+  max-width: 240px;
+  padding: 6px 9px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 8px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+  font-size: 10.5px;
+  line-height: 1.45;
+  white-space: pre-line;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+}
+
+.exs-present-fxtip--below {
+  transform: translate(-50%, 8px);
+}
+
+/* 右栏标题旁的 ⓘ：解释「哪些元素能编排」 */
+.exs-present-info {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+
+.exs-present-info__btn {
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px;
+  font-style: italic;
+  line-height: 16px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.exs-present-info__btn:hover,
+.exs-present-info__btn--on {
+  background: var(--exs-hover);
+  color: var(--exs-text);
+}
+
+.exs-present-info__pop {
+  position: absolute;
+  right: -6px;
+  top: 24px;
+  z-index: 12;
+  box-sizing: border-box;
+  width: 252px;
+  padding: 10px 12px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 10px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text-secondary);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2), 0 1px 3px rgba(0, 0, 0, 0.12);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.exs-present-info__pop b {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--exs-text);
+}
+
+.exs-present-info__pop ul {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding-left: 14px;
+}
+
+.exs-present-info__ok {
+  width: 100%;
+  height: 24px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--exs-hover);
+  color: var(--exs-text);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.exs-present-info__ok:hover {
+  background: var(--exs-hover-strong);
+}
+
+/* 出场顺序：把「谁先谁后」压成一眼能读的分组，行数少时也不留大片空白 */
+.exs-present-seq {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 14px 10px;
+  border-top: 0.5px solid var(--exs-separator);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.exs-present-seq::-webkit-scrollbar {
+  display: none;
+}
+
+.exs-present-seq--muted .exs-present-seq__list {
+  opacity: 0.5;
+}
+
+.exs-present-seq__head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.exs-present-seq__title {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-seq__hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10.5px;
+  color: var(--exs-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exs-present-seq__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.exs-present-seq__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.exs-present-seq__step {
+  flex: none;
+  min-width: 46px;
+  box-sizing: border-box;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--exs-accent-container);
+  color: var(--exs-accent-on-container);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.exs-present-seq__step--auto {
+  background: var(--exs-hover);
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-seq__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.exs-present-seq__chip {
+  max-width: 100%;
+  box-sizing: border-box;
+  height: 20px;
+  padding: 0 7px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 6px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text-secondary);
+  font-size: 10.5px;
+  line-height: 19px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 窄画布：右栏落到片单下方，两栏各自滚；顺序预览先让位给可编辑的行 */
+@container (max-width: 1000px) {
+  .exs-present-drawer__body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 260px);
+  }
+
+  .exs-present-inspector {
+    border-left: 0;
+    border-top: 0.5px solid var(--exs-separator);
+  }
+
+  .exs-present-list {
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  }
+
+  .exs-present-inspector__rows {
+    flex: 1 1 auto;
+    max-height: none;
+  }
+
+  .exs-present-seq {
+    display: none;
+  }
 }
 
 .exs-present-drawer__foot {
   display: flex;
+  align-items: center;
   gap: 8px;
-  padding: 8px 12px 12px;
-  border-top: 1px solid var(--exs-separator);
+  padding: 9px 12px 11px 14px;
+  border-top: 0.5px solid var(--exs-separator);
+}
+
+/* 左一是「片单怎么用」的一句话：窄窗截断，标题里给全文 */
+.exs-present-drawer__tipline {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--exs-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 新建页：次级按钮（实心紫只留给「开始演示」） */
@@ -4923,8 +5637,9 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   justify-content: center;
   gap: 5px;
   box-sizing: border-box;
-  padding: 8px 12px;
-  border: 1px solid var(--exs-menu-border);
+  height: 34px;
+  padding: 0 13px;
+  border: 0.5px solid var(--exs-menu-border);
   border-radius: 9px;
   background: transparent;
   color: var(--exs-text);
@@ -5103,20 +5818,54 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   white-space: nowrap;
 }
 
+/* 第八十七轮：底栏「从本页开始」——同新建页的次级按钮，实心紫仍只留给「开始演示」 */
+.exs-present-playfrom {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  box-sizing: border-box;
+  height: 34px;
+  padding: 0 13px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--exs-text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.exs-present-playfrom:hover:not(:disabled) {
+  background: var(--exs-hover);
+  border-color: var(--exs-accent);
+}
+
+.exs-present-playfrom:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .exs-present-play {
   display: flex;
-  flex: 1;
+  flex: none;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  width: 100%;
-  padding: 8px 12px;
+  box-sizing: border-box;
+  min-width: 168px;
+  height: 34px;
+  padding: 0 13px;
   border: 0;
   border-radius: 9px;
   background: var(--exs-accent);
   color: var(--exs-accent-on);
   font-family: inherit;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: background-color 120ms ease;

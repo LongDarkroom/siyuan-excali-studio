@@ -14,6 +14,12 @@
 /** 缩略图最长边的目标像素。112px 高的卡片在 2x 屏上要 300~400 才不糊 */
 export const THUMB_MAX = 480;
 
+/**
+ * 本页预览（编排画布）最长边：左栏约 660px 宽，2x 屏需要 1200+ 才不糊。
+ * 只给当前选中页画一张，签名口径与缩略图完全相同。
+ */
+export const STAGE_MAX = 1280;
+
 /** 缩略图签名只需要元素里这几样（结构兼容 vendor 的 ExcalidrawElement） */
 export type ThumbElement = {
   id: string;

@@ -33,7 +33,7 @@ import { IMAGE_TO_MATERIAL, INSERT_BOARD_CARD, OUTLINE_COLOR, PRESENTATION, rail
 import { deckOf, deckSignature, moveSlide, PRESENTATION_KEY, slideTitle, toggleSlide, toggleSlideReveal, visibleSlides, type Deck, type DeckPatch, type FrameLike, type Slide } from "./presentation-plan";
 import { frameSizeFor, nextFrameSpot, type FrameRatio } from "./frame-presets.ts";
 import { makeElement } from "./ea-element.ts";
-import { THUMB_MAX, thumbSignature, type ThumbElement } from "./presentation-thumbs.ts";
+import { STAGE_MAX, THUMB_MAX, thumbSignature, type ThumbElement } from "./presentation-thumbs.ts";
 import { installRadioIsolation } from "./radio-isolation.ts";
 import {
   buildRestorePatches,
@@ -64,6 +64,7 @@ import {
   type MotionRow,
   type PosePatch,
 } from "./presentation-motion.ts";
+import { drawBoxOf, drawFrame, isDrawableElement, type DrawBox, type DrawGeom, type DrawPoint } from "./presentation-draw.ts";
 import { buildSlideGraph, graphState, type GraphFrame, type GraphSide, type GraphState, type SlideGraph } from "./presentation-graph.ts";
 import {
   navEnd,
@@ -169,6 +170,42 @@ const PRESENT_CAM_MS = 480;
 
 /** 放映推进的来路：advance 才打字；jump/enter 只落补丁 */
 type PresentNav = "advance" | "jump" | "enter";
+
+/** 第八十六轮：划线写回 vendor 的几何补丁（x/y 不动，points 是裁过的折线） */
+type DrawPatch = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** 折线（或形状临时的轮廓描迹）；形状收笔还原时不带，避免给形状塞一个空数组 */
+  points?: readonly DrawPoint[];
+  opacity: number;
+  /** 第八十八轮：形状这一帧临时换成多边形折线，要一起写 type/polygon/roundness */
+  swap?: boolean;
+  /** 第八十八轮：形状收笔/中断/收尾，按快照写回原来的类型、多边形填充与圆角 */
+  restore?: { type: string; polygon?: boolean; roundness?: unknown };
+};
+
+/** 形状换成折线后，收笔要还原的字段（折线元素没有，返回 undefined） */
+function shapeRestoreOf(el: RunElement): DrawPatch["restore"] {
+  if (el.type === "line") return undefined;
+  return { type: el.type ?? "line", polygon: el.polygon, roundness: el.roundness };
+}
+
+/** 按快照把几何写回原样的补丁：折线回 points，形状回类型/圆角 */
+function restorePatchOf(el: RunElement, want: number): DrawPatch {
+  return {
+    id: el.id,
+    x: el.x,
+    y: el.y,
+    width: el.width ?? 0,
+    height: el.height ?? 0,
+    points: el.type === "line" ? el.points ?? [] : undefined,
+    opacity: want,
+    restore: shapeRestoreOf(el),
+  };
+}
 
 export type StudioProps = {
   /** 打开已有白板时的内容；新建为 null */
@@ -818,9 +855,16 @@ export function StudioApp(props: StudioProps) {
    * 生成是异步且串行的（一次一张），签名变了才重画；抽屉开着或放映中才排队。
    */
   const [presentThumbs, setPresentThumbs] = useState<Record<string, string>>({});
+  /**
+   * 第八十五轮：本页编排画布的高清预览（只画当前选中页，最长边 STAGE_MAX）。
+   * 和卡片缩略图共用一条串行队列与签名：同一份内容只导出两张不同尺寸。
+   */
+  const [presentStageThumbs, setPresentStageThumbs] = useState<Record<string, string>>({});
   const thumbCacheRef = useRef<Map<string, { sig: string; url: string }>>(new Map());
+  const stageCacheRef = useRef<Map<string, { sig: string; url: string }>>(new Map());
   const thumbWantedRef = useRef<Map<string, string>>(new Map());
-  const thumbQueueRef = useRef<string[]>([]);
+  /** 队列项带尺寸档：big = 本页编排画布，small = 片单卡片 */
+  const thumbQueueRef = useRef<{ id: string; big: boolean }[]>([]);
   const thumbBusyRef = useRef(false);
   const thumbTimerRef = useRef<number | null>(null);
   const thumbsOnRef = useRef(false);
@@ -833,6 +877,9 @@ export function StudioApp(props: StudioProps) {
   /** 动画帧里要读最新片单/底色；放进 ref，避免把整个 onChange 回调绑死在 state 上 */
   const deckRef = useRef<Deck>({ slides: [], hasOrdered: false });
   deckRef.current = deck;
+  /** 防抖回调里要知道「当前选中页」，不能靠闭包里可能过期一拍的 presentSel */
+  const presentSelRef = useRef(0);
+  presentSelRef.current = presentSel;
   const presentBgRef = useRef<() => string>(() => "#ffffff");
   presentBgRef.current = () => {
     const raw = api?.getAppState().viewBackgroundColor;
@@ -1024,9 +1071,17 @@ export function StudioApp(props: StudioProps) {
     thumbBusyRef.current = true;
     try {
       while (thumbQueueRef.current.length > 0) {
-        const id = thumbQueueRef.current.shift() as string;
+        const task = thumbQueueRef.current.shift() as { id: string; big: boolean };
+        const { id, big } = task;
         const want = thumbWantedRef.current.get(id);
         if (!want) continue;
+        const cache = big ? stageCacheRef.current : thumbCacheRef.current;
+        const cached = cache.get(id);
+        if (cached && cached.sig === want) {
+          if (big) setPresentStageThumbs((prev) => (prev[id] === cached.url ? prev : { ...prev, [id]: cached.url }));
+          else setPresentThumbs((prev) => (prev[id] === cached.url ? prev : { ...prev, [id]: cached.url }));
+          continue;
+        }
         const all = (presentSnapRef.current?.thumbElements ?? api?.getSceneElements()) as unknown as
           | (ThumbElement & Record<string, unknown>)[]
           | undefined;
@@ -1047,7 +1102,7 @@ export function StudioApp(props: StudioProps) {
             files: api?.getFiles() ?? {},
             exportingFrame: frame as never,
             exportPadding: 0,
-            maxWidthOrHeight: THUMB_MAX,
+            maxWidthOrHeight: big ? STAGE_MAX : THUMB_MAX,
           });
         } catch (e) {
           // 字体/嵌入图片的偶发失败不该打断用户操作：留占位，下次内容变化再试
@@ -1057,8 +1112,9 @@ export function StudioApp(props: StudioProps) {
         // 画到一半内容又变了：这张作废，队列里已有新签名的同一页
         if (thumbWantedRef.current.get(id) !== want) continue;
         const url = canvas.toDataURL("image/png");
-        thumbCacheRef.current.set(id, { sig: want, url });
-        setPresentThumbs((prev) => (prev[id] === url ? prev : { ...prev, [id]: url }));
+        cache.set(id, { sig: want, url });
+        if (big) setPresentStageThumbs((prev) => (prev[id] === url ? prev : { ...prev, [id]: url }));
+        else setPresentThumbs((prev) => (prev[id] === url ? prev : { ...prev, [id]: url }));
       }
     } finally {
       thumbBusyRef.current = false;
@@ -1088,18 +1144,35 @@ export function StudioApp(props: StudioProps) {
           if (sig !== "") wanted.set(s.id, sig);
         }
         thumbWantedRef.current = wanted;
-        // 队列里签名已过期的直接丢掉（内容还在变，先不画）
-        thumbQueueRef.current = thumbQueueRef.current.filter((id) => {
-          const sig = wanted.get(id);
-          return !!sig && thumbCacheRef.current.get(id)?.sig !== sig;
+        const sel = deckRef.current.slides[Math.min(presentSelRef.current, deckRef.current.slides.length - 1)];
+        // 队列里签名已过期、或高清任务已经换了选中页的，直接丢掉（内容还在变，先不画）
+        thumbQueueRef.current = thumbQueueRef.current.filter((task) => {
+          const sig = wanted.get(task.id);
+          if (task.big && task.id !== sel?.id) return false;
+          const cache = task.big ? stageCacheRef.current : thumbCacheRef.current;
+          return !!sig && cache.get(task.id)?.sig !== sig;
         });
+        const push = (id: string, big: boolean): void => {
+          if (thumbQueueRef.current.some((t) => t.id === id && t.big === big)) return;
+          thumbQueueRef.current.push({ id, big });
+        };
         for (const [id, sig] of wanted) {
           const cached = thumbCacheRef.current.get(id);
           if (cached && cached.sig === sig) {
             setPresentThumbs((prev) => (prev[id] === cached.url ? prev : { ...prev, [id]: cached.url }));
-            continue;
+          } else {
+            push(id, false);
           }
-          if (!thumbQueueRef.current.includes(id)) thumbQueueRef.current.push(id);
+        }
+        // 本页编排画布只画当前选中页：高清导出比卡片贵一个数量级，别预热整本
+        const selSig = sel && !sel.blank ? wanted.get(sel.id) : undefined;
+        if (sel && selSig) {
+          const cached = stageCacheRef.current.get(sel.id);
+          if (cached && cached.sig === selSig) {
+            setPresentStageThumbs((prev) => (prev[sel.id] === cached.url ? prev : { ...prev, [sel.id]: cached.url }));
+          } else {
+            push(sel.id, true);
+          }
         }
         pumpThumbsRef.current();
       };
@@ -1372,6 +1445,51 @@ export function StudioApp(props: StudioProps) {
     [api],
   );
   /**
+   * 第八十六轮：「划线」的几何补丁。
+   * 只写裁剪后的 points + 宽高 + opacity，NEVER 与坐标补丁同一口径；
+   * x/y 不挪（折线坐标相对元素原点），所以和 applyPosePatches 分开两条路，互不覆盖。
+   * 第八十八轮的形状还多一步换形：擦的时候 type 临时改成 line（`polygon` 打开、圆角必须
+   * 关掉——带 roundness 的 line 在 vendor 里走曲线，轮廓会糊成圆滑的绳子），收笔再写回原类型。
+   */
+  const applyDrawPatches = useCallback(
+    (patches: DrawPatch[]): void => {
+      if (!api || patches.length === 0) return;
+      const byId = new Map(patches.map((p) => [p.id, p]));
+      api.updateScene({
+        elements: api
+          .getSceneElements()
+          .map((e) => {
+            const p = byId.get(e.id);
+            if (!p) return e;
+            const next: Record<string, unknown> = {
+              ...e,
+              x: p.x,
+              y: p.y,
+              width: p.width,
+              height: p.height,
+              opacity: p.opacity,
+            };
+            if (p.points) next.points = p.points;
+            if (p.swap) {
+              next.type = "line";
+              next.polygon = true;
+              next.roundness = null;
+            } else if (p.restore) {
+              // 换回来的元素身上还留着上一帧的 points（形状本来没有这个字段），
+              // 不删掉会被自动保存写进板子文件
+              delete next.points;
+              next.type = p.restore.type;
+              next.polygon = p.restore.polygon;
+              next.roundness = p.restore.roundness;
+            }
+            return next;
+          }) as never,
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    },
+    [api],
+  );
+  /**
    * 在飞的动画：分组（错峰）+ 每个元素的基准坐标与终值 opacity。
    * 换页 / 跳页 / 退出之前都要先 finishMotion 落终态，否则中断在那一帧的元素
    * 会停在半空，而且下一次动画会把「半空的坐标」当成基准。
@@ -1379,8 +1497,14 @@ export function StudioApp(props: StudioProps) {
   const motionRef = useRef<{
     raf: number;
     groups: MotionGroup[];
-    base: Map<string, { x: number; y: number }>;
+    /** 基准：x/y 是进动画那一刻的真坐标，el 是同一份原始元素（points 只读快照） */
+    base: Map<string, { x: number; y: number; el: RunElement }>;
     target: Map<string, number>;
+    /** 效果为「划线」的分组 → 可划部分的外接框；null = 这一条没有可划的，回落成浮现 */
+    draw: Map<string, DrawBox | null>;
+    /** 划线进度里已经藏掉 / 已经收笔的元素：只在状态翻转那一帧写一次 */
+    hidden: Set<string>;
+    settled: Set<string>;
   } | null>(null);
   const finishMotion = useCallback((): void => {
     const m = motionRef.current;
@@ -1388,11 +1512,16 @@ export function StudioApp(props: StudioProps) {
     motionRef.current = null;
     if (m.raf) window.cancelAnimationFrame(m.raf);
     const out: PosePatch[] = [];
+    const geo: DrawPatch[] = [];
     for (const [id, b] of m.base) {
-      out.push({ id, x: b.x, y: b.y, opacity: m.target.get(id) ?? OPACITY_DEFAULT });
+      const want = m.target.get(id) ?? OPACITY_DEFAULT;
+      out.push({ id, x: b.x, y: b.y, opacity: want });
+      // 划线中途被打断：几何也要按快照回填，否则元素停在「擦了一半」的形状
+      if (isDrawableElement(b.el)) geo.push(restorePatchOf(b.el, want));
     }
+    applyDrawPatches(geo);
     applyPosePatches(out);
-  }, [applyPosePatches]);
+  }, [applyDrawPatches, applyPosePatches]);
   /**
    * 这一拍新露出的元素起飞。返回 false = 没得动（调用方回落硬切）。
    * `together` = 整页一起出（step=-1）：错峰全部归零，那是用户明确要的「一起」。
@@ -1405,29 +1534,86 @@ export function StudioApp(props: StudioProps) {
       const groups = motionGroups(all as readonly MotionElementLike[], ids, together);
       if (groups.length === 0) return false;
       const live = new Map(all.map((e) => [e.id, e]));
-      const base = new Map<string, { x: number; y: number }>();
+      const base = new Map<string, { x: number; y: number; el: RunElement }>();
       const target = new Map<string, number>();
+      const draw = new Map<string, DrawBox | null>();
       for (const g of groups) {
         for (const id of g.ids) {
           const e = live.get(id);
           if (!e) continue;
-          base.set(id, { x: e.x, y: e.y });
+          base.set(id, { x: e.x, y: e.y, el: e });
           target.set(id, snap.original.get(id) ?? OPACITY_DEFAULT);
+        }
+        if (g.effect === "draw") {
+          const members = g.ids.flatMap((id) => {
+            const e = live.get(id);
+            return e ? [e] : [];
+          });
+          draw.set(g.key, drawBoxOf(members));
         }
       }
       if (base.size === 0) return false;
-      const run: NonNullable<typeof motionRef.current> = { raf: 0, groups, base, target };
+      const run: NonNullable<typeof motionRef.current> = {
+        raf: 0,
+        groups,
+        base,
+        target,
+        draw,
+        hidden: new Set(),
+        settled: new Set(),
+      };
       motionRef.current = run;
       const start = performance.now();
       const frame = (): void => {
         if (motionRef.current !== run) return;
         const elapsed = performance.now() - start;
         const out: PosePatch[] = [];
+        const geo: DrawPatch[] = [];
         let done = true;
         for (const g of run.groups) {
           const local = elapsed - g.delay;
           if (local < EFFECTS[g.effect].ms) done = false;
           const p = poseOf(g.effect, local);
+          const box = run.draw.get(g.key);
+          if (box === null) {
+            // 标了划线但这组没有可划的折线/形状：退回浮现，别把文字/图片硬切出来
+            for (const id of g.ids) {
+              const b = run.base.get(id);
+              if (!b) continue;
+              out.push({ id, x: b.x, y: b.y, opacity: Math.round((run.target.get(id) ?? OPACITY_DEFAULT) * p.o) });
+            }
+            continue;
+          }
+          if (box) {
+            for (const id of g.ids) {
+              const b = run.base.get(id);
+              if (!b) continue;
+              const want = run.target.get(id) ?? OPACITY_DEFAULT;
+              if (!isDrawableElement(b.el)) {
+                // 绑定文字这类成员：跟着前沿淡入，不参与裁剪
+                out.push({ id, x: b.x, y: b.y, opacity: Math.round(want * p.o) });
+                continue;
+              }
+              const f = drawFrame(b.el, box, p.o, want);
+              if (f.kind === "hidden") {
+                if (!run.hidden.has(id)) {
+                  run.hidden.add(id);
+                  out.push({ id, x: b.x, y: b.y, opacity: 0 });
+                }
+              } else if (f.kind === "done") {
+                if (!run.settled.has(id)) {
+                  run.settled.add(id);
+                  run.hidden.delete(id);
+                  geo.push(restorePatchOf(b.el, want));
+                }
+              } else {
+                run.hidden.delete(id);
+                run.settled.delete(id);
+                geo.push({ id, ...f.geom, opacity: want });
+              }
+            }
+            continue;
+          }
           for (const id of g.ids) {
             const b = run.base.get(id);
             if (!b) continue;
@@ -1439,24 +1625,29 @@ export function StudioApp(props: StudioProps) {
             });
           }
         }
+        if (geo.length > 0) applyDrawPatches(geo);
         if (!done) {
-          applyPosePatches(out);
+          if (out.length > 0) applyPosePatches(out);
           run.raf = window.requestAnimationFrame(frame);
           return;
         }
-        // 收尾不再逐帧写，直接落终态（偏移归零、opacity 回元素自己的原值）
+        // 收尾不再逐帧写，直接落终态（偏移归零、几何回原样、opacity 回元素自己的原值）
         motionRef.current = null;
         const final: PosePatch[] = [];
+        const finalGeo: DrawPatch[] = [];
         for (const [id, b] of run.base) {
-          final.push({ id, x: b.x, y: b.y, opacity: run.target.get(id) ?? OPACITY_DEFAULT });
+          const want = run.target.get(id) ?? OPACITY_DEFAULT;
+          final.push({ id, x: b.x, y: b.y, opacity: want });
+          if (isDrawableElement(b.el)) finalGeo.push(restorePatchOf(b.el, want));
         }
+        applyDrawPatches(finalGeo);
         applyPosePatches(final);
       };
       // 第一帧立刻写：否则这一拍会先闪一下全文/全显，再从头飞
       frame();
       return true;
     },
-    [api, applyPosePatches],
+    [api, applyDrawPatches, applyPosePatches],
   );
   /**
    * 把某个游标落到场景上：纯函数算「该显示谁」，和现场比差异再写。
@@ -1761,7 +1952,7 @@ export function StudioApp(props: StudioProps) {
    * - **关画框渲染**：frameRendering 关掉，框线/画框名/裁剪都没了，成员照常渲染。
    *   （这是「放映全空」的根治点——不再把画框 opacity 压 0，也不清零非当前页。）
    */
-  const enterPresentation = useCallback((): void => {
+  const enterPresentation = useCallback((startFrameId?: string): void => {
     if (!api) return;
     const all = api.getSceneElements() as unknown as RunElement[];
     const shown = visibleSlides(deck);
@@ -1846,9 +2037,13 @@ export function StudioApp(props: StudioProps) {
       } as never,
       captureUpdate: CaptureUpdateAction.NEVER,
     });
-    // 起点：有图就从图的起点走，没图就按片单第一页
+    /*
+     * 起点三档（第八十七轮）：页卡播放键指定的页 > 图的起点 > 片单第一页。
+     * 图仍原样建——从中间页起播时后退最多回到这一页，不再补播前面的页。
+     */
     const plans = presentSnapRef.current.plans;
-    const startPage = graph ? Math.max(0, shown.findIndex((s) => s.id === graph.start)) : 0;
+    const at = startFrameId ? shown.findIndex((s) => s.id === startFrameId) : -1;
+    const startPage = at >= 0 ? at : graph ? Math.max(0, shown.findIndex((s) => s.id === graph.start)) : 0;
     const nav = navStart(plans, graph, startPage);
     presentNavRef.current = nav;
     setPresentOpen(false);
@@ -2016,6 +2211,8 @@ export function StudioApp(props: StudioProps) {
     : null;
 
   const startPresentation = useCallback((): void => enterPresentation(), [enterPresentation]);
+  /** 页卡播放键：从这个画框所在页起播（传 id 而不是下标，页序/入片变了也不会错页） */
+  const startPresentationAt = useCallback((id: string): void => enterPresentation(id), [enterPresentation]);
 
   /** 幕布/HUD 当前页的计划；退出那一帧 presenting 先置空，不会读到已清的快照 */
   const presentPlan = presenting ? presentSnapRef.current?.plans[presenting.page] : undefined;
@@ -3126,13 +3323,17 @@ export function StudioApp(props: StudioProps) {
           deck={deck}
           graph={presentGraph}
           thumbs={presentThumbs}
+          stageThumbs={presentStageThumbs}
           settings={presentSettings}
           onSetting={changePresentSetting}
           selected={Math.min(presentSel, Math.max(0, deck.slides.length - 1))}
           onSelect={(i) => {
             setPresentSel(i);
+            presentSelRef.current = i;
             const s = deck.slides[i];
             if (s) jumpToSlide(s);
+            // 高清本页预览只认选中页：换页立刻排队，别等下一次场景变化的防抖
+            scheduleThumbs(true);
           }}
           onMove={moveDeckSlide}
           onAddSlide={addDeckSlide}
@@ -3142,6 +3343,7 @@ export function StudioApp(props: StudioProps) {
           onRowMotion={setRowMotion}
           onRename={renameDeckSlide}
           onStart={startPresentation}
+          onStartAt={startPresentationAt}
           onClose={() => {
             setPresentOpen(false);
             // 抽屉关了又没在放映：不必再为缩略图排期（下次打开会立刻补）

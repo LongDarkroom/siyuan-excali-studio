@@ -337,8 +337,11 @@ test("抽屉的设置面板：逐条/幕布/打字机只发意图，值从宿主
   assert.match(MENU, /aria-checked=\{props\.checked\}/, "开关态对读屏可见");
   assert.equal(MENU.includes('type="range"'), false, "滑杆已退役（自动前进改开关）");
   assert.match(MENU, /const AUTO_ADVANCE_SECONDS = 10;/, "自动前进固定 10 秒/页");
-  assert.match(DRAWER, /onClick=\{\(\) => props\.onToggleReveal\(s\.id\)\}/, "每页的逐条/整页 mini 按钮");
-  assert.match(DRAWER, /aria-pressed=\{s\.reveal === "auto"\}/, "开关态对读屏可见");
+  assert.match(DRAWER, /onClick=\{\(\) => setReveal\(false\)\}/, "右栏「逐条」/「整页」分段");
+  assert.match(DRAWER, /onClick=\{\(\) => setReveal\(true\)\}/, "整页档");
+  assert.match(DRAWER, /if \(!selSlide \|\| \(selSlide\.reveal === "all"\) === all\) return;/, "点当前档不产生撤销点");
+  assert.match(DRAWER, /props\.onToggleReveal\(selSlide\.id\)/, "只发意图，写场景在宿主");
+  assert.match(DRAWER, /aria-pressed=\{!together\}/, "开关态对读屏可见");
 });
 
 test("第八十轮：抽屉卡片有缩略图/序号/页名，双击改名只发意图", () => {
@@ -382,7 +385,7 @@ test("抽屉默认居中浮窗：拖动记忆、双击回中，列表用渐隐�
   assert.match(DRAWER, /if \(!moved && Math\.hypot\(ev\.clientX - clientX0, ev\.clientY - clientY0\) < 3\) return;/, "3px 起步阈值：点一下不算拖");
   assert.match(DRAWER, /if \(moved\) writePos\(last\);/, "只有真的拖过才落位");
   assert.match(DRAWER, /let last: DrawerPos = \{\s*\n\s*rx: cbRect\.width > 0/, "落位起点是当前位置，不是 0,0");
-  assert.match(DRAWER, /<FadeScroll className="exs-present-drawer__body">/, "片单改用隐藏滚动条 + 底部渐隐");
+  assert.match(DRAWER, /<FadeScroll className="exs-present-drawer__scroll">/, "片单改用隐藏滚动条 + 底部渐隐");
   const body = CSS.slice(CSS.indexOf(".exs-present-drawer__body {"), CSS.indexOf("}", CSS.indexOf(".exs-present-drawer__body {")));
   assert.equal(/scrollbar-width/.test(body), false, "不再用系统细滚动条");
 });
@@ -435,9 +438,18 @@ test("i18n：本片词条双语齐备，中文原文即 key", () => {
     "已插入 {ratio} 画框 · {w}×{h}",
     "这一页不放映",
     "重新入片",
-    "这一页整页一起出",
-    "这一页逐条出场",
-    "拖动左侧把手改页序；双击页名改名；≡ 管整页还是逐条，眼睛管放不放。",
+    "逐条",
+    "整页",
+    "{n} 条",
+    "出场顺序",
+    "这一页的出场方式",
+    "片单列数",
+    "两栏",
+    "三栏",
+    "两栏：缩略图更大，看清页内细节",
+    "三栏：一屏放更多页",
+    "拖动缩略图左上角把手改页序；双击页名改名；眼睛管放不放。",
+    "画面只做预览：改位置或文字请回画布；翻页点上方 ‹ ›。",
     "双击重命名",
     "把镜头开过去看这一页",
     "生成预览…",
@@ -519,14 +531,43 @@ test("i18n：2026-11-08 放映底栏词条双语齐备、两份键序一致", ()
 
 /* ------------------------------ ⑥ 第八十一轮：双列 + 拖拽 + 标准画框 ------------------------------ */
 
-test("抽屉改成双列浏览窗：宽度、网格、统一画幅都落在 CSS 上", () => {
+test("抽屉改成横向双栏窗：片单自己滚、右栏常驻、窄窗回退", () => {
   const drawer = CSS.slice(CSS.indexOf(".exs-present-drawer {"), CSS.indexOf("}", CSS.indexOf(".exs-present-drawer {")));
-  assert.match(drawer, /width: 560px;/, "窄长条 300px 加宽成浏览窗");
+  assert.match(drawer, /width: min\(1180px, calc\(100% - 24px\)\);/, "第八十六轮：抽屉放大到 1180，预览才看得清");
+  assert.match(drawer, /height: min\(840px, calc\(100% - 24px\)\);/, "高度收在画布内，双栏才立得住");
+  assert.match(drawer, /container-type: inline-size;/, "窄窗回退用容器查询（视口宽度在思源分栏时不可靠）");
   assert.match(
     CSS,
-    /\.exs-present-list \{[^}]*display: grid;[^}]*grid-template-columns: repeat\(auto-fill, minmax\(210px, 1fr\)\);/,
-    "双列网格：画布窄时自动退回一列",
+    /\.exs-present-drawer__body \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\) 340px;/,
+    "左片单吃余宽、右编排定宽",
   );
+  assert.match(
+    CSS,
+    /\.exs-present-pagetools \{[^}]*display: flex;[^}]*align-items: center;/,
+    "页单工具条承载页数与列数开关",
+  );
+  assert.match(
+    DRAWER,
+    /className="exs-present-pagetools"[\s\S]{0,400}exs-present-cols/,
+    "两栏/三栏住在页单工具条里，切本页/页单不牵动抽屉头部",
+  );
+  assert.match(
+    CSS,
+    /\.exs-present-list \{[^}]*display: grid;[^}]*grid-template-columns: repeat\(auto-fill, minmax\(184px, 1fr\)\);/,
+    "默认网格：画布窄时自动退回一列",
+  );
+  assert.match(
+    CSS,
+    /\.exs-present-list\[data-cols="2"\] \{\s*\n\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/,
+    "两栏：缩略图放大，看得清页内细节",
+  );
+  assert.match(DRAWER, /data-cols=\{cols\}/, "列数落到网格上");
+  assert.match(DRAWER, /const \[cols, setCols\] = useState<Cols>\(\(\) => readCols\(\)\);/, "首帧直接读记住的列数");
+  assert.match(DRAWER, /localStorage\.setItem\(COLS_KEY, String\(cols\)\);/, "换列数写本地记忆（纯视图状态，不进设置 schema）");
+  assert.match(DRAWER, /if \(cols === n\) return;/, "点当前档不重复渲染");
+  assert.match(DRAWER, /onClick=\{\(\) => setColumnCount\(2\)\}/, "页单工具有两栏按钮");
+  assert.match(DRAWER, /onClick=\{\(\) => setColumnCount\(3\)\}/, "页单工具有三栏按钮");
+  assert.match(DRAWER, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}/, "分段留白按下不拖窗");
   assert.match(
     CSS,
     /\.exs-present-card__preview \{[^}]*aspect-ratio: 16 \/ 9;[^}]*height: auto;/,
@@ -571,4 +612,63 @@ test("新建页：按固定比例插画框，一次 updateScene、随后飞过�
   );
   assert.match(APP, /window\.requestAnimationFrame\(\(\) => focusFrame\(id, presentSettings\.fit\)\);/, "新页在末页右侧，很可能在视口外：插完把镜头开过去");
   assert.match(APP, /if \(s\.blank\) continue;/, "空画框没有包围盒可裁：跳过缩略图队列，卡片改显「空白页」");
+});
+
+/* ------------------------------ ⑦ 第八十七轮：从这页起播 ------------------------------ */
+
+test("页卡播放键：从这一页进片场，不放映的页是灰的", () => {
+  assert.match(DRAWER, /onStartAt: \(id: string\) => void;/, "抽屉接「从这页起」的意图");
+  assert.match(DRAWER, /props\.onStartAt\(s\.id\)/, "按画框 id 起播，不按下标");
+  assert.match(DRAWER, /disabled=\{!s\.included\}/, "不放映的页不给起播");
+  assert.match(DRAWER, /从这页开始放映/, "按钮有可见的说明文案");
+  assert.match(
+    CSS,
+    /\.exs-present-mini--play:hover:not\(:disabled\) \{[^}]*color: var\(--exs-accent\);/,
+    "播放键 hover 用强调色，和眼睛/改名区分开",
+  );
+});
+
+test("宿主：起播页 = 指定画框 > 图起点 > 第一页", () => {
+  assert.match(APP, /const enterPresentation = useCallback\(\(startFrameId\?: string\): void => \{/, "进片场接可选起点");
+  assert.match(
+    APP,
+    /const at = startFrameId \? shown\.findIndex\(\(s\) => s\.id === startFrameId\) : -1;/,
+    "先按 id 反查片单下标",
+  );
+  assert.match(
+    APP,
+    /at >= 0 \? at : graph \? Math\.max\(0, shown\.findIndex\(\(s\) => s\.id === graph\.start\)\) : 0/,
+    "找不到才回落图起点 / 第一页",
+  );
+  assert.match(
+    APP,
+    /const startPresentationAt = useCallback\(\(id: string\): void => enterPresentation\(id\), \[enterPresentation\]\);/,
+    "两枚播放键共用同一条进片场链路",
+  );
+  assert.match(APP, /onStartAt=\{startPresentationAt\}/, "抽屉的播放键接到宿主");
+});
+
+test("底栏「从本页开始」：跟着选中的页走，排除页不给点", () => {
+  assert.match(DRAWER, /const cur = slides\[props\.selected\];/, "起点取当前选中的页");
+  assert.match(DRAWER, /if \(cur\) props\.onStartAt\(cur\.id\);/, "仍然按画框 id 起播");
+  assert.match(
+    DRAWER,
+    /disabled=\{shown === 0 \|\| !slides\[props\.selected\]\?\.included\}/,
+    "没入片页、或选中页被排除时是灰的（不许静默回落到第一页）",
+  );
+  assert.match(
+    CSS,
+    /\.exs-present-playfrom:hover:not\(:disabled\) \{[^}]*border-color: var\(--exs-accent\)/,
+    "次级按钮 hover 只亮边，实心紫留给开始演示",
+  );
+});
+
+test("i18n：从这页起播的词条双语齐备", () => {
+  const zh = json("i18n/zh_CN.json");
+  const en = json("i18n/en_US.json");
+  for (const k of ["从这页开始放映", "从本页开始", "从当前这一页开始放映"]) {
+    assert.equal(zh[k], k, `zh 缺词条或值不等于 key：${k}`);
+    assert.ok(typeof en[k] === "string" && en[k] !== k && en[k].length > 0, `en 缺词条：${k}`);
+  }
+  assert.deepEqual(Object.keys(zh), Object.keys(en), "两份语言包键序一致");
 });

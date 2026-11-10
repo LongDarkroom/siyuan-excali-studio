@@ -17,6 +17,7 @@
 import { compareReadingOrder, PRESENTATION_KEY } from "./presentation-plan.ts";
 import type { DeckPatch } from "./presentation-plan.ts";
 import type { StepUnit } from "./presentation-run.ts";
+import { isDrawableElement } from "./presentation-draw.ts";
 
 /** 元素级元数据的命名空间，和片单共用一个 key（字段不同、互不覆盖）——单一真源，不许各写一份字面量 */
 export const MOTION_KEY = PRESENTATION_KEY;
@@ -28,7 +29,7 @@ export const STAGGER_SLOTS = 5;
 /** 步号上限：抽屉里的输入框按这个宽度留位 */
 export const STEP_MAX = 99;
 
-export type EffectId = "fade" | "pop" | "rise" | "slide";
+export type EffectId = "fade" | "pop" | "rise" | "slide" | "draw";
 
 /**
  * 一档效果 = 时长 + 曲线 + 起始位移（场景坐标 px）。
@@ -48,9 +49,11 @@ export const EFFECTS: Record<EffectId, EffectSpec> = {
   pop: { id: "pop", ms: 340, cubic: [0.34, 1.56, 0.64, 1], dx: 0, dy: 24 },
   rise: { id: "rise", ms: 320, cubic: [0.22, 1, 0.36, 1], dx: 0, dy: 44 },
   slide: { id: "slide", ms: 260, cubic: [0.25, 1, 0.5, 1], dx: -36, dy: 0 },
+  // 划线不挪位置：进度只喂给「前沿推到哪」；760ms 比其余四档长，是手刷一下的真实感
+  draw: { id: "draw", ms: 760, cubic: [0.37, 0, 0.28, 1], dx: 0, dy: 0 },
 };
 
-export const EFFECT_IDS: readonly EffectId[] = ["fade", "pop", "rise", "slide"];
+export const EFFECT_IDS: readonly EffectId[] = ["fade", "pop", "rise", "slide", "draw"];
 
 /** 效果中文名（消费方 t()） */
 export const EFFECT_LABELS: Record<EffectId, string> = {
@@ -58,6 +61,7 @@ export const EFFECT_LABELS: Record<EffectId, string> = {
   pop: "弹入",
   rise: "升起",
   slide: "滑入",
+  draw: "划线",
 };
 
 /** 只读接口：RunElement / vendor 元素结构上都能满足 */
@@ -72,6 +76,11 @@ export type MotionElementLike = {
   groupIds?: readonly string[];
   customData?: unknown;
   text?: string;
+  /** 「划线」的判据（见 presentation-draw）：填充折线才擦得出来 */
+  points?: readonly (readonly [number, number])[];
+  backgroundColor?: string;
+  angle?: number;
+  isDeleted?: boolean;
 };
 
 /* ------------------------------ 曲线 ------------------------------ */
@@ -243,6 +252,9 @@ function unionBox(list: readonly MotionElementLike[]): { id: string; x: number; 
   return { id: list[0]?.id ?? "", x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
+/** 场景坐标下的包围盒（一条里所有元素的外接框，含跟容器的绑定文字） */
+export type UnitBox = { x: number; y: number; w: number; h: number };
+
 /** 抽屉的行：一条 = 页内一个可编排单元（还没按步号合并），带着自己的效果与步号 */
 export type MotionRow = {
   key: string;
@@ -254,6 +266,10 @@ export type MotionRow = {
   auto: boolean;
   /** null = 没编步（排在编过步的之后，按阅读顺序自成一步） */
   step: number | null;
+  /** 场景坐标包围盒：本页预览上画热区用（和 revealUnits 的分组口径同源） */
+  box: UnitBox;
+  /** 这一条里有没有能「划线」的填充折线（没有就不在菜单里给这一档） */
+  drawable: boolean;
 };
 
 /** 行标题：有文字就取文字，否则取类型中文名；截断交给 CSS，这里只给单行 */
@@ -283,6 +299,24 @@ export function typeNameOf(type?: string): string {
   return type ? (TYPE_NAMES[type] ?? type) : "元素";
 }
 
+/** 一条的外接框：绑定文字也在 ids 里，所以容器 + 标签一起圈进去 */
+function boxOfIds(ids: readonly string[], byId: Map<string, MotionElementLike>): UnitBox {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const id of ids) {
+    const e = byId.get(id);
+    if (!e) continue;
+    x0 = Math.min(x0, e.x);
+    y0 = Math.min(y0, e.y);
+    x1 = Math.max(x1, e.x + (e.width ?? 0));
+    y1 = Math.max(y1, e.y + (e.height ?? 0));
+  }
+  if (!Number.isFinite(x0)) return { x: 0, y: 0, w: 0, h: 0 };
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
 /**
  * 分条 + 标上效果/步号（抽屉用这份）。输入是 revealUnits 的结果——
  * 分组口径（同组一起、绑定文字跟容器）只在 run 里算一次，这里只贴元数据。
@@ -298,8 +332,47 @@ export function motionRows(all: readonly MotionElementLike[], units: readonly St
       effect: fx.effect,
       auto: fx.auto,
       step: stepOfUnit(u.ids, all),
+      box: boxOfIds(u.ids, byId),
+      drawable: u.ids.some((id) => {
+        const e = byId.get(id);
+        return !!e && isDrawableElement(e);
+      }),
     };
   });
+}
+
+/* ------------------------------ 本页预览热区 ------------------------------ */
+
+/**
+ * 本页预览上的可点热区：百分比坐标（相对画框），直接喂给 stage 的 absolute 定位。
+ * 画框外的部分裁掉（画框会 clip 成员，预览里也看不见）；整块在框外的条不给热区，
+ * 但仍留在行列表里——用户还能从列表给它选效果。
+ */
+export type MotionHotspot = { key: string; left: number; top: number; width: number; height: number };
+
+export function rowHotspots(
+  rows: readonly MotionRow[],
+  frame: { x: number; y: number; w: number; h: number },
+): MotionHotspot[] {
+  if (!(frame.w > 0) || !(frame.h > 0)) return [];
+  const pct = (v: number): number => Math.round(v * 1000) / 10;
+  const out: MotionHotspot[] = [];
+  for (const r of rows) {
+    const b = r.box;
+    const x0 = Math.max(frame.x, b.x);
+    const y0 = Math.max(frame.y, b.y);
+    const x1 = Math.min(frame.x + frame.w, b.x + b.w);
+    const y1 = Math.min(frame.y + frame.h, b.y + b.h);
+    if (x1 <= x0 || y1 <= y0) continue;
+    out.push({
+      key: r.key,
+      left: pct((x0 - frame.x) / frame.w),
+      top: pct((y0 - frame.y) / frame.h),
+      width: pct((x1 - x0) / frame.w),
+      height: pct((y1 - y0) / frame.h),
+    });
+  }
+  return out;
 }
 
 /**
@@ -409,6 +482,27 @@ export function motionGroups(
     effect: effectOfUnit(g.ids, all),
     delay: together ? 0 : Math.min(i, STAGGER_SLOTS) * STAGGER_MS,
   }));
+}
+
+/**
+ * 抽屉「出场顺序」预览的分组：与 mergeByStep 同口径——
+ * 编过步的按步号升序，没编的合成一组排最后（组内仍是阅读顺序）。
+ * together=true（整页）时只有一组，顺序与步号都不生效。
+ */
+export type SequenceGroup = { key: string; step: number | null; labels: string[]; together?: boolean };
+
+export function sequenceGroups(rows: readonly MotionRow[], together: boolean): SequenceGroup[] {
+  if (rows.length === 0) return [];
+  if (together) return [{ key: "all", step: null, labels: [], together: true }];
+  const steps = [...new Set(rows.flatMap((r) => (r.step === null ? [] : [r.step])))].sort((a, b) => a - b);
+  const groups: SequenceGroup[] = steps.map((step) => ({
+    key: `s:${step}`,
+    step,
+    labels: rows.filter((r) => r.step === step).map((r) => r.label),
+  }));
+  const loose = rows.filter((r) => r.step === null).map((r) => r.label);
+  if (loose.length > 0) groups.push({ key: "auto", step: null, labels: loose });
+  return groups;
 }
 
 /** 整场动画还要跑多久（最后一组的错峰 + 它自己的时长） */

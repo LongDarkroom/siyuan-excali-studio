@@ -36,6 +36,13 @@ export type RunElement = {
   customData?: unknown;
   /** 编排行的标题用：有文字取文字，没有就退回类型名 */
   text?: string;
+  /** 第八十六轮「划线」：填充折线的几何（vendor 元素原样带，纯逻辑层只读） */
+  points?: readonly (readonly [number, number])[];
+  angle?: number;
+  backgroundColor?: string;
+  /** 形状临时换成折线后，收笔要按快照写回的类型之外的两项（矩形/椭圆/菱形） */
+  roundness?: { type?: number; value?: number | null } | null;
+  polygon?: boolean;
 };
 
 /** 一条 = 一次出场：同组元素一起，容器连同它的绑定文字一起 */

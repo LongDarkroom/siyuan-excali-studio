@@ -288,6 +288,18 @@ test("导航：走到头返回 null（调用方据此收场）", () => {
   assert.equal(navNext(plans, null, st), null, "最后一页没有下一页");
 });
 
+test("导航：从指定页起播，不补播前面的页（第八十七轮）", () => {
+  const plans = mkPlans(["f1", "f2", "f3"]);
+  const tail = planPage([{ id: "a", type: "rectangle", x: 0, y: 0, width: 10, height: 10, frameId: "f3" }], "f3");
+  const list = [plans[0], plans[1], tail];
+  const st = navStart(list, null, 2);
+  assert.equal(st.page, 2, "起点就是指定的那一页");
+  assert.equal(st.step, 0, "从这一页第一条起");
+  assert.deepEqual(st.stack, [2], "访问栈只有起点");
+  assert.equal(navPrev(list, null, st), null, "后退到头就停，不回到前面几页");
+  assert.equal(navNext(list, null, st), null, "之后按正常顺序往下走（这里是最后一页）");
+});
+
 /* ------------------------------ ③ 接线（源码断言） ------------------------------ */
 
 test("接线：放映期关画框渲染，退出还原（不再压画框 opacity）", () => {

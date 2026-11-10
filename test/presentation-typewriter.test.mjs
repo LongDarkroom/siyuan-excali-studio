@@ -225,7 +225,8 @@ test("打字中按 next：第一下补完不翻页；自动前进在打字/飞�
 /* ------------------------------ ③ 红线 ------------------------------ */
 
 test("文本补丁只碰 text：width/height/originalText 原样；永不进撤销栈", () => {
-  const apply = APP.slice(APP.indexOf("const applyTextPatches"), APP.indexOf("const presentApply"));
+  // 切片收在下一个补丁函数之前：后面 applyPosePatches / applyDrawPatches 本来就要写坐标和宽高
+  const apply = APP.slice(APP.indexOf("const applyTextPatches"), APP.indexOf("const applyPosePatches"));
   assert.match(apply, /captureUpdate: CaptureUpdateAction\.NEVER/, "不进撤销栈");
   assert.match(apply, /byId\.has\(e\.id\) \? \{ \.\.\.e, text: byId\.get\(e\.id\) as string \} : e/, "只改 text");
   assert.equal(apply.includes("originalText"), false, "不许动度量源");
@@ -260,7 +261,7 @@ test("设置列表：只发意图；自动前进固定 10 秒开关", () => {
   assert.equal(/from "siyuan"|updateScene|\.persist\(/.test(DRAWER + MENU), false, "不碰宿主/磁盘");
 });
 
-test("样式：设置气泡/开关/页级 mini 都有类，且用 accent 不用硬编码品牌色", () => {
+test("样式：设置气泡/开关/右栏编排都有类，且用 accent 不用硬编码品牌色", () => {
   for (const cls of [
     ".exs-present-menu",
     ".exs-present-scroll",
@@ -268,7 +269,9 @@ test("样式：设置气泡/开关/页级 mini 都有类，且用 accent 不用�
     ".exs-present-set",
     ".exs-present-set__label",
     ".exs-present-switch",
-    ".exs-present-mini--muted",
+    ".exs-present-inspector",
+    ".exs-present-seg__btn",
+    ".exs-present-seq",
     ".exs-present-close--on",
   ]) {
     assert.ok(CSS.includes(cls + " {") || CSS.includes(cls + ":"), `缺样式：${cls}`);
@@ -293,8 +296,8 @@ test("i18n：设置面板与页级开关词条双语齐备", () => {
     "每页停留 10 秒后自动翻页",
     "开始演示时全屏",
     "自动保存",
-    "这一页整页一起出",
-    "这一页逐条出场",
+    "逐条",
+    "整页",
   ]) {
     assert.equal(zh[k], k, `zh 缺词条或值不等于 key：${k}`);
     assert.ok(typeof en[k] === "string" && en[k] !== k && en[k].length > 0, `en 缺词条：${k}`);
