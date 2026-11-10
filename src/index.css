@@ -2721,6 +2721,13 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   box-shadow: inset 0 0 0 2px var(--exs-focus-ring);
 }
 
+/* 菜单触发器（素材库 ⋮、☰）：外扩焦点环在浮层上像悬空光晕，改成与菜单项
+   一致的 inset 环（键盘可达性不变，只是贴合按钮边界） */
+.exs-root .excalidraw .dropdown-menu-button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--exs-focus-ring);
+}
+
 @keyframes exs-menu-appear {
   from {
     opacity: 0;

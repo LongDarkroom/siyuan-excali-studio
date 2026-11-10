@@ -947,6 +947,8 @@ test("方案 A·素材库导入：面板 ⋮ 菜单注入入口 + 链接解析 +
   //    硬编码无扩展点，DOM 注入 + 复用 vendor 菜单项样式类）
   const INJECT = stripComments(src("studio/library-menu-inject.ts"));
   assert.match(INJECT, /MENU_SELECTOR = "\.dropdown-menu\.library-menu"/, "盯 vendor 菜单容器（DropdownMenuContent 非 portal）");
+  assert.match(INJECT, /CONTAINER_SELECTOR = "\.dropdown-menu-container"/, "注入内层 Island（白底卡片）；注入外层会掉在卡片外");
+  assert.match(INJECT, /`\$\{MENU_SELECTOR\} \$\{CONTAINER_SELECTOR\}`/, "锚点 = 菜单里的白卡片容器");
   assert.match(INJECT, /dropdown-menu-item dropdown-menu-item-base/, "复用 vendor 菜单项样式类（视觉与内置项一致）");
   assert.match(INJECT, /KEYS|Escape/, "点击后派发 Escape 关菜单（vendor onKeyDown 吃 Escape）");
   assert.match(INJECT, /MutationObserver/, "菜单 open 才渲染，observer 盯 body 等出现");
