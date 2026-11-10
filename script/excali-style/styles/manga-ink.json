@@ -1,0 +1,29 @@
+{
+  "name": "manga-ink",
+  "label": "漫画墨线",
+  "extends": "pencil",
+  "background": "#f7f3ea",
+  "ink": "#151515",
+  "fill": "#fffdf6",
+  "edge": "#151515",
+  "muted": "#6d6962",
+  "strokeWidth": 2,
+  "roughness": 1,
+  "fillStyle": "solid",
+  "strokeStyle": "solid",
+  "fontFamily": 6,
+  "fontSizes": { "title": 44, "node": 18, "edge": 14, "caption": 14 },
+  "nodeRoundness": { "type": 3 },
+  "space": { "minW": 164, "minH": 68, "padX": 36, "padY": 26, "gapX": 112, "gapY": 46, "textWrap": 210 },
+  "groupColor": {
+    "mode": "roles",
+    "roles": {
+      "概念": "#7fa7d8",
+      "机制": "#78a67f",
+      "流程": "#78a67f",
+      "重点": "#f2c14e",
+      "角色": "#f2c14e",
+      "正文": "#fffdf6"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "title": "少即是多：一页只留一个重点",
+  "caption": "PAPER WHITE CARDS / ONE HATCHED ACCENT / PURPLE ARROWS",
+  "layout": "tb",
+  "preset": "doodle-marker",
+  "nodes": [
+    { "id": "a", "label": "这页想说什么" },
+    { "id": "b", "label": "删到只剩一句" },
+    { "id": "c", "label": "给这句话一个形状", "group": "重点" },
+    { "id": "d", "label": "其余全部降级成灰字" },
+    { "id": "e", "label": "观众 3 秒读完", "shape": "ellipse", "group": "重点" }
+  ],
+  "edges": [
+    { "from": "a", "to": "b", "label": "第一步" },
+    "b->c",
+    "c->d",
+    { "from": "c", "to": "e", "label": "结果" }
+  ]
+}

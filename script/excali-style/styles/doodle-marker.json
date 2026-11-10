@@ -1,0 +1,44 @@
+{
+  "name": "doodle-marker",
+  "label": "涂鸦马克笔",
+  "extends": "pencil",
+  "background": "#fbfdff",
+  "ink": "#1e1e1e",
+  "fill": "#ffffff",
+  "edge": "#7048e8",
+  "muted": "#868e96",
+  "strokeWidth": 2,
+  "roughness": 2,
+  "fillStyle": "hachure",
+  "strokeStyle": "solid",
+  "fontFamily": 5,
+  "fontSizes": {
+    "title": 40,
+    "node": 20,
+    "edge": 15,
+    "caption": 15
+  },
+  "nodeRoundness": {
+    "type": 3
+  },
+  "space": {
+    "minW": 184,
+    "minH": 78,
+    "padX": 34,
+    "padY": 24,
+    "gapX": 124,
+    "gapY": 52,
+    "textWrap": 240
+  },
+  "groupColor": {
+    "mode": "roles",
+    "roles": {
+      "重点": "#ffec99",
+      "流程": "#b2f2bb",
+      "输入": "#a5d8ff",
+      "提醒": "#ffc9c9",
+      "结构": "#d0bfff",
+      "正文": "#ffffff"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "title": "一张图讲清：习惯回路",
+  "caption": "BLACK INK / PAPER FILL / TWO SEMANTIC COLORS",
+  "layout": "lr",
+  "preset": "manga-ink",
+  "nodes": [
+    { "id": "cue", "label": "线索" },
+    { "id": "crave", "label": "渴望" },
+    { "id": "act", "label": "反应" },
+    { "id": "reward", "label": "奖励", "group": "重点" },
+    { "id": "loop", "label": "自动触发", "shape": "ellipse", "group": "重点" },
+    { "id": "note", "label": "改习惯＝换反应，不是靠意志力", "shape": "text" }
+  ],
+  "edges": [
+    "cue->crave",
+    "crave->act",
+    "act->reward",
+    { "from": "reward", "to": "loop", "label": "满足" },
+    { "from": "loop", "to": "cue", "label": "强化" },
+    "loop->note"
+  ]
+}

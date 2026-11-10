@@ -1,0 +1,14 @@
+{
+  "name": "excali-style-skill",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Excali Studio（思源白板）的绘画风格 skill：两套风格包 + 排版守则 + 真笔触自检闭环",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "preview": "node tools/preview.mjs"
+  },
+  "dependencies": {
+    "roughjs": "^4.6.4"
+  }
+}

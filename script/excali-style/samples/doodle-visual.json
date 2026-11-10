@@ -1,0 +1,25 @@
+{
+  "title": "视觉表达：为什么图比字好使",
+  "caption": "留白是正色，颜色只给重点",
+  "layout": "lr",
+  "preset": "doodle-marker",
+  "groups": { "输入侧": "从文字来", "四步": "加工顺序" },
+  "nodes": [
+    { "id": "raw", "label": "一大段文字", "group": "输入侧" },
+    { "id": "pick", "label": "挑出关键词", "group": "四步" },
+    { "id": "shape", "label": "选图形语言", "group": "四步" },
+    { "id": "link", "label": "连关系", "group": "四步" },
+    { "id": "aha", "label": "一眼看懂", "shape": "ellipse", "group": "重点" },
+    { "id": "warn", "label": "别什么都画", "group": "提醒" },
+    { "id": "group", "label": "相近的放一起", "group": "输入侧" },
+    { "id": "contrast", "label": "重点上色，其余留白", "group": "四步" }
+  ],
+  "edges": [
+    { "from": "raw", "to": "pick", "label": "压缩" },
+    "pick->shape",
+    "shape->link",
+    { "from": "link", "to": "aha", "label": "呈现" },
+    "group->contrast",
+    "contrast->aha"
+  ]
+}

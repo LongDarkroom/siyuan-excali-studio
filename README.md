@@ -36,6 +36,7 @@ AI 不是往画布里塞一张位图，而是走一条确定性管线：**plan D
 - 外部风格包 `data/assets/excali-styles/*.json`（diff-only 继承），内置 pencil / marker / blueprint 三预设
 - CLI 可离线批量生成，同一套风格与布局可复用于不同主题
 - 素材库：官方组件面板 + 自建组件本地持久化 + 磁盘变更热刷新
+- 绘画风格 skill：`script/excali-style/`（两套调好的风格包 `manga-ink` / `doodle-marker` + 排版守则 + 「画完看一眼」自检工具），独立仓库见 [excali-style-skill](https://github.com/LongDarkroom/excali-style-skill)
 
 ### 三、画完就进文档，点开还能继续画
 

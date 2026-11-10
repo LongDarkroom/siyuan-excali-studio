@@ -1,0 +1,22 @@
+{
+  "title": "阅读器怎么读一本书",
+  "caption": "一条主干，一个结果高亮",
+  "layout": "lr",
+  "preset": "manga-ink",
+  "groups": { "进来的是什么": "输入", "怎么处理": "解析与排版" },
+  "nodes": [
+    { "id": "epub", "label": "EPUB 文件", "group": "进来的是什么" },
+    { "id": "pdf", "label": "PDF 文件", "group": "进来的是什么" },
+    { "id": "parse", "label": "解析章节", "group": "怎么处理" },
+    { "id": "layout", "label": "排版引擎", "group": "怎么处理" },
+    { "id": "page", "label": "成页", "group": "怎么处理" },
+    { "id": "view", "label": "沉浸阅读", "shape": "ellipse", "group": "重点" }
+  ],
+  "edges": [
+    "epub->parse",
+    "pdf->parse",
+    "parse->layout",
+    "layout->page",
+    "page->view"
+  ]
+}
