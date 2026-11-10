@@ -1,6 +1,9 @@
 {
   "name": "doodle-marker",
   "label": "涂鸦马克笔",
+  "description": "马克笔色块、圆头线、手写感，适合手账式流程与轻松讲解",
+  "preview": "doodle-visual.png",
+  "version": "1.0.0",
   "extends": "pencil",
   "background": "#fbfdff",
   "ink": "#1e1e1e",

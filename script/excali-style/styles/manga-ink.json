@@ -1,6 +1,9 @@
 {
   "name": "manga-ink",
   "label": "漫画墨线",
+  "description": "黑白粗线、网点感、一块强调色，适合架构图与讲解图",
+  "preview": "manga-ink-arch.png",
+  "version": "1.0.0",
   "extends": "pencil",
   "background": "#f7f3ea",
   "ink": "#151515",

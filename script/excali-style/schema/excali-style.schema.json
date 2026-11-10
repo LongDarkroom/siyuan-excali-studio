@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/LongDarkroom/excali-style-skill/main/schema/excali-style.schema.json",
+  "title": "Excali Studio style pack",
+  "description": "一份 JSON 双语义：既是 Excali Studio 加载器吃的风格包，也是插件面板的卡片（label/description/preview/version/prompt）。样式字段与插件的 parseStylePack 同口径，展示字段由面板截断展示。",
+  "type": "object",
+  "required": ["name"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri-reference",
+      "description": "编辑器提示用；插件忽略这一项。"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$",
+      "description": "包名：小写字母/数字/点/下划线/连字符，首字符必须是字母或数字，≤32。绘图时作为 style 参数传这个名字。装进工作区后文件名是 <name>.json。"
+    },
+    "label": {
+      "type": "string",
+      "maxLength": 40,
+      "description": "面板上显示的名字；不写就用 name。"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "一句话说明适合画什么；面板卡片第二行，超出 120 字截断。"
+    },
+    "version": {
+      "type": "string",
+      "maxLength": 20,
+      "description": "建议写 semver（如 1.0.0）；面板用于确认页展示，不参与加载。"
+    },
+    "prompt": {
+      "type": "string",
+      "maxLength": 400,
+      "description": "可选的自定义调用指令。面板复制「调用指令」时用它整段替换默认话术（自检收尾仍按本机通道给）。"
+    },
+    "preview": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\\.png$",
+      "description": "效果图文件名：只能是 .png 的文件名，不许带路径。导入时插件把它改写成 <name>.png 并存到 previews/ 子目录。"
+    },
+    "extends": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$",
+      "default": "pencil",
+      "description": "基线包：pencil / marker / blueprint 或目录里已安装的其它包。只写与基线不同的字段。"
+    },
+    "background": { "$ref": "#/$defs/color" },
+    "ink": { "$ref": "#/$defs/color" },
+    "fill": { "$ref": "#/$defs/color" },
+    "edge": { "$ref": "#/$defs/color" },
+    "muted": { "$ref": "#/$defs/color" },
+    "palette": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/color" },
+      "description": "节点填充色轮；按顺序取色，1..32 个。"
+    },
+    "strokeWidth": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 20
+    },
+    "roughness": {
+      "type": "integer",
+      "enum": [0, 1, 2],
+      "description": "0 规整 / 1 手绘 / 2 抖得厉害。"
+    },
+    "fillStyle": {
+      "type": "string",
+      "enum": ["solid", "hachure", "cross-hatch"]
+    },
+    "strokeStyle": {
+      "type": "string",
+      "enum": ["solid", "dashed", "dotted"]
+    },
+    "fontFamily": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20,
+      "description": "Excalidraw 字体编号（6 = Nunito，内置手写体）。"
+    },
+    "fontSizes": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "title": { "$ref": "#/$defs/fontSize" },
+        "node": { "$ref": "#/$defs/fontSize" },
+        "edge": { "$ref": "#/$defs/fontSize" },
+        "caption": { "$ref": "#/$defs/fontSize" }
+      }
+    },
+    "nodeRoundness": {
+      "description": "节点圆角：null = 直角，数字 = {type} 的简写。",
+      "oneOf": [
+        { "type": "null" },
+        { "type": "number" },
+        {
+          "type": "object",
+          "required": ["type"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "number" }
+          }
+        }
+      ]
+    },
+    "space": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "description": "排版间距 token；0..4000 的整数。",
+      "properties": {
+        "minW": { "$ref": "#/$defs/space" },
+        "minH": { "$ref": "#/$defs/space" },
+        "padX": { "$ref": "#/$defs/space" },
+        "padY": { "$ref": "#/$defs/space" },
+        "gapX": { "$ref": "#/$defs/space" },
+        "gapY": { "$ref": "#/$defs/space" },
+        "gridGapX": { "$ref": "#/$defs/space" },
+        "gridGapY": { "$ref": "#/$defs/space" },
+        "radialMinRadius": { "$ref": "#/$defs/space" },
+        "radialGap": { "$ref": "#/$defs/space" },
+        "maxGridCols": { "$ref": "#/$defs/space" },
+        "textWrap": { "$ref": "#/$defs/space" }
+      }
+    },
+    "groupColor": {
+      "description": "分组配色：hash = 按名字哈希取色；roles = 按分组名显式指定。",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["mode"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "const": "hash" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["mode", "roles"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "const": "roles" },
+            "roles": {
+              "type": "object",
+              "minProperties": 1,
+              "maxProperties": 64,
+              "additionalProperties": { "$ref": "#/$defs/color" }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "color": {
+      "type": "string",
+      "pattern": "^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+      "description": "#rgb / #rgba / #rrggbb / #rrggbbaa。"
+    },
+    "fontSize": {
+      "type": "integer",
+      "minimum": 8,
+      "maximum": 96
+    },
+    "space": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4000
+    }
+  }
+}

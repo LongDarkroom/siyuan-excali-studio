@@ -2771,7 +2771,9 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 
 .exs-root .exs-ai-panel {
   width: min(600px, 100%);
-  max-height: min(80vh, 640px);
+  /* 第八十三轮加了技能分发一节：640 装不下「四条通道 + 技能卡 + 折叠条」，
+     抬到 700 后收起态一屏放得下（再高的小屏仍走 max-height 与滚动） */
+  max-height: min(84vh, 700px);
   overflow-y: auto;
   padding: 14px 16px 12px;
   border: 0.5px solid var(--exs-menu-border);
@@ -2955,6 +2957,827 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   color: var(--exs-text-secondary);
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* ---------- 第八十三轮：技能分发（面板里的一节，不是第五个开关） ---------- */
+
+.exs-root .exs-ai-skill {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--exs-separator);
+}
+
+.exs-root .exs-ai-skill__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 2px 8px;
+}
+
+.exs-root .exs-ai-skill__head b {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.exs-root .exs-ai-skill__head span {
+  color: var(--exs-text-secondary);
+  font-size: 12px;
+}
+
+.exs-root .exs-ai-skill__card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--exs-hover);
+}
+
+.exs-root .exs-ai-skill__dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--exs-accent);
+}
+
+.exs-root .exs-ai-skill__mid {
+  flex: 1;
+  min-width: 0;
+}
+
+.exs-root .exs-ai-skill__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.exs-root .exs-ai-skill__sub {
+  margin-top: 2px;
+  color: var(--exs-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* 主按钮按最长文案「复制提示词」预留宽度，切到「已复制」不许缩（零位移） */
+.exs-root .exs-ai-skill__primary {
+  flex: none;
+  min-width: 96px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--exs-accent);
+  color: #ffffff;
+  font-family: var(--exs-font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.exs-root .exs-ai-skill__primary:hover {
+  background: var(--exs-accent-hover);
+}
+
+.exs-root .exs-ai-skill__fold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 2px;
+  border: none;
+  border-top: 0.5px solid var(--exs-separator);
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-family: var(--exs-font-ui);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.exs-root .exs-ai-skill__fold:hover {
+  color: var(--exs-text);
+}
+
+.exs-root .exs-ai-skill__chev {
+  display: inline-block;
+  transition: transform 140ms ease;
+}
+
+.exs-root .exs-ai-skill__fold[aria-expanded="true"] .exs-ai-skill__chev {
+  transform: rotate(90deg);
+}
+
+.exs-root .exs-ai-skill__meta {
+  margin-left: auto;
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+}
+
+.exs-root .exs-ai-skill__body {
+  padding-top: 2px;
+}
+
+.exs-root .exs-ai-skill__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 2px;
+}
+
+.exs-root .exs-ai-skill__row + .exs-ai-skill__row {
+  border-top: 0.5px solid var(--exs-separator);
+}
+
+/* 132 = 最长标签「装到全局（跨客户端）」的宽度，标签列定宽，值列才不会被推着跳 */
+.exs-root .exs-ai-skill__label {
+  flex: none;
+  width: 132px;
+  font-size: 12px;
+}
+
+.exs-root .exs-ai-skill__val {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--exs-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exs-root .exs-ai-skill__copy {
+  flex: none;
+  min-width: 74px;
+  padding: 3px 9px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-family: var(--exs-font-ui);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.exs-root .exs-ai-skill__copy:hover {
+  background: var(--exs-hover);
+  color: var(--exs-text);
+}
+
+.exs-root .exs-ai-skill__styles {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 0.5px solid var(--exs-separator);
+}
+
+.exs-root .exs-ai-skill__stylesHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.exs-root .exs-ai-skill__stylesHead span {
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.exs-root .exs-ai-skill__style {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 2px;
+}
+
+.exs-root .exs-ai-skill__styleMid {
+  flex: 1;
+  min-width: 0;
+}
+
+.exs-root .exs-ai-skill__styleNm {
+  font-size: 12.5px;
+}
+
+.exs-root .exs-ai-skill__styleNm code {
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--exs-hover);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.exs-root .exs-ai-skill__styleDs {
+  margin-top: 2px;
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+}
+
+.exs-root .exs-ai-skill__chip {
+  flex: none;
+  min-width: 62px;
+  padding: 4px 8px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-family: var(--exs-font-ui);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.exs-root .exs-ai-skill__chip:hover {
+  background: var(--exs-hover);
+  color: var(--exs-text);
+}
+
+.exs-root .exs-ai-skill__chip--solid {
+  border-color: transparent;
+  background: var(--exs-accent-container);
+  color: var(--exs-accent-on-container);
+}
+
+.exs-root .exs-ai-skill__note {
+  margin-top: 4px;
+  padding: 6px 2px 2px;
+  border-top: 0.5px solid var(--exs-separator);
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* 第八十四轮：一次性设置的四行都带一句大白话（标签列放不下长句，句在标签下方） */
+.exs-root .exs-ai-skill__hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--exs-text-secondary);
+  font-size: 10.5px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+/* ---------- 第八十四轮：风格包管理（磁盘真值 + 导入/移除弹层） ---------- */
+
+.exs-root .exs-styleLib {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--exs-separator);
+}
+
+.exs-root .exs-styleLib__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px;
+}
+
+.exs-root .exs-styleLib__head b {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.exs-root .exs-styleLib__count {
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+}
+
+.exs-root .exs-styleLib__acts {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.exs-root .exs-styleLib__hint {
+  padding: 2px 2px 6px;
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.exs-root .exs-styleLib__empty {
+  padding: 10px 2px;
+  color: var(--exs-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.exs-root .exs-stylePkg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+  border-top: 0.5px solid var(--exs-separator);
+}
+
+.exs-root .exs-stylePkg--off .exs-stylePkg__thumb {
+  opacity: 0.55;
+}
+
+.exs-root .exs-stylePkg--bad .exs-stylePkg__nm code {
+  color: var(--exs-danger);
+}
+
+.exs-root .exs-stylePkg__thumb {
+  flex: none;
+  width: 58px;
+  height: 42px;
+  padding: 0;
+  border: 0.5px solid var(--exs-separator);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--exs-hover);
+  cursor: pointer;
+}
+
+.exs-root .exs-stylePkg__thumb:disabled {
+  cursor: default;
+}
+
+/* 没效果图：虚线框，别让用户把空白方块当成加载失败 */
+.exs-root .exs-stylePkg__thumb--empty {
+  border-style: dashed;
+  background: transparent;
+}
+
+.exs-root .exs-stylePkg__thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.exs-root .exs-stylePkg__mid {
+  flex: 1;
+  min-width: 0;
+}
+
+.exs-root .exs-stylePkg__nm {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+}
+
+.exs-root .exs-stylePkg__nm code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--exs-hover);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.exs-root .exs-stylePkg__src {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--exs-accent-container);
+  color: var(--exs-accent-on-container);
+  font-size: 10px;
+}
+
+.exs-root .exs-stylePkg__ds {
+  margin-top: 2px;
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.exs-root .exs-stylePkg__err {
+  color: var(--exs-danger);
+}
+
+.exs-root .exs-stylePkg__chip {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--exs-accent-container);
+  color: var(--exs-accent-on-container);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.exs-root .exs-stylePkg__chip--off {
+  background: var(--exs-hover);
+  color: var(--exs-text-secondary);
+}
+
+.exs-root .exs-stylePkg__chip--bad {
+  background: var(--exs-danger-container);
+  color: var(--exs-danger);
+}
+
+.exs-root .exs-stylePkg__acts {
+  display: flex;
+  flex: none;
+  gap: 5px;
+}
+
+.exs-root .exs-stylePkg__btn {
+  min-width: 56px;
+  padding: 4px 8px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-family: var(--exs-font-ui);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.exs-root .exs-stylePkg__btn:hover:not(:disabled) {
+  background: var(--exs-hover);
+  color: var(--exs-text);
+}
+
+.exs-root .exs-stylePkg__btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.exs-root .exs-stylePkg__btn--solid {
+  border-color: transparent;
+  background: var(--exs-accent-container);
+  color: var(--exs-accent-on-container);
+}
+
+.exs-root .exs-stylePkg__btn--danger {
+  color: var(--exs-danger);
+}
+
+.exs-root .exs-stylePkg__btn--dangerSolid {
+  border-color: transparent;
+  background: var(--exs-danger);
+  color: #ffffff;
+}
+
+/* 弹层：盖在 AI 面板之上（面板是 fixed，弹层必须再高一层） */
+.exs-root .exs-styleModal {
+  position: fixed;
+  inset: 0;
+  z-index: 96;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.34);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px) saturate(140%);
+}
+
+.exs-root .exs-styleModal__box {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  max-height: min(86vh, 640px);
+  overflow: hidden;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 14px;
+  background: var(--exs-menu-solid);
+  box-shadow: var(--exs-menu-shadow);
+  color: var(--exs-text);
+  font-family: var(--exs-font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+.exs-root .exs-styleModal__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px 10px;
+}
+
+.exs-root .exs-styleModal__title {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.exs-root .exs-styleModal__title b {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.exs-root .exs-styleModal__title span {
+  color: var(--exs-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.exs-root .exs-styleModal__close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.exs-root .exs-styleModal__close:hover {
+  background: var(--exs-hover);
+  color: var(--exs-text);
+}
+
+.exs-root .exs-styleModal__tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 16px;
+  border-bottom: 0.5px solid var(--exs-separator);
+}
+
+.exs-root .exs-styleModal__tab {
+  padding: 7px 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-family: var(--exs-font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.exs-root .exs-styleModal__tab:hover {
+  color: var(--exs-text);
+}
+
+.exs-root .exs-styleModal__tab[aria-selected="true"] {
+  border-bottom-color: var(--exs-accent);
+  color: var(--exs-text);
+  font-weight: 600;
+}
+
+.exs-root .exs-styleModal__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.exs-root .exs-styleModal__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px 12px;
+  border-top: 0.5px solid var(--exs-separator);
+}
+
+.exs-root .exs-styleModal__foot .exs-styleModal__hint {
+  margin-right: auto;
+}
+
+.exs-root .exs-styleModal__hint {
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.exs-root .exs-styleModal__field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.exs-root .exs-styleModal__label {
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+}
+
+.exs-root .exs-styleModal__input,
+.exs-root .exs-styleModal__area {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 8px;
+  background: var(--exs-hover);
+  color: var(--exs-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  outline: none;
+}
+
+.exs-root .exs-styleModal__area {
+  min-height: 180px;
+  resize: vertical;
+}
+
+.exs-root .exs-styleModal__input:focus,
+.exs-root .exs-styleModal__area:focus {
+  border-color: var(--exs-accent);
+}
+
+.exs-root .exs-styleModal__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.exs-root .exs-styleModal__err {
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--exs-danger-container);
+  color: var(--exs-danger);
+  font-size: 11.5px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.exs-root .exs-styleModal__warn {
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--exs-hover);
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.exs-root .exs-styleModal__warn--danger {
+  background: var(--exs-danger-container);
+  color: var(--exs-danger);
+}
+
+.exs-root .exs-styleModal__parse {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.exs-root .exs-styleModal__parseThumb {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 88px;
+  height: 62px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--exs-hover);
+}
+
+.exs-root .exs-styleModal__parseThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.exs-root .exs-styleModal__palette {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  height: 100%;
+}
+
+.exs-root .exs-styleModal__palette i {
+  display: block;
+}
+
+.exs-root .exs-styleModal__parseMid {
+  flex: 1;
+  min-width: 0;
+}
+
+.exs-root .exs-styleModal__parseNm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.exs-root .exs-styleModal__parseNm code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--exs-hover);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.exs-root .exs-styleModal__meta {
+  margin-top: 2px;
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.exs-root .exs-styleModal__kv {
+  padding: 6px 10px;
+  border: 0.5px solid var(--exs-separator);
+  border-radius: 8px;
+}
+
+.exs-root .exs-styleModal__kvRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 11px;
+}
+
+.exs-root .exs-styleModal__kvRow span {
+  flex: none;
+  width: 44px;
+  color: var(--exs-text-secondary);
+}
+
+.exs-root .exs-styleModal__kvRow code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exs-root .exs-styleModal__effect {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--exs-hover);
+}
+
+.exs-root .exs-styleModal__effect img {
+  display: block;
+  max-width: 100%;
+  max-height: 48vh;
+  object-fit: contain;
+}
+
+.exs-root .exs-styleModal__effect span {
+  color: var(--exs-text-secondary);
+  font-size: 12px;
+}
+
+.exs-root .exs-styleModal__drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 22px 12px;
+  border: 1px dashed var(--exs-menu-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--exs-text);
+  font-family: var(--exs-font-ui);
+  cursor: pointer;
+}
+
+.exs-root .exs-styleModal__drop:hover {
+  background: var(--exs-hover);
+}
+
+.exs-root .exs-styleModal__drop b {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.exs-root .exs-styleModal__drop span {
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+}
+
+.exs-root .exs-styleModal__drop u {
+  color: var(--exs-accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.exs-root .exs-styleModal__file {
+  display: none;
+}
+
+.exs-root .exs-styleModal__code {
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--exs-hover);
+  color: var(--exs-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3905,6 +4728,164 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 .exs-present-empty b {
   font-size: 13px;
   color: var(--exs-text);
+}
+
+/*
+ * 第八十二轮：出场编排区（抽屉里，选中页每条 = 一行「效果 + 步号」）。
+ * 卡片描边 + 内部分隔线，口径同拓展面板那批；整块默认收起，展开才有高度——
+ * 抽屉是压在画布上的浮层，常驻控件等于永久少一块画布。
+ */
+.exs-present-motion {
+  box-sizing: border-box;
+  margin: 8px 6px 2px;
+  border: 1px solid var(--exs-menu-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.exs-present-motion__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.exs-present-motion__head:hover {
+  background: var(--exs-hover);
+  color: var(--exs-text);
+}
+
+.exs-present-motion__head--on {
+  color: var(--exs-text);
+}
+
+.exs-present-motion__page {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+}
+
+/* 条数徽标：让用户展开前就知道这一页值不值得点开 */
+.exs-present-motion__count {
+  flex: none;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 9px;
+  background: var(--exs-hover-strong);
+  color: var(--exs-text-secondary);
+  font-size: 10.5px;
+  text-align: center;
+}
+
+.exs-present-motion__empty {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--exs-separator);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-motion__list {
+  max-height: 190px;
+  margin: 0;
+  padding: 2px 0 4px;
+  overflow-y: auto;
+  border-top: 1px solid var(--exs-separator);
+  list-style: none;
+}
+
+.exs-present-mrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+}
+
+/* 名字最长（用户自己的文字），所以它独占弹性宽度并截断；控件按最长档预留不位移 */
+.exs-present-mrow__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--exs-text);
+}
+
+.exs-present-mrow__fx {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.exs-present-fx {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.exs-present-fx:hover {
+  background: var(--exs-hover-strong);
+  color: var(--exs-text);
+}
+
+.exs-present-fx--on {
+  background: var(--exs-accent-container);
+  color: var(--exs-accent-on-container);
+}
+
+.exs-present-mrow__step {
+  flex: none;
+  box-sizing: border-box;
+  width: 34px;
+  height: 22px;
+  padding: 0 3px;
+  border: 1px solid var(--exs-menu-border);
+  border-radius: 6px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
+  font-family: inherit;
+  font-size: 11.5px;
+  text-align: center;
+  outline: none;
+  appearance: textfield;
+}
+
+.exs-present-mrow__step::-webkit-inner-spin-button,
+.exs-present-mrow__step::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.exs-present-mrow__step:focus {
+  border-color: var(--exs-accent);
+  box-shadow: 0 0 0 3px var(--exs-focus-ring);
 }
 
 .exs-present-tip {

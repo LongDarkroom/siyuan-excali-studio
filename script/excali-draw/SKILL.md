@@ -1,6 +1,8 @@
 ---
 name: excali-draw
 description: 用 Excali Studio 在思源工作空间里新建或追加白板（流程图、架构图、思维导图、对比图）。当用户要求「画一张图/白板/流程图/脑图」且本机装有思源 Excali Studio 插件时使用；通过 scripts/excali-board.mjs 写 assets/excali/*.svg，不要手写 SVG。
+metadata:
+  version: 1.0.0
 ---
 
 # Excali 白板绘图
@@ -9,10 +11,14 @@ description: 用 Excali Studio 在思源工作空间里新建或追加白板（�
 
 ## 定位 CLI
 
-插件目录通常在工作空间下：
+对话里若已经给了绝对路径（插件的「技能分发」面板复制的提示词就带全套绝对路径），**一律以对话为准**，下面只是兜底推导：
+
+- 技能根目录 = 本文件所在目录 = `<插件目录>/script/excali-draw`。
+- 插件目录 = 技能根目录往上两级；工作空间根 `WS` = 插件目录往上三级（含 `data/` 的目录）。
+- CLI = `<插件目录>/scripts/excali-board.mjs`。
 
 ```bash
-WS="<思源工作空间根目录>"          # 含 data/ 的目录
+WS="<思源工作空间根目录>"          # 含 data/ 的目录；对话里给了就别猜
 CLI="$WS/data/plugins/siyuan-excali-studio/scripts/excali-board.mjs"
 node "$CLI" --help
 ```
@@ -21,7 +27,7 @@ node "$CLI" --help
 - 不传 `--workspace` 时，CLI 从当前目录向上找含 `data/plugins` 的目录；外部智能体建议显式传。
 - 白板目录 `assets/excali` 是**资产相对路径**，实际磁盘位置是 `$WS/data/assets/excali`。
 - 所有结果输出一行 JSON：成功 `{"ok":true,...}`，失败 `{"ok":false,"error":"..."}`，退出码 1。
-- 集市安装版（package.zip）不含 `scripts/` 源码；若插件目录里找不到 CLI，改用思源内置智能体的 `excali_draw_board`。
+- 集市安装版（package.zip）不含 `scripts/` 源码；若插件目录里找不到 CLI，改用思源内置智能体的 `excali_draw_board`；外部智能体经内核 MCP 连接后对应工具是 `excali_file_draw_board`。
 
 ## 三个动作
 
@@ -106,7 +112,7 @@ node "$CLI" list --workspace "$WS" --list-styles          # 确认包已加载
 node "$CLI" create ... --style-dir /绝对路径/目录          # 临时读别的目录（如插件自带示例）
 ```
 
-插件自带示例：`data/plugins/siyuan-excali-studio/script/excali-draw/styles/`（`axl-poster`、`study-card`），用 `--style-dir` 指过去即可试用。集市安装版（package.zip）不含 `script/`，这时把示例 JSON 复制进 `data/assets/excali-styles/` 自己留一份。
+插件自带示例：`data/plugins/siyuan-excali-studio/script/excali-draw/styles/`（`axl-poster`、`study-card`），用 `--style-dir` 指过去即可试用。集市安装版也带这份示例（`script/excali-draw/` 在包里），但**不带 CLI**——没有 `scripts/` 时只能读这些 JSON 抄参数，落白板改用内置工具。
 
 包 schema——**只写想改的字段**，其余继承 `extends` 的基线（缺省 `pencil`）：
 

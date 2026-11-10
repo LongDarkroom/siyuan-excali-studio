@@ -9,7 +9,7 @@
 import { Plugin, Setting, Dialog, confirm, openInputDialog, openTab, showMessage, Menu, type Custom, type Protyle, type subMenu } from "siyuan";
 import { initI18n, t } from "./i18n";
 import { installExcalidrawAssetPath, PLUGIN_WEB_DIR } from "./studio/assets";
-import { joinPosix, workspaceDataDir } from "./studio/desktop-bridge.ts";
+import { hostPlatform, joinPosix, openPathInFileManager, pickStyleFile, workspaceDataDir } from "./studio/desktop-bridge.ts";
 import { STUDIO_ICON_ID, STUDIO_ICON_SVG, slashItemHtml } from "./studio/icons";
 // 第二十六轮 T3：vendor 引擎（scene/svg/tab 及其传递依赖）改走动态 import 的 lazy chunk，
 // 插件启动不再解析 8MB 级引擎——只有静态类型留在这里（import type 会整体擦除）。
@@ -106,6 +106,25 @@ import type { ChannelId } from "./studio/ai/channels";
 import { boundingBoxOf, nextId } from "./studio/ea-element";
 import { renderPlan } from "./studio/ai/render";
 import { STYLE_DIR, listStyles, loadStylePacks, type StyleLoadResult } from "./studio/ai/style-pack";
+import {
+  STYLE_PREVIEW_DIR,
+  baseNameOf,
+  buildStyleEntries,
+  declaredPreviewOf,
+  isPngBytes,
+  isPreviewFile,
+  isStyleName,
+  previewFileNameFor,
+  readStyleCard,
+  styleJsonPath,
+  styleNameOf,
+  stylePreviewPath,
+  withPreviewField,
+  type InstalledStyleFile,
+  type StyleCard,
+  type StyleEntry,
+  type StyleInstallInput,
+} from "./studio/ai/style-library";
 import { generateImage, type ImageGenResult } from "./studio/ai/imagegen";
 import { createBrowserProxy } from "./studio/ai/proxy";
 import "./index.css";
@@ -114,6 +133,9 @@ import "./index.css";
 const STORAGE_KEY = "excali-studio";
 const RECENT_MAX = 8;
 const RECENT_MENU_MAX = 5;
+/** 风格包体积闸门：JSON 512 KB、效果图 4 MB（GitHub raw 下的正常图远小于这个数） */
+const STYLE_JSON_MAX_BYTES = 512 * 1024;
+const STYLE_PREVIEW_MAX_BYTES = 4 * 1024 * 1024;
 
 /** 智能体能力统一返回形状（addAgentCapability 的 handler 契约） */
 type AgentResult = { result?: string; structuredContent?: unknown; error?: string };
@@ -671,6 +693,34 @@ export default class ExcaliStudioPlugin extends Plugin {
       // 第四十四轮：AI 通道面板——读设置 + 写设置落盘（agent 一栏的重载提示在 setAiChannel）
       getAiChannels: () => this.settings.aiChannels,
       onAiChannel: (id, on) => this.setAiChannel(id, on),
+      // 第八十三轮：技能分发——插件目录绝对路径（前端拼提示词用）；CLI 在不在由文件接口现探
+      // （集市包 DIRS 不含 scripts/，同一个面板要按事实切换话术）
+      getSkillLayout: () => {
+        // Windows 的 dataDir 是反斜杠，先归一到正斜杠再拼（面板与提示词只认正斜杠）
+        const dataDir = workspaceDataDir().replace(/\\/g, "/");
+        return {
+          pluginDir: dataDir ? joinPosix(dataDir, `plugins/${plugin.name}`) : "",
+          platform: hostPlatform(),
+        };
+      },
+      probeCliSkill: () => fileExists(`${plugin.name}/scripts/excali-board.mjs`),
+      // 第八十四轮：风格包管理——列表读磁盘真值；导入/移除只碰 excali-styles 下的两个文件
+      styleLibrary: {
+        list: () => this.listStyleEntries(),
+        installBundled: (name) => this.installBundledStyle(name),
+        install: (input) => this.installStyle(input),
+        remove: (name) => this.removeStyle(name),
+        openDir: () => {
+          const dir = this.styleDirAbs();
+          return dir !== "" && openPathInFileManager(dir);
+        },
+        dirAbs: () => this.styleDirAbs(),
+        fetchText: (url) => this.fetchStyleText(url),
+        fetchImage: (url) => this.fetchStyleImage(url),
+        pickFile: () => pickStyleFile(this.styleDirAbs()),
+        previewSrc: (entry) => this.stylePreviewSrc(entry),
+        previewAbs: (entry) => this.stylePreviewAbs(entry),
+      },
       // 第五十三轮：演示偏好（开抽屉/进片场时拉快照；改一项落一项）
       getPresentationSettings: () => this.settings.presentation,
       onPresentationSetting: (key, value) => this.rememberPresentationSetting(key, value),
@@ -1009,6 +1059,178 @@ export default class ExcaliStudioPlugin extends Plugin {
       list: async () => (await listFilesWithExt(STYLE_DIR, /\.json$/i)).map((p) => p.slice(p.lastIndexOf("/") + 1)),
       read: (fileName: string) => getFileText(`${STYLE_DIR}/${fileName}`),
     });
+  }
+
+  /* ------------------------------ 第八十四轮：风格包管理 ------------------------------ */
+
+  private styleDirAbs(): string {
+    const dataDir = workspaceDataDir().replace(/\\/g, "/");
+    return dataDir ? joinPosix(dataDir, STYLE_DIR) : "";
+  }
+
+  private bundledStyleDir(): string {
+    return `${this.name}/script/excali-style`;
+  }
+
+  /** 内置包（插件内）+ 已装包（工作区）→ 面板列表；目录不存在就是空列表，不算错误 */
+  private async listStyleEntries(): Promise<StyleEntry[]> {
+    const bundledDir = this.bundledStyleDir();
+    const bundled: StyleCard[] = [];
+    let bundledPreviews: string[] = [];
+    try {
+      for (const path of await listFilesWithExt(`${bundledDir}/styles`, /\.json$/i)) {
+        try {
+          const result = readStyleCard(await getFileText(path), path);
+          if (result.ok) bundled.push(result.value.card);
+        } catch {
+          // 单个内置包读不了：跳过，面板仍要能打开
+        }
+      }
+      bundledPreviews = (await listFilesWithExt(`${bundledDir}/${STYLE_PREVIEW_DIR}`, /\.png$/i)).map(baseNameOf);
+    } catch {
+      // 集市包结构变了也不挡面板：当没有内置包
+    }
+    const installed: InstalledStyleFile[] = [];
+    try {
+      for (const path of await listFilesWithExt(STYLE_DIR, /\.json$/i)) {
+        try {
+          installed.push({ fileName: baseNameOf(path), text: await getFileText(path) });
+        } catch {
+          // 读不了的文件不占列表（加载器同样跳过）
+        }
+      }
+    } catch {
+      // 目录还不存在 = 一个都没装
+    }
+    let installedPreviews: string[] = [];
+    try {
+      installedPreviews = (await listFilesWithExt(`${STYLE_DIR}/${STYLE_PREVIEW_DIR}`, /\.png$/i)).map(baseNameOf);
+    } catch {
+      installedPreviews = [];
+    }
+    return buildStyleEntries({ bundled, installed, bundledPreviews, installedPreviews });
+  }
+
+  /** 写盘前的最后一道校验：与加载器同一条 parse（坏包绝不落盘） */
+  private async installStyle(input: StyleInstallInput): Promise<{ name: string; wrotePreview: boolean }> {
+    const known = new Set(
+      (await this.listStyleEntries()).filter((e) => e.installed && !e.error).map((e) => e.name),
+    );
+    const parsed = readStyleCard(input.text, "导入的风格包", known);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const name = parsed.value.pack.name;
+    const bytes = input.previewBytes;
+    if (bytes && !isPngBytes(bytes)) throw new Error("效果图不是 PNG 文件");
+    if (bytes && bytes.length > STYLE_PREVIEW_MAX_BYTES) throw new Error("效果图超过 4 MB");
+    const fileName = previewFileNameFor(name);
+    const text = bytes ? withPreviewField(input.text, fileName) : input.text;
+    await putTextFile(styleJsonPath(name), text);
+    if (bytes) await putBytes(stylePreviewPath(fileName), bytes, "image/png");
+    return { name, wrotePreview: !!bytes };
+  }
+
+  /** 插件自带的包：拷贝 JSON 与效果图到工作区（装完立即生效，下次绘图重读目录） */
+  private async installBundledStyle(name: string): Promise<{ name: string; wrotePreview: boolean }> {
+    if (!isStyleName(name)) throw new Error("内置包名不合法");
+    const dir = this.bundledStyleDir();
+    const jsonPath = `${dir}/styles/${name}.json`;
+    const text = await getFileText(jsonPath);
+    const parsed = readStyleCard(text, jsonPath);
+    if (!parsed.ok) throw new Error(`内置包 ${name} 读不出来：${parsed.error}`);
+    let previewBytes: Uint8Array | undefined;
+    const preview = parsed.value.card.preview;
+    if (preview) {
+      try {
+        previewBytes = await getFileBytes(`${dir}/${STYLE_PREVIEW_DIR}/${preview}`);
+      } catch {
+        previewBytes = undefined;
+      }
+    }
+    return this.installStyle({ text, previewBytes });
+  }
+
+  /**
+   * 只删文件、不动已经画好的白板。
+   * 文件名不一定等于包名（用户手改过），按 JSON 里的 name 找；效果图若被别的包共用就留着。
+   */
+  private async removeStyle(name: string): Promise<void> {
+    const files = await listFilesWithExt(STYLE_DIR, /\.json$/i).catch(() => [] as string[]);
+    const targets: string[] = [];
+    const removedPreviews = new Set<string>();
+    for (const path of files) {
+      let text: string;
+      try {
+        text = await getFileText(path);
+      } catch {
+        continue;
+      }
+      if (styleNameOf(text, baseNameOf(path)) !== name) continue;
+      targets.push(path);
+      const preview = declaredPreviewOf(text);
+      if (preview) removedPreviews.add(preview);
+    }
+    if (targets.length === 0) return;
+    for (const path of targets) await removeSvg(path);
+    if (removedPreviews.size === 0) return;
+    const remaining = new Set<string>();
+    for (const path of await listFilesWithExt(STYLE_DIR, /\.json$/i).catch(() => [] as string[])) {
+      try {
+        const preview = declaredPreviewOf(await getFileText(path));
+        if (preview) remaining.add(preview);
+      } catch {
+        // 坏档不引用图
+      }
+    }
+    for (const file of removedPreviews) {
+      if (remaining.has(file)) continue;
+      await removeSvg(stylePreviewPath(file)).catch(() => undefined);
+    }
+  }
+
+  private async fetchStyleText(url: string): Promise<string> {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength > STYLE_JSON_MAX_BYTES) throw new Error("文件超过 512 KB，不像是风格包");
+    return new TextDecoder().decode(buf);
+  }
+
+  private async fetchStyleImage(url: string): Promise<Uint8Array | null> {
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) return null;
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > STYLE_PREVIEW_MAX_BYTES) return null;
+      const bytes = new Uint8Array(buf);
+      return isPngBytes(bytes) ? bytes : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async stylePreviewSrc(entry: Pick<StyleEntry, "preview" | "installed">): Promise<string> {
+    if (!isPreviewFile(entry.preview)) return "";
+    const path = entry.installed
+      ? stylePreviewPath(entry.preview)
+      : `${this.bundledStyleDir()}/${STYLE_PREVIEW_DIR}/${entry.preview}`;
+    try {
+      const bytes = await getFileBytes(path);
+      return URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: "image/png" }));
+    } catch {
+      return "";
+    }
+  }
+
+  private stylePreviewAbs(entry: Pick<StyleEntry, "preview" | "installed">): string {
+    if (!isPreviewFile(entry.preview)) return "";
+    if (entry.installed) {
+      const dir = this.styleDirAbs();
+      return dir ? joinPosix(dir, STYLE_PREVIEW_DIR, entry.preview) : "";
+    }
+    const dataDir = workspaceDataDir().replace(/\\/g, "/");
+    return dataDir
+      ? joinPosix(dataDir, `plugins/${this.name}/script/excali-style/${STYLE_PREVIEW_DIR}`, entry.preview)
+      : "";
   }
 
   private async agentListBoards(args: Record<string, unknown>): Promise<AgentResult> {

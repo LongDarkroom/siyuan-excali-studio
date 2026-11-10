@@ -50,6 +50,9 @@ export type StudioTabHost = Pick<
   | "onHelp"
   | "getAiChannels"
   | "onAiChannel"
+  | "getSkillLayout"
+  | "probeCliSkill"
+  | "styleLibrary"
   | "getPresentationSettings"
   | "onPresentationSetting"
   | "getLibraryImportUrl"
@@ -295,6 +298,9 @@ export function attachStudioTab(custom: Custom, host: StudioTabHost): StudioTabS
         onHelp={host.onHelp}
         getAiChannels={host.getAiChannels}
         onAiChannel={host.onAiChannel}
+        getSkillLayout={host.getSkillLayout}
+        probeCliSkill={host.probeCliSkill}
+        styleLibrary={host.styleLibrary}
         getPresentationSettings={host.getPresentationSettings}
         onPresentationSetting={host.onPresentationSetting}
         getLibraryImportUrl={host.getLibraryImportUrl}

@@ -22,6 +22,13 @@ import { LineIcon } from "./line-icon";
 import { ICON_PLAY, ICON_PLUS } from "./menu-icons";
 import { FRAME_RATIOS, isFrameRatio, type FrameRatio } from "./frame-presets.ts";
 import { slideTitle, type Deck } from "./presentation-plan";
+import {
+  EFFECT_IDS,
+  EFFECT_LABELS,
+  STEP_MAX,
+  type MotionEdit,
+  type MotionRow,
+} from "./presentation-motion.ts";
 import type { GraphState } from "./presentation-graph.ts";
 import type { PresentationSettings } from "./settings";
 import { FadeScroll, PresentationSettingsMenu, usePopoverDismiss } from "./PresentationSettingsMenu";
@@ -39,6 +46,20 @@ const ICON_STEPS = "M5,7h14M5,12h9M5,17h5";
 
 /** 设置：推子 */
 const ICON_SLIDERS = "M4,7h8M17,7h3M4,12h3M11,12h9M4,17h8M17,17h3";
+
+/** 出场编排：三级台阶（一眼是「谁先谁后」） */
+const ICON_MOTION = "M4,19h4v-4h6v-4h6";
+
+/**
+ * 四档效果的字形。刻意不靠「箭头长短」区分：16px 上分不出来。
+ * 浮现=三点渐显、弹入=四向弹开、升起=向上、滑入=向右（零长线段 + 圆头 = 圆点，口径同 ICON_GRIP）。
+ */
+const FX_ICONS: Record<(typeof EFFECT_IDS)[number], string> = {
+  fade: "M7,16.5h.01M12,12h.01M17,7.5h.01",
+  pop: "M12,6.5v2.5M12,15v2.5M6.5,12h2.5M15,12h2.5",
+  rise: "M12,18.5V7M8.5,10.5L12,7l3.5,3.5",
+  slide: "M5.5,12h12M14,8.5l3.5,3.5L14,15.5",
+};
 
 /** 拖动把手：两列小圆点（strokeLinecap=round 时零长线段就是圆点） */
 const ICON_GRIP = "M9,7h.01M15,7h.01M9,12h.01M15,12h.01M9,17h.01M15,17h.01";
@@ -133,6 +154,13 @@ export function PresentationDrawer(props: {
   onToggle: (id: string) => void;
   /** 这一页逐条 ↔ 整页 */
   onToggleReveal: (id: string) => void;
+  /**
+   * 第八十二轮：当前选中页的编排行（宿主按现场算好了再递进来）。
+   * 空数组 = 这一页还没内容；放映中不会渲染抽屉，所以不用考虑中途变化。
+   */
+  rows: MotionRow[];
+  /** 改一条的效果/步号 → 宿主写元素 customData（可撤销、会标脏） */
+  onRowMotion: (ids: readonly string[], edit: MotionEdit) => void;
   /** 第八十轮：双击页名改画框名（宿主写场景，抽屉自己不碰） */
   onRename: (id: string, name: string) => void;
   /** 点「开始演示」→ 放映控制器接管 */
@@ -142,6 +170,9 @@ export function PresentationDrawer(props: {
   const { slides } = props.deck;
   const shown = slides.filter((s) => s.included).length;
   const [showSettings, setShowSettings] = useState(false);
+  /** 第八十二轮：出场编排区默认收起。抽屉是压在画布上的浮层，常驻一列控件就是永久少一块画布
+   *  （口径同第三十八轮荧光笔色板）；要看要改时点一下即可。 */
+  const [motionOpen, setMotionOpen] = useState(false);
   /** 内联改名：同一时刻只编辑一页；Enter/失焦保存，Esc 放弃 */
   const [editing, setEditing] = useState<{ id: string; draft: string } | null>(null);
   const cancelRenameRef = useRef(false);
@@ -402,6 +433,19 @@ export function PresentationDrawer(props: {
     props.onAddSlide(ratio);
   };
 
+  /**
+   * 步号提交：留空 = 清掉编排（回到「排在编过步的那些之后、按阅读顺序自成一步」），
+   * 写了就夹进 1..STEP_MAX。同值不写——一次写入就是一个撤销点，口径同内联改名。
+   */
+  const commitStep = (row: MotionRow, raw: string): void => {
+    const text = raw.trim();
+    const n = text === "" ? null : Math.round(Number(text));
+    const next = n === null || !Number.isFinite(n) ? null : Math.min(STEP_MAX, Math.max(1, n));
+    if (next !== row.step) props.onRowMotion(row.ids, { step: next });
+  };
+
+  const selIndex = Math.min(props.selected, Math.max(0, slides.length - 1));
+
   return (
     <aside
       ref={rootRef}
@@ -588,12 +632,98 @@ export function PresentationDrawer(props: {
             })}
           </ol>
         )}
+        <div className="exs-present-motion">
+          <button
+            type="button"
+            className={"exs-present-motion__head" + (motionOpen ? " exs-present-motion__head--on" : "")}
+            onClick={() => setMotionOpen(!motionOpen)}
+            aria-expanded={motionOpen}
+            title={t("编排这一页里每条怎么出场")}
+          >
+            <LineIcon d={ICON_MOTION} size={14} strokeWidth={1.8} />
+            <span>{t("出场编排")}</span>
+            <span className="exs-present-motion__page">{t("第 {n} 页", { n: selIndex + 1 })}</span>
+            <span className="exs-present-motion__count">{props.rows.length}</span>
+          </button>
+          {motionOpen ? (
+            props.rows.length === 0 ? (
+              <div className="exs-present-motion__empty">
+                {t("这一页还没有可编排的内容：先在画框里放点东西。")}
+              </div>
+            ) : (
+              <ol className="exs-present-motion__list">
+                {props.rows.map((r) => (
+                  <li key={r.key} className="exs-present-mrow">
+                    <span className="exs-present-mrow__label" title={t(r.label)}>
+                      {t(r.label)}
+                    </span>
+                    <span className="exs-present-mrow__fx" role="group" aria-label={t("出场效果")}>
+                      {EFFECT_IDS.map((id) => (
+                        <button
+                          key={id}
+                          type="button"
+                          className={
+                            "exs-present-fx" + (!r.auto && r.effect === id ? " exs-present-fx--on" : "")
+                          }
+                          onClick={() => props.onRowMotion(r.ids, { effect: id })}
+                          title={t(EFFECT_LABELS[id])}
+                          aria-label={t(EFFECT_LABELS[id])}
+                          aria-pressed={!r.auto && r.effect === id}
+                        >
+                          <LineIcon d={FX_ICONS[id]} size={13} strokeWidth={1.8} />
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        className={"exs-present-fx" + (r.auto ? " exs-present-fx--on" : "")}
+                        onClick={() => props.onRowMotion(r.ids, { effect: null })}
+                        title={t("按类型自动")}
+                        aria-label={t("按类型自动")}
+                        aria-pressed={r.auto}
+                      >
+                        A
+                      </button>
+                    </span>
+                    {/*
+                      key 带上步号：提交后宿主重算行，非受控输入框要跟着换成新值。
+                      代价是改完步号焦点会跳回列表——比「输入框显示的还是旧值」划算。
+                    */}
+                    <input
+                      key={`${r.key}:${r.step ?? ""}`}
+                      className="exs-present-mrow__step"
+                      type="number"
+                      min={1}
+                      max={STEP_MAX}
+                      step={1}
+                      defaultValue={r.step ?? ""}
+                      placeholder="·"
+                      aria-label={t("第几步出场")}
+                      onBlur={(e) => commitStep(r, e.currentTarget.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          e.currentTarget.blur();
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          e.currentTarget.value = r.step === null ? "" : String(r.step);
+                          e.currentTarget.blur();
+                        }
+                        e.stopPropagation();
+                      }}
+                    />
+                  </li>
+                ))}
+              </ol>
+            )
+          ) : null}
+        </div>
         <div className="exs-present-tip">
           {props.graph.kind === "linear"
             ? t("拖动左侧把手改页序；双击页名改名；≡ 管整页还是逐条，眼睛管放不放。")
             : props.graph.kind === "linked"
               ? t("已按箭头连页：放映沿箭头走，可分叉也能绕回。")
               : t("部分页面还没连上箭头，没连的按页序继续放。")}
+          {motionOpen ? ` ${t("步号相同的条目一起出（自动错开一点）；留空 = 排在编过步的之后。")}` : ""}
         </div>
       </FadeScroll>
 

@@ -9,11 +9,12 @@ description: 给 Excali Studio（思源白板）固定两套已调好的手绘�
 不要写坐标，不要手写 SVG，不要在计划里塞颜色——那些都会破坏风格一致性。
 
 前置：本机装有思源 + Excali Studio 插件，且会用它自带的无头 CLI 落白板（见 `excali-draw`）。
+对话里若已经给了绝对路径（插件的「技能分发」面板复制的提示词就带全套绝对路径），**一律以对话为准**。
 
 ```bash
 WS="<思源工作空间根目录>"                       # 含 data/ 的目录
 CLI="$WS/data/plugins/siyuan-excali-studio/scripts/excali-board.mjs"
-SKILL="<本仓库目录>"
+SKILL="<本文件所在目录>"                         # 插件里是 <插件目录>/script/excali-style
 ```
 
 ## 0. 装风格包（只做一次）
@@ -73,6 +74,10 @@ node "$SKILL/tools/preview.mjs" "$WS/data/assets/excali/习惯回路.svg" /tmp/c
 # 然后打开 /tmp/check.png 看
 ```
 
+渲染器依赖 Node 22+、roughjs 与 Chrome（当前脚本按 macOS 的 Chrome 路径写）。
+**没有这套环境的机器**（例如集市安装版、Windows、没装 Node 的环境）：跳过渲染，
+改用你所在通道的回读工具（MCP 为 `excali_file_read_board`）确认元素数量与文字，再按下表逐条检查。
+
 看完按这张清单体检，任何一条不过就改计划重画（最多 3 轮，3 轮还不过就换风格或拆图）：
 
 - [ ] 文字没被切掉、没溢出框外（右侧最容易被切）
@@ -82,7 +87,7 @@ node "$SKILL/tools/preview.mjs" "$WS/data/assets/excali/习惯回路.svg" /tmp/c
 - [ ] 标题是结论不是主题
 - [ ] 画面不挤：框与框之间留得下箭头标签
 
-**不许**跳过这一步直接交付。批量出图时，每张都要出一次 preview。
+**不许**跳过验收直接交付。有渲染器就出 PNG 看；没有渲染器就回读确认。批量出图时，每张都要验一次。
 
 ## 5. 常见失败
 

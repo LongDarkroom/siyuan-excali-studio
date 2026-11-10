@@ -45,6 +45,27 @@ export function workspaceDataDir(): string {
   }
 }
 
+/**
+ * 宿主操作系统：思源 system.os（windows / darwin / linux）。
+ * Windows 的全局安装命令不能用 ln -sfn，文案要按它切；拿不到再看 UA。
+ */
+export function hostPlatform(): "windows" | "posix" {
+  try {
+    const host = window as unknown as {
+      siyuan?: { config?: { system?: { os?: unknown } } };
+    };
+    const os = host.siyuan?.config?.system?.os;
+    if (typeof os === "string" && os) return /^win/i.test(os) ? "windows" : "posix";
+  } catch {
+    // 落到 UA 兜底
+  }
+  try {
+    return /Windows/i.test(navigator.userAgent) ? "windows" : "posix";
+  } catch {
+    return "posix";
+  }
+}
+
 function desktopIpc(): ElectronIpc | null {
   try {
     const req = (window as unknown as { require?: (m: string) => unknown }).require;
@@ -130,4 +151,76 @@ export async function pickLibraryFile(defaultDir: string): Promise<PickLibraryRe
     kind: "picked",
     file: { path, blob: new Blob([text], { type: "application/json" }) },
   };
+}
+
+/* ---------------- 第八十四轮：风格包 JSON 选择器 ---------------- */
+
+/** 与 style-library.ts 的 StylePickResult 同形（宿主直接透传给面板） */
+export type PickStyleResult =
+  | { kind: "unavailable" }
+  | { kind: "canceled" }
+  | { kind: "picked"; path: string; text: string; previewBytes?: Uint8Array }
+  | { kind: "read-error"; path: string };
+
+/** showOpenDialog 的 options（独立导出便于契约测试断言形态） */
+export function buildStyleDialogOptions(defaultDir: string): Record<string, unknown> {
+  return {
+    defaultPath: String(defaultDir ?? "").trim() || undefined,
+    properties: ["openFile"],
+    filters: [{ name: "Excali Style", extensions: ["json"] }],
+  };
+}
+
+function readLocalBytes(absPath: string): Uint8Array | null {
+  try {
+    const req = (window as unknown as { require?: (m: string) => unknown }).require;
+    if (typeof req !== "function") return null;
+    const fs = req("fs") as { readFileSync?: (p: string) => unknown } | undefined;
+    const buf = fs?.readFileSync?.(absPath);
+    if (!buf || typeof buf !== "object") return null;
+    const bytes = buf as Uint8Array;
+    return bytes.length > 0 ? new Uint8Array(bytes) : null;
+  } catch {
+    return null;
+  }
+}
+
+function dirNameOf(absPath: string): string {
+  const clean = String(absPath ?? "").replace(/\\/g, "/");
+  return clean.slice(0, clean.lastIndexOf("/"));
+}
+
+/**
+ * 系统文件选择器选一个风格包 .json（初始目录 = 风格包文件夹）。
+ * 顺手把 JSON 里声明的同目录 preview 图也读出来——粘贴/拖入在桌面端拿不到邻居文件，
+ * 这一步能让「本地文件」通道和「链接」通道一样带效果图。
+ */
+export async function pickStyleFile(defaultDir: string): Promise<PickStyleResult> {
+  const ipc = desktopIpc();
+  if (!ipc) return { kind: "unavailable" };
+  let raw: unknown;
+  try {
+    raw = await ipc.invoke("siyuan-get", { cmd: "showOpenDialog", ...buildStyleDialogOptions(defaultDir) });
+  } catch {
+    return { kind: "unavailable" };
+  }
+  const paths = readFilePaths(raw);
+  if (paths.length === 0) return { kind: "canceled" };
+  const path = paths[0]!;
+  const text = readLocalTextFile(path);
+  if (text === null) return { kind: "read-error", path };
+  let previewBytes: Uint8Array | undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    const preview =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>).preview
+        : undefined;
+    if (typeof preview === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.png$/i.test(preview.trim())) {
+      previewBytes = readLocalBytes(dirNameOf(path) + "/" + preview.trim()) ?? undefined;
+    }
+  } catch {
+    // 坏 JSON 交给面板校验去报，这里只管把正文带回去
+  }
+  return { kind: "picked", path, text, previewBytes };
 }

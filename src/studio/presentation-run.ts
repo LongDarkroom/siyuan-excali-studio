@@ -2,14 +2,20 @@
  * 第五十三轮·批 1A：放映运行时（纯逻辑）。
  *
  * 设计前提：**放映不改磁盘**。场景真源永远保持「全都显示」，放映时只把临时值
- * （opacity，1D 再加 text）作为补丁喂给 vendor（captureUpdate: NEVER，不进撤销栈），
- * 退出时按快照回填。于是断网、崩溃、直接关思源都不会把白板留成「藏了一半」的样子。
+ * （opacity，1D 再加 text，第八十二轮再加 x/y 偏移）作为补丁喂给 vendor
+ * （captureUpdate: NEVER，不进撤销栈），退出时按快照回填。于是断网、崩溃、直接关思源
+ * 都不会把白板留成「藏了一半」的样子。
  *
  * 这里只算「谁该显示、谁该藏、和现场差在哪」，不碰 React / 思源 / vendor。
  * 页面内条目的阅读顺序与片单排序共用 compareReadingOrder——两处口径不许分叉。
+ *
+ * 第八十二轮：分条建好之后还要过一道**出场编排**（presentation-motion）——元素身上的
+ * `presentation.step` 决定它和谁同一步、`presentation.effect` 决定它怎么飞进来。
+ * 没编过步的板子走原路：一条一步、按阅读顺序，行为零变化。
  */
 
 import { compareReadingOrder } from "./presentation-plan.ts";
+import { mergeByStep, motionRows, type MotionElementLike, type MotionRow } from "./presentation-motion.ts";
 
 export const OPACITY_DEFAULT = 100;
 
@@ -26,6 +32,10 @@ export type RunElement = {
   containerId?: string | null;
   groupIds?: readonly string[];
   opacity?: number;
+  /** 第八十二轮：出场编排（effect/step）住在这里，vendor 透传 */
+  customData?: unknown;
+  /** 编排行的标题用：有文字取文字，没有就退回类型名 */
+  text?: string;
 };
 
 /** 一条 = 一次出场：同组元素一起，容器连同它的绑定文字一起 */
@@ -110,16 +120,25 @@ export function revealUnits(all: readonly RunElement[], frameId: string): StepUn
 }
 
 /**
+ * 编排视图：页内每一条「谁、什么效果、第几步出」——抽屉用它。
+ * 分组口径全部来自 revealUnits（同组一起、绑定文字跟容器），这里只贴元数据。
+ */
+export function pageRows(all: readonly RunElement[], frameId: string): MotionRow[] {
+  return motionRows(all as readonly MotionElementLike[], revealUnits(all, frameId));
+}
+
+/**
  * 场景 + 一页画框 → 放映计划。
  * reveal=false（全局逐条关闭，或这一页设成「整页一起出」）时不给分条：
  * 游标 step 恒为 -1，整页元素同时出场。
+ * 分条建好后过一道 mergeByStep：标了同步号的那些**合成一次按键**（动画里再错峰）。
  */
 export function planPage(all: readonly RunElement[], frameId: string, reveal = true): RunPlan {
   const frame = all.find((e) => e.id === frameId && e.type === "frame" && alive(e));
   return {
     frameId,
     box: frame ? { x: frame.x, y: frame.y, w: frame.width ?? 0, h: frame.height ?? 0 } : { x: 0, y: 0, w: 0, h: 0 },
-    units: reveal ? revealUnits(all, frameId) : [],
+    units: reveal ? mergeByStep(pageRows(all, frameId)) : [],
     memberIds: pageMembers(all, frameId).map((e) => e.id),
   };
 }
@@ -184,6 +203,13 @@ export function snapshotOpacity(all: readonly RunElement[]): Map<string, number>
   return m;
 }
 
+/** 第八十二轮：动画只临时挪 x/y，所以退出还要有坐标快照（和 opacity 同批抓） */
+export function snapshotPose(all: readonly RunElement[]): Map<string, { x: number; y: number }> {
+  const m = new Map<string, { x: number; y: number }>();
+  for (const e of all) if (alive(e)) m.set(e.id, { x: e.x, y: e.y });
+  return m;
+}
+
 /** 退出复原：只回和快照不同的那些，别为一次退出把整场景重画 */
 export function buildRestorePatches(all: readonly RunElement[], original: ReadonlyMap<string, number>): RunPatch[] {
   const out: RunPatch[] = [];
@@ -192,6 +218,21 @@ export function buildRestorePatches(all: readonly RunElement[], original: Readon
     const want = original.get(e.id);
     if (want === undefined) continue;
     if (opacityOf(e) !== want) out.push({ id: e.id, opacity: want });
+  }
+  return out;
+}
+
+/** 坐标复原同口径：只回飞在半空的那些（vendor 自己修过的绑定箭头也会被这张表兜住） */
+export function buildRestorePoses(
+  all: readonly RunElement[],
+  pose: ReadonlyMap<string, { x: number; y: number }>,
+): { id: string; x: number; y: number }[] {
+  const out: { id: string; x: number; y: number }[] = [];
+  for (const e of all) {
+    if (!alive(e)) continue;
+    const want = pose.get(e.id);
+    if (!want) continue;
+    if (e.x !== want.x || e.y !== want.y) out.push({ id: e.id, x: want.x, y: want.y });
   }
   return out;
 }

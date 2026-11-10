@@ -128,7 +128,9 @@ test("镜头曲线：480ms + easeOutQuart + zoom 等比 + 飞行期间不重建�
   assert.match(APP, /shouldCacheIgnoreZoom: false/, "中途退出也要把闸关回去");
   assert.match(
     APP,
-    /if \(presentCamRafRef\.current\) \{[\s\S]{0,140}\}[\s\S]{0,60}api\.updateScene\(\{[\s\S]{0,400}scrollX: snap\.scrollX/,
+    // 回填块里现在有 opacity / text / x-y 三份差异，中间那段比早年长——放宽的是
+    // 「掐 rAF 必须在 updateScene 之前」这条顺序的距离，不是取消这个断言。
+    /if \(presentCamRafRef\.current\) \{[\s\S]{0,140}\}[\s\S]{0,60}api\.updateScene\(\{[\s\S]{0,700}scrollX: snap\.scrollX/,
     "退出先掐飞行 rAF，再回填视口（否则镜头会在回填后继续抢写）",
   );
 });

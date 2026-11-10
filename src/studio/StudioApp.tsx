@@ -27,6 +27,8 @@ import { LineIcon } from "./line-icon";
 import { ICON_DELETE, ICON_DUPLICATE, ICON_MINUS, ICON_PALETTE, ICON_PLAY, ICON_PLUS, ICON_REDO, ICON_UNDO } from "./menu-icons";
 import { AiChannelsPanel } from "./AiChannelsPanel";
 import type { AiChannels, ChannelId } from "./ai/channels";
+import type { SkillLayout } from "./ai/skill-dispatch";
+import type { StyleLibraryApi } from "./ai/style-library";
 import { IMAGE_TO_MATERIAL, INSERT_BOARD_CARD, OUTLINE_COLOR, PRESENTATION, railActionMount, railActionOf, type RailActionId, type RailActionMeta } from "./rail-actions.ts";
 import { deckOf, deckSignature, moveSlide, PRESENTATION_KEY, slideTitle, toggleSlide, toggleSlideReveal, visibleSlides, type Deck, type DeckPatch, type FrameLike, type Slide } from "./presentation-plan";
 import { frameSizeFor, nextFrameSpot, type FrameRatio } from "./frame-presets.ts";
@@ -35,16 +37,33 @@ import { THUMB_MAX, thumbSignature, type ThumbElement } from "./presentation-thu
 import { installRadioIsolation } from "./radio-isolation.ts";
 import {
   buildRestorePatches,
+  buildRestorePoses,
   buildRunPatches,
   clampCursor,
   lastStep,
+  OPACITY_DEFAULT,
+  pageRows,
   planPage,
   snapshotOpacity,
+  snapshotPose,
   type Cursor,
   type RunElement,
   type RunPatch,
   type RunPlan,
 } from "./presentation-run.ts";
+import {
+  EFFECTS,
+  motionGroups,
+  poseOf,
+  rowsSignature,
+  setMotionPatch,
+  type EffectId,
+  type MotionEdit,
+  type MotionElementLike,
+  type MotionGroup,
+  type MotionRow,
+  type PosePatch,
+} from "./presentation-motion.ts";
 import { buildSlideGraph, graphState, type GraphFrame, type GraphSide, type GraphState, type SlideGraph } from "./presentation-graph.ts";
 import {
   navEnd,
@@ -224,6 +243,17 @@ export type StudioProps = {
   getAiChannels: () => AiChannels;
   onAiChannel: (id: ChannelId, on: boolean) => void;
   /**
+   * 第八十三轮：技能分发。插件目录绝对路径（宿主用 dataDir + 插件名推导，非思源宿主为空串）；
+   * hasCli 不走同步快照——集市包不带 scripts/，得问一次思源的文件接口才知道能不能跑命令。
+   */
+  getSkillLayout: () => Omit<SkillLayout, "hasCli">;
+  probeCliSkill: () => Promise<boolean>;
+  /**
+   * 第八十四轮：风格包管理。列表/安装/移除/导入都走宿主（React 树不碰思源 API），
+   * 面板只负责呈现磁盘真值。
+   */
+  styleLibrary: StyleLibraryApi;
+  /**
    * 第五十三轮：演示偏好（幕布/逐条/打字机/自动前进/全屏/方向键）。
    * getPresentationSettings 在打开抽屉与进片场时各拉一次；改一项就落盘并回写。
    */
@@ -310,6 +340,9 @@ export function StudioApp(props: StudioProps) {
     onHelp,
     getAiChannels,
     onAiChannel,
+    getSkillLayout,
+    probeCliSkill,
+    styleLibrary,
     getPresentationSettings,
     onPresentationSetting,
     gridModeEnabled,
@@ -330,6 +363,8 @@ export function StudioApp(props: StudioProps) {
   // 第四十四轮：AI 通道面板——开面板那一刻从宿主设置拉快照，切换即写回再拉
   const [aiOpen, setAiOpen] = useState(false);
   const [aiChannels, setAiChannels] = useState<AiChannels | null>(null);
+  /** 第八十三轮：技能分发用的 CLI 探针结果（打开面板时问一次；默认按「没有」写文案，宁可少许诺） */
+  const [cliSkill, setCliSkill] = useState(false);
 
   /**
    * 阶段 B：图库持久化（组件库在 ☰ 菜单里打开）。2026-10-19 抽出 applyDiskLibrary 供三处复用：
@@ -658,6 +693,19 @@ export function StudioApp(props: StudioProps) {
    * 钉了演示模式时出现（入口越少越好），抽屉是画布内 absolute 浮层。
    */
   const [presentOpen, setPresentOpen] = useState(false);
+  /**
+   * 第八十二轮：出场编排行。抽屉开着时才算签名、才重算行（关着不动 scene 也不动渲染）。
+   * motionRev 是「场景里编排相关的字段变了」的计数器：行数据本身不进 React，
+   * 只在签名变化时 bump，抽屉跟着宿主重算一次。
+   */
+  const presentOpenRef = useRef(false);
+  const motionSigRef = useRef("");
+  const [motionRev, setMotionRev] = useState(0);
+  useEffect(() => {
+    presentOpenRef.current = presentOpen;
+    // 关抽屉再开：签名归零，保证重开一定重算一次（中间可能有没进签名的编辑）
+    if (!presentOpen) motionSigRef.current = "";
+  }, [presentOpen]);
   const [deck, setDeck] = useState<Deck>(() => ({ slides: [], hasOrdered: false }));
   const [presentSel, setPresentSel] = useState(0);
   /**
@@ -691,6 +739,11 @@ export function StudioApp(props: StudioProps) {
     original: Map<string, number>;
     /** 批 1D：进片场那一刻的全文（含绑定文字），退出照它回填 */
     textOriginal: Map<string, string>;
+    /**
+     * 第八十二轮：进片场那一刻的坐标（含画框）。出场动画临时挪 x/y，
+     * 退出按这张表回填——和 original/textOriginal 同一批抓，口径一致。
+     */
+    pose: Map<string, { x: number; y: number }>;
     scrollX: number;
     scrollY: number;
     zoom: number;
@@ -940,13 +993,23 @@ export function StudioApp(props: StudioProps) {
       width: s.w,
       height: s.h,
     }));
+    /*
+     * 第八十二轮：编排行的签名要**排在图状态那道 return 之前**——graphSig 不变是常态，
+     * 挂它后面就等于永远不刷新。抽屉关着时压根不算（onChange 每帧都跑）。
+     */
+    if (presentOpenRef.current) {
+      const ms = rowsSignature(elements as unknown as readonly MotionElementLike[]);
+      if (ms !== motionSigRef.current) {
+        motionSigRef.current = ms;
+        setMotionRev((n) => n + 1);
+      }
+    }
     const gs = graphState(buildSlideGraph(elements as unknown as Parameters<typeof buildSlideGraph>[0], frames));
     const gsSig = `${gs.kind}|${gs.edgeCount}|${gs.linkedIds.join(",")}|${gs.unlinkedIds.join(",")}`;
     if (gsSig === graphSigRef.current) return;
     graphSigRef.current = gsSig;
     setPresentGraph(gs);
   }, []);
-
   /*
    * 第八十轮：演示缩略图。
    * 抽屉里的卡片与放映底栏的页码预览共用同一份缓存；生成走 vendor 的
@@ -1085,6 +1148,22 @@ export function StudioApp(props: StudioProps) {
   const toggleDeckReveal = useCallback(
     (id: string): void => applyDeckPatches(toggleSlideReveal(deck, id)),
     [applyDeckPatches, deck],
+  );
+  /**
+   * 第八十二轮：抽屉里「这一页每条怎么出」的那份行数据。
+   * 放映中不重算——这一场用的是进片场定格的 plans，中途改元数据从下一步起才生效，
+   * 让抽屉和现场各说各话比让抽屉跟着变更容易看不懂。
+   */
+  const presentRows = useMemo<MotionRow[]>(() => {
+    if (!api || !presentOpen || presenting || deck.slides.length === 0) return [];
+    const s = deck.slides[Math.min(presentSel, deck.slides.length - 1)];
+    if (!s) return [];
+    return pageRows(api.getSceneElements() as unknown as RunElement[], s.id);
+  }, [api, deck.slides, motionRev, presentOpen, presentSel, presenting]);
+  /** 编排写入和页序一样：正常场景更新（可撤销、会标脏、自动保存照旧） */
+  const setRowMotion = useCallback(
+    (ids: readonly string[], edit: MotionEdit): void => applyDeckPatches(setMotionPatch(ids, edit)),
+    [applyDeckPatches],
   );
   /** 第八十轮：抽屉内联改名 = 改画框名（vendor 自己的画框名，不另存一份） */
   const renameDeckSlide = useCallback(
@@ -1269,16 +1348,145 @@ export function StudioApp(props: StudioProps) {
     },
     [api],
   );
-  /** 把某个游标落到场景上：纯函数算「该显示谁」，和现场比差异再写 */
+  /**
+   * 第八十二轮：出场动画的补丁写法。
+   *
+   * 只写 opacity + x/y，而且 x/y 一律从「进动画那一刻抓的基准」加偏移算出来——
+   * 绝不写 `live.x + dx`（那会把上一帧的偏移当成真坐标累加，元素会一路飘出画框）。
+   * 和 opacity 补丁同样是 NEVER：不进撤销栈、不落盘，退出按快照回填。
+   */
+  const applyPosePatches = useCallback(
+    (patches: PosePatch[]): void => {
+      if (!api || patches.length === 0) return;
+      const byId = new Map(patches.map((p) => [p.id, p]));
+      api.updateScene({
+        elements: api
+          .getSceneElements()
+          .map((e) => {
+            const p = byId.get(e.id);
+            return p ? { ...e, opacity: p.opacity, x: p.x, y: p.y } : e;
+          }) as never,
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    },
+    [api],
+  );
+  /**
+   * 在飞的动画：分组（错峰）+ 每个元素的基准坐标与终值 opacity。
+   * 换页 / 跳页 / 退出之前都要先 finishMotion 落终态，否则中断在那一帧的元素
+   * 会停在半空，而且下一次动画会把「半空的坐标」当成基准。
+   */
+  const motionRef = useRef<{
+    raf: number;
+    groups: MotionGroup[];
+    base: Map<string, { x: number; y: number }>;
+    target: Map<string, number>;
+  } | null>(null);
+  const finishMotion = useCallback((): void => {
+    const m = motionRef.current;
+    if (!m) return;
+    motionRef.current = null;
+    if (m.raf) window.cancelAnimationFrame(m.raf);
+    const out: PosePatch[] = [];
+    for (const [id, b] of m.base) {
+      out.push({ id, x: b.x, y: b.y, opacity: m.target.get(id) ?? OPACITY_DEFAULT });
+    }
+    applyPosePatches(out);
+  }, [applyPosePatches]);
+  /**
+   * 这一拍新露出的元素起飞。返回 false = 没得动（调用方回落硬切）。
+   * `together` = 整页一起出（step=-1）：错峰全部归零，那是用户明确要的「一起」。
+   */
+  const startMotion = useCallback(
+    (ids: readonly string[], together: boolean): boolean => {
+      const snap = presentSnapRef.current;
+      if (!snap || !api || ids.length === 0) return false;
+      const all = api.getSceneElements() as unknown as RunElement[];
+      const groups = motionGroups(all as readonly MotionElementLike[], ids, together);
+      if (groups.length === 0) return false;
+      const live = new Map(all.map((e) => [e.id, e]));
+      const base = new Map<string, { x: number; y: number }>();
+      const target = new Map<string, number>();
+      for (const g of groups) {
+        for (const id of g.ids) {
+          const e = live.get(id);
+          if (!e) continue;
+          base.set(id, { x: e.x, y: e.y });
+          target.set(id, snap.original.get(id) ?? OPACITY_DEFAULT);
+        }
+      }
+      if (base.size === 0) return false;
+      const run: NonNullable<typeof motionRef.current> = { raf: 0, groups, base, target };
+      motionRef.current = run;
+      const start = performance.now();
+      const frame = (): void => {
+        if (motionRef.current !== run) return;
+        const elapsed = performance.now() - start;
+        const out: PosePatch[] = [];
+        let done = true;
+        for (const g of run.groups) {
+          const local = elapsed - g.delay;
+          if (local < EFFECTS[g.effect].ms) done = false;
+          const p = poseOf(g.effect, local);
+          for (const id of g.ids) {
+            const b = run.base.get(id);
+            if (!b) continue;
+            out.push({
+              id,
+              x: b.x + p.dx,
+              y: b.y + p.dy,
+              opacity: Math.round((run.target.get(id) ?? OPACITY_DEFAULT) * p.o),
+            });
+          }
+        }
+        if (!done) {
+          applyPosePatches(out);
+          run.raf = window.requestAnimationFrame(frame);
+          return;
+        }
+        // 收尾不再逐帧写，直接落终态（偏移归零、opacity 回元素自己的原值）
+        motionRef.current = null;
+        const final: PosePatch[] = [];
+        for (const [id, b] of run.base) {
+          final.push({ id, x: b.x, y: b.y, opacity: run.target.get(id) ?? OPACITY_DEFAULT });
+        }
+        applyPosePatches(final);
+      };
+      // 第一帧立刻写：否则这一拍会先闪一下全文/全显，再从头飞
+      frame();
+      return true;
+    },
+    [api, applyPosePatches],
+  );
+  /**
+   * 把某个游标落到场景上：纯函数算「该显示谁」，和现场比差异再写。
+   *
+   * 第八十二轮：拆开两种补丁——**藏起来的硬切**（一步切黑，不动画），
+   * **新露出的起飞**（opacity + 临时位移，同拍按 70ms 错峰）。
+   * 只有向前推进（advance/enter）才动；跳页、倒退、放映中换口径一律给终态——
+   * 拖进度条时要的是「立刻到位」，不是排队飞一遍。
+   */
   const presentApply = useCallback(
-    (cur: Cursor): void => {
+    (cur: Cursor, kind: PresentNav = "jump"): void => {
       const snap = presentSnapRef.current;
       if (!snap || !api) return;
       const plan = snap.plans[cur.page];
       if (!plan) return;
-      applyRunPatches(buildRunPatches(api.getSceneElements() as unknown as RunElement[], plan, cur.step, snap.original));
+      finishMotion();
+      const patches = buildRunPatches(
+        api.getSceneElements() as unknown as RunElement[],
+        plan,
+        cur.step,
+        snap.original,
+      );
+      const hide = patches.filter((p) => p.opacity === 0);
+      const show = patches.filter((p) => p.opacity !== 0);
+      applyRunPatches(hide);
+      const ids = show.map((p) => p.id);
+      const together = cur.step < 0;
+      if (kind === "jump" || !startMotion(ids, together)) applyRunPatches(show);
     },
-    [api, applyRunPatches],
+    [api, applyRunPatches, finishMotion, startMotion],
   );
 
   const bumpAutoDeadline = useCallback((): void => {
@@ -1422,7 +1630,7 @@ export function StudioApp(props: StudioProps) {
       }
       setPresenting(next);
       presentNavRef.current = nav;
-      presentApply(next);
+      presentApply(next, kind);
       if (kind === "advance" || kind === "enter") {
         // 只有向前推进才打字；跳页 / 后退直接给全文
         const started = startTyping(newlyRevealedIds(snap.plans[next.page], prev, next));
@@ -1580,6 +1788,7 @@ export function StudioApp(props: StudioProps) {
       titles: shown.map((s) => t(slideTitle(s))),
       graph,
       original: snapshotOpacity(all),
+      pose: snapshotPose(all),
       textOriginal: snapshotText(all as unknown as TextElementLike[]),
       scrollX: st.scrollX,
       scrollY: st.scrollY,
@@ -1665,6 +1874,8 @@ export function StudioApp(props: StudioProps) {
       window.cancelAnimationFrame(typingRef.current.raf);
       typingRef.current = null;
     }
+    // 第八十二轮：动画还在飞就先落终态，否则回填读到的基准是「半空中的坐标」
+    finishMotion();
     // 退全屏：无条件调一次，host 已经退出时会早退（状态以真实 fullscreenElement 为准）
     applyFullscreen(false);
     if (api) {
@@ -1672,6 +1883,7 @@ export function StudioApp(props: StudioProps) {
       const all = elems as unknown as (RunElement & TextElementLike)[];
       const opById = new Map(buildRestorePatches(all, snap.original).map((p) => [p.id, p.opacity]));
       const textById = new Map(buildTextRestorePatches(all, snap.textOriginal).map((p) => [p.id, p.text]));
+      const poseById = new Map(buildRestorePoses(all, snap.pose).map((p) => [p.id, p]));
       // 飞行中退出：先掐掉相机 rAF，否则它会在回填之后继续抢写 scroll/zoom（镜头自己飘）
       if (presentCamRafRef.current) {
         window.cancelAnimationFrame(presentCamRafRef.current);
@@ -1681,8 +1893,14 @@ export function StudioApp(props: StudioProps) {
         elements: elems.map((e) => {
           const op = opById.get(e.id);
           const text = textById.get(e.id);
-          if (op === undefined && text === undefined) return e;
-          return { ...e, ...(op === undefined ? {} : { opacity: op }), ...(text === undefined ? {} : { text }) };
+          const pose = poseById.get(e.id);
+          if (op === undefined && text === undefined && pose === undefined) return e;
+          return {
+            ...e,
+            ...(op === undefined ? {} : { opacity: op }),
+            ...(text === undefined ? {} : { text }),
+            ...(pose === undefined ? {} : { x: pose.x, y: pose.y }),
+          };
         }) as never,
         appState: {
           viewModeEnabled: snap.viewModeEnabled,
@@ -1712,7 +1930,7 @@ export function StudioApp(props: StudioProps) {
     setPresentScrim(true);
     setPresentFullscreen(false);
     setPresenting(null);
-  }, [api, applyFullscreen]);
+  }, [api, applyFullscreen, finishMotion]);
 
   /**
    * 连按时以「排队中的那一页」为基准推进，否则两次快按会被算成同一个目标。
@@ -1838,7 +2056,11 @@ export function StudioApp(props: StudioProps) {
   const openAiPanel = useCallback((): void => {
     setAiChannels(getAiChannels());
     setAiOpen(true);
-  }, [getAiChannels]);
+    // 第八十三轮：CLI 是否在位（集市包不带 scripts/）→ 提示词走命令行还是纯内置工具
+    void probeCliSkill()
+      .then((has) => setCliSkill(has))
+      .catch(() => setCliSkill(false));
+  }, [getAiChannels, probeCliSkill]);
   const toggleAiChannel = useCallback(
     (id: ChannelId, on: boolean): void => {
       onAiChannel(id, on);
@@ -2916,6 +3138,8 @@ export function StudioApp(props: StudioProps) {
           onAddSlide={addDeckSlide}
           onToggle={toggleDeckSlide}
           onToggleReveal={toggleDeckReveal}
+          rows={presentRows}
+          onRowMotion={setRowMotion}
           onRename={renameDeckSlide}
           onStart={startPresentation}
           onClose={() => {
@@ -2945,7 +3169,14 @@ export function StudioApp(props: StudioProps) {
         />
       ) : null}
       {aiOpen && aiChannels ? (
-        <AiChannelsPanel channels={aiChannels} onToggle={toggleAiChannel} onClose={() => setAiOpen(false)} />
+        <AiChannelsPanel
+          channels={aiChannels}
+          onToggle={toggleAiChannel}
+          onClose={() => setAiOpen(false)}
+          skill={{ ...getSkillLayout(), hasCli: cliSkill }}
+          styleLibrary={styleLibrary}
+          notify={notify}
+        />
       ) : null}
       {/* 2026-10-30：「新建思源链接」对话框（粘贴链接 / 搜文档） */}
       {linkDialogFor ? (

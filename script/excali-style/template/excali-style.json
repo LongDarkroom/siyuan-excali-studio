@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LongDarkroom/excali-style-skill/main/schema/excali-style.schema.json",
+  "name": "my-style",
+  "label": "我的风格",
+  "description": "一句话说明这套风格适合画什么",
+  "version": "1.0.0",
+  "extends": "pencil",
+  "background": "#ffffff",
+  "ink": "#1e1e1e",
+  "palette": [
+    "#d0bfff",
+    "#b2f2bb",
+    "#ffec99",
+    "#a5d8ff"
+  ],
+  "strokeWidth": 2,
+  "roughness": 1,
+  "preview": "preview.png"
+}

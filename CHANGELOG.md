@@ -5,6 +5,47 @@
 > 思源集市用户：安装后新版本会通过集市自动更新（集市索引约每小时同步一次 GitHub Release）。
 
 
+## v0.9.3（2026-11-10）
+
+### 新增：风格包管理（装、看、删都在面板里）
+
+- 面板的「风格包」改成**磁盘真值**：列表读工作区 `data/assets/excali-styles/`，没装就没有文件，也不再照给「调用指令」——修掉贴给 Agent 就报 `style:unknown-style` 的老问题。
+- 插件自带的两套包（漫画墨线 / 涂鸦马克笔）以「未安装」出现在列表里，点「安装」才拷进工作区并立即生效；内置包删了还能一键重装。
+- 已安装的包给完整三件事：**调用指令**（卡片写了 `prompt` 就整段替换）、**效果图**（复制本地绝对路径，离线可用）、**移除**（二次确认，只删文件，不动已经画好的白板）。
+- 「＋ 导入」四通道对应四种网络现实：**链接**（GitHub blob 链接自动换 raw）、**粘贴 JSON**（没网也能装）、**本地文件**（桌面端顺带读同目录效果图；浏览器端回落文件选择）、**让 Agent 代装**（外部 Agent 有写盘权限，提示词已填好绝对路径）。
+- 导入前有确认页：样式校验与加载器同一条规则，展示包名、extends、色板、版本、要写入的两个绝对路径；同名包会给覆盖提示。
+- 「打开文件夹」：桌面端直接在 Finder / 资源管理器中打开风格包目录；非桌面端如实提示不支持。
+- 「技能分发」折叠区补上四行大白话解释（绘画技能 / 风格技能 / 装到全局 / AGENTS.md 索引行），四个概念不用再猜。
+- 复制提示词只点名**真实已安装**的风格包；一个都没装时改用内置基线 `pencil / marker / blueprint` 的话术，不再让 Agent 传不存在的包名。
+
+### 风格仓库：一份 JSON 双语义
+
+- 风格包 JSON 现在同时是加载器吃的包和面板卡片：新增 `description / preview / version / prompt` 四个展示字段，加载器忽略、面板展示。
+- 内置两包补上 `description / preview / version`，效果图分别指向 `manga-ink-arch.png` / `doodle-visual.png`。
+- `excali-style-skill` 仓库新增 [`template/excali-style.json`](https://github.com/LongDarkroom/excali-style-skill/blob/main/template/excali-style.json) 与 [`schema/excali-style.schema.json`](https://github.com/LongDarkroom/excali-style-skill/blob/main/schema/excali-style.schema.json)：仓库根目录放 `excali-style.json` + `preview.png` 就能被插件直接导入，编辑器按 schema 实时校验字段。
+- 模板与 schema 随插件包分发（`script/excali-style/template|schema`），离线也能查规则。
+
+### 安装说明
+
+- 升级后内置风格包仍显示「未安装」：到 ☰「AI 通道…」→ 展开「一次性设置与风格包」→ 风格包一节点「安装」即可。
+
+## v0.9.2（2026-11-10）
+
+### 新增：技能分发（让外部 Agent 会画、会参照风格）
+
+- ☰「AI 通道…」面板下半新增「技能分发」一节，不再多一个菜单项：一张「技能已随插件 · v1.0.0」卡 +「复制提示词」主按钮，展开后可拿到脚本技能/风格技能的**本机绝对路径**、装到全局的命令、以及一行 `AGENTS.md` 索引。
+- 「复制提示词」复制的是现填好绝对路径的中文指令（不再是 `<本仓库目录>` 占位符），外部 Agent 读到后按路径打开 SKILL.md 即可动手。
+- 通道话术按事实分叉：本机有 `scripts/excali-board.mjs` → 提示词带上 CLI 命令；集市安装版（包里没有 `scripts/`）→ 明确让 Agent 跳过跑命令的步骤、改用工具，不会让 AI 对着不存在的命令行硬跑。
+- 提示词同时列出两种工具名：思源内置智能体用 `excali_*`，外部智能体经内核 MCP 连接后用 `excali_file_*`；两种都没有时只产出计划 JSON，不伪造工具调用。
+- 「装到全局（跨客户端）」只复制命令：macOS/Linux 用 `mkdir -p … && ln -sfn …`，Windows 自动换成 PowerShell 的 Junction（不需要管理员/开发者模式）；前端写不了 home 目录，符号链接指向插件内的技能目录，插件升级技能跟着升级。
+- 两个风格包（漫画线稿 / 手账涂鸦）只复制调用指令与效果图路径，不做安装；效果图随包分发（`script/excali-style/previews/`），不再依赖 GitHub raw，国内网络也能离线查看。
+
+### 修复与调整
+
+- 面板限高从 640 抬到 700：四条通道 + 技能卡 + 折叠条收起态一屏放得下；展开技能节时自动滚到详情，不会「点了没反应」。
+- 集市包补进 `script/excali-draw/`（此前只打了 `excali-style`），集市用户复制到的绘画技能路径不再落空；无头 CLI 的 `scripts/` 仍不进包。
+- 两份 SKILL.md 补充版本号与路径口径：对话里给了绝对路径就以对话为准；风格技能根目录随文件位置推导。
+
 ## v0.9.1（2026-11-09）
 
 ### 集市简介全套改版

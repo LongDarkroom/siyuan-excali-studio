@@ -259,12 +259,13 @@ test("样式：放映中自绘控件让位", () => {
 
 /* ------------------------------ ③ 分层 ------------------------------ */
 
-test("presentation-run 只依赖 presentation-plan，仍可 node 直跑", () => {
+test("presentation-run 只依赖两片纯逻辑，仍可 node 直跑", () => {
   const RUN = src("studio/presentation-run.ts");
   assert.equal(RUN.includes('from "react"'), false);
   assert.equal(RUN.includes('from "siyuan"'), false);
   assert.equal(RUN.includes("@excalidraw"), false);
   assert.equal(RUN.includes("../i18n"), false);
   const imports = [...RUN.matchAll(/^import .* from "([^"]+)";$/gm)].map((m) => m[1]);
-  assert.deepEqual(imports, ["./presentation-plan.ts"], "运行时只许依赖片单纯逻辑");
+  // 第八十二轮：出场编排是第二块纯逻辑（run 依赖它，它只 type-import run——反向就成循环依赖）
+  assert.deepEqual(imports, ["./presentation-plan.ts", "./presentation-motion.ts"], "运行时只许依赖纯逻辑层");
 });

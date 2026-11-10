@@ -90,7 +90,11 @@ test("菜单 → 画布状态 → 面板：三条通道齐", () => {
   assert.match(MENU, /onAiChannels: \(\) => void/, "菜单收打开回调");
   assert.match(APP, /const \[aiOpen, setAiOpen\] = useState\(false\)/, "面板开关是画布本地状态");
   assert.match(APP, /setAiChannels\(getAiChannels\(\)\)/, "打开与翻转都从宿主快照重拉（真源在设置）");
-  assert.match(APP, /<AiChannelsPanel channels=\{aiChannels\} onToggle=\{toggleAiChannel\} onClose=\{\(\) => setAiOpen\(false\)\}/, "面板渲染");
+  assert.match(
+    APP,
+    /<AiChannelsPanel\s+channels=\{aiChannels\}\s+onToggle=\{toggleAiChannel\}\s+onClose=\{\(\) => setAiOpen\(false\)\}\s+skill=\{\{ \.\.\.getSkillLayout\(\), hasCli: cliSkill \}\}/,
+    "面板渲染（第八十三轮起带 skill 快照）",
+  );
   assert.match(TAB, /getAiChannels=\{host\.getAiChannels\}\s*\n\s*onAiChannel=\{host\.onAiChannel\}/, "tab 透传宿主两条通道");
 });
 
