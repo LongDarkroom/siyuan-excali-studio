@@ -4167,12 +4167,9 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 }
 
 /* 填充色由组件按画布底色写进 fill 属性（亮/暗主题各自一色）：
-   CSS 不许在这里再定颜色，否则会盖掉属性、退回「压黑幕布」的观感 */
-.exs-present-scrim__edge {
-  fill: none;
-  stroke: rgba(128, 128, 128, 0.45);
-  stroke-width: 1;
-}
+   CSS 不许在这里再定颜色，否则会盖掉属性、退回「压黑幕布」的观感。
+   洞边原先补过一圈灰色描边，但幕布色 = 画布底色时它是画面里唯一可见的矩形线，
+   用户会当成「画框框线没去掉」——描边已整条退役，别再画回来。 */
 
 .exs-canvas .exs-present-hud {
   position: absolute;

@@ -73,14 +73,30 @@ test("镜头：留白走进片场定格的偏好；飞行窗内换页排队，�
   assert.match(APP, /presentCamUntilRef\.current = performance\.now\(\) \+ PRESENT_CAM_MS/, "换页时开飞行窗");
   assert.match(
     APP,
-    /if \(pageChanged && performance\.now\(\) < presentCamUntilRef\.current\) \{[\s\S]{0,180}presentPendingRef\.current = \{ nav, kind \};\s*\n\s*return;/,
+    /if \(pageChanged && performance\.now\(\) < presentCamUntilRef\.current\) \{[\s\S]{0,180}queuePresent\(nav, kind\);\s*\n\s*return;/,
     "窗内只记意图（连同出场方式），不改游标（否则镜头会被反复重定向）",
   );
+  const qAt = APP.indexOf("const queuePresent = ");
+  assert.ok(qAt > 0, "排队要有自己的落地器，不再靠 60ms 轮询捡");
+  const q = APP.slice(qAt, APP.indexOf("const presentGo = useCallback", qAt));
+  assert.match(q, /presentPendingRef\.current = \{ nav, kind \};/, "先记最后意图");
+  assert.match(
+    q,
+    /window\.setTimeout\(\s*\n?\s*fire,\s*\n?\s*Math\.max\(0, presentCamUntilRef\.current - performance\.now\(\)\),/,
+    "落地时刻钉在飞行窗结束那一瞬（连按不留 60ms 空窗）",
+  );
+  assert.match(q, /if \(left > 0\) \{[\s\S]{0,140}window\.setTimeout\(fire, left\);/, "中途又开新飞行窗就顺延，不插第三段");
+  assert.match(q, /presentGoRef\.current\(pending\.nav, pending\.kind\);/, "追的是最后一次意图（带上出场方式）");
+  assert.match(q, /cancelPresentFlush\(\);/, "排队前先取消旧定时器（否则旧窗会把新意图提前落地）");
   const flushAt = APP.indexOf("const timer = window.setInterval");
-  assert.ok(flushAt > 0, "必须有飞行窗结束后的追帧");
+  assert.ok(flushAt > 0, "自动前进仍要有那个 60ms 轮询");
   const flush = APP.slice(flushAt, APP.indexOf("}, [presenting]);", flushAt));
-  assert.match(flush, /presentPendingRef\.current = null;/, "追之前先取走，避免重复应用");
-  assert.match(flush, /presentGoRef\.current\(pending\.nav, pending\.kind\);/, "追的是最后一次意图（带上出场方式）");
+  assert.equal(/presentGoRef\.current/.test(flush), false, "60ms 轮询不许再管换页落地——那是转场之间卡一下的来源");
+  assert.match(
+    APP,
+    /if \(presentCamRafRef\.current\) window\.cancelAnimationFrame\(presentCamRafRef\.current\);\s*\n\s*if \(presentFlushTimerRef\.current\) window\.clearTimeout\(presentFlushTimerRef\.current\);/,
+    "卸载兜底：飞行 rAF 与排队定时器一起归零",
+  );
   assert.match(
     APP,
     /const cur = presentPendingRef\.current\?\.nav \?\? presentNavRef\.current;/,
@@ -92,6 +108,28 @@ test("镜头：留白走进片场定格的偏好；飞行窗内换页排队，�
     APP,
     /presentSnapRef\.current = null;\s*\n\s*presentPendingRef\.current = null;\s*\n\s*presentCamUntilRef\.current = 0;/,
     "退片场清掉排队与飞行窗",
+  );
+});
+
+test("镜头曲线：480ms + easeOutQuart + zoom 等比 + 飞行期间不重建元素缓存", () => {
+  assert.match(
+    APP,
+    /const PRESENT_CAM_MS = 480;/,
+    "480ms：easeOut 峰值是均速 4 倍，要和旧口径（260ms + easeInOut，峰值 2 倍）的每帧位移持平就得给到这里",
+  );
+  const at = APP.indexOf("const focusFrame = useCallback");
+  assert.ok(at > 0, "取景走自算的 focusFrame");
+  const body = APP.slice(at, APP.indexOf("focusFrameRef.current = focusFrame;", at));
+  assert.match(body, /const e = 1 - Math\.pow\(1 - t, 4\);/, "easeOutQuart：起步即最快，尾巴收边");
+  assert.equal(/2 \* t \* t/.test(body), false, "不许退回 easeInOutQuad（两头慢 = 按下先愣一下）");
+  assert.match(body, /zoom: \{ value: fromZoom \* Math\.pow\(zoom \/ fromZoom, e\) \}/, "zoom 等比插值，视觉上才是匀速推近");
+  assert.equal(/fromZoom \+ \(zoom - fromZoom\) \* e/.test(body), false, "不许退回 zoom 线性插值");
+  assert.match(body, /shouldCacheIgnoreZoom = t < 1;/, "飞行期间开闸、落点关闸（vendor 动画同款）");
+  assert.match(APP, /shouldCacheIgnoreZoom: false/, "中途退出也要把闸关回去");
+  assert.match(
+    APP,
+    /if \(presentCamRafRef\.current\) \{[\s\S]{0,140}\}[\s\S]{0,60}api\.updateScene\(\{[\s\S]{0,400}scrollX: snap\.scrollX/,
+    "退出先掐飞行 rAF，再回填视口（否则镜头会在回填后继续抢写）",
   );
 });
 
@@ -187,7 +225,10 @@ test("分层：vendor 只进类型，不碰思源 API", () => {
 test("层级：遮罩压画布（5）、HUD 压遮罩（7），都低于抽屉（8）", () => {
   assert.match(CSS, /\.exs-canvas \.exs-present-scrim \{[^}]*position: absolute;[^}]*inset: 0;[^}]*z-index: 5;/);
   assert.match(CSS, /\.exs-canvas \.exs-present-hud \{[^}]*position: absolute;[^}]*inset: 0;[^}]*z-index: 7;/);
-  assert.match(CSS, /\.exs-present-scrim__edge \{[^}]*stroke: rgba\(/, "洞边有一圈细描边，和画布不糊在一起");
+  // 洞边描边已退役：幕布色 = 画布底色时，那圈灰线是画面里唯一的矩形，会被当成「画框没去掉」
+  assert.equal(CSS.includes("exs-present-scrim__edge"), false, "CSS 不许再有洞边描边");
+  assert.equal(STAGE.includes("exs-present-scrim__edge"), false, "舞台不许再渲染洞边描边");
+  assert.equal(STAGE.includes("edgeRef"), false, "描边退役后 rAF 也不该再写第二块矩形");
   assert.match(CSS, /\.exs-present-hud \{[^}]*pointer-events: none;/, "HUD 整层不挡画布");
   assert.match(CSS, /\.exs-present-hud__bottom \{[^}]*pointer-events: auto;/, "底栏可点");
   assert.match(CSS, /\.exs-present-counter \{[^}]*pointer-events: auto;/, "页码可点");

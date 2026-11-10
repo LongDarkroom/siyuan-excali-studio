@@ -78,7 +78,6 @@ export function PresentationStage(props: {
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const holeRef = useRef<SVGRectElement | null>(null);
-  const edgeRef = useRef<SVGRectElement | null>(null);
   const hudRef = useRef<HTMLDivElement | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -145,13 +144,6 @@ export function PresentationStage(props: {
       hole.setAttribute("y", String(sy - HOLE_PAD));
       hole.setAttribute("width", String(Math.max(0, sw + HOLE_PAD * 2)));
       hole.setAttribute("height", String(Math.max(0, sh + HOLE_PAD * 2)));
-      const edge = edgeRef.current;
-      if (edge) {
-        edge.setAttribute("x", String(sx - HOLE_PAD));
-        edge.setAttribute("y", String(sy - HOLE_PAD));
-        edge.setAttribute("width", String(Math.max(0, sw + HOLE_PAD * 2)));
-        edge.setAttribute("height", String(Math.max(0, sh + HOLE_PAD * 2)));
-      }
     };
     raf = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(raf);
@@ -178,16 +170,6 @@ export function PresentationStage(props: {
             height="100%"
             fill={props.maskColor}
             mask={`url(#${maskId})`}
-          />
-          <rect
-            ref={edgeRef}
-            className="exs-present-scrim__edge"
-            x="0"
-            y="0"
-            width="0"
-            height="0"
-            rx={HOLE_RADIUS}
-            ry={HOLE_RADIUS}
           />
         </svg>
       ) : null}

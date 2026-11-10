@@ -182,7 +182,9 @@ test("只有前进/进场打字；跳页、后退、Home/End 直接全文", () =
   assert.match(go, /if \(kind === "advance" \|\| kind === "enter"\)/, "只有向前推进才打");
   assert.match(go, /startTyping\(newlyRevealedIds\(snap\.plans\[next\.page\], prev, next\)\)/, "算这一步新露出谁");
   assert.match(go, /if \(!started\) bumpAutoDeadline\(\);/, "没有文本目标时直接开始自动前进");
-  assert.match(go, /presentPendingRef\.current = \{ nav, kind \};/, "飞行窗内连出场方式一起排队");
+  assert.match(go, /queuePresent\(nav, kind\);\s*\n\s*return;/, "飞行窗内换页交给排队，出场方式一起带走");
+  const queue = APP.slice(APP.indexOf("const queuePresent ="), APP.indexOf("const presentGo = useCallback"));
+  assert.match(queue, /presentPendingRef\.current = \{ nav, kind \};/, "排队要连出场方式一起记下");
   for (const fn of ["presentPrev", "presentHome", "presentEnd", "presentJump"]) {
     const at = APP.indexOf("const " + fn + " = useCallback");
     const body = APP.slice(at, APP.indexOf("}, [", at) + 4);

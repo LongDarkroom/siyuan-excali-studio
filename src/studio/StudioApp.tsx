@@ -140,8 +140,13 @@ type ExcalidrawInitialData = React.ComponentProps<typeof Excalidraw>["initialDat
 /** 第二十一轮：防抖自动保存的静止判定窗口（停手约 1 秒无新变更才落盘） */
 const AUTOSAVE_DELAY = 1000;
 
-/** 相机飞行的最短节流窗：期间翻页先排队，落地后再追最后一个意图 */
-const PRESENT_CAM_MS = 260;
+/**
+ * 相机飞行时长，同时是换页节流窗：期间翻页先排队，落地后追最后一个意图。
+ * 480ms 是被峰值速度反推出来的，不是审美值：easeOut 的峰值是均速的 4 倍，
+ * 旧口径（260ms + easeInOut，峰值=2×均速）的每帧位移要持平，就得给到约 520ms。
+ * 手感上也拖不了——easeOut 走完 95% 距离只用时长的 53%（≈254ms），后面是收边。
+ */
+const PRESENT_CAM_MS = 480;
 
 /** 放映推进的来路：advance 才打字；jump/enter 只落补丁 */
 type PresentNav = "advance" | "jump" | "enter";
@@ -726,6 +731,11 @@ export function StudioApp(props: StudioProps) {
   /** 上一次取景用的视口宽高：尺寸没变就别重新取景（否则会把飞行中的镜头重新起帧，一顿一弹） */
   const presentFitSizeRef = useRef<{ w: number; h: number } | null>(null);
   const presentPendingRef = useRef<{ nav: NavState; kind: PresentNav } | null>(null);
+  /**
+   * 排队意图的落地定时器：飞行窗一到就落，不再等 60ms 轮询。
+   * 轮询会把连按变成「飞 480ms → 死最多 60ms → 再飞」的阶梯，观感就是转场之间卡一下。
+   */
+  const presentFlushTimerRef = useRef(0);
   const presentGoRef = useRef<(nav: NavState, kind?: PresentNav) => void>(() => {});
   /** 已经落到场景上的游标：算「这一步新露出谁」不能拿可能过期一帧的 state */
   const presentCurRef = useRef<Cursor | null>(null);
@@ -1162,20 +1172,25 @@ export function StudioApp(props: StudioProps) {
       const fromZoom = st.zoom?.value || 1;
       const start = performance.now();
       if (presentCamRafRef.current) window.cancelAnimationFrame(presentCamRafRef.current);
+      let first = true;
       const tick = (): void => {
         const t = Math.min(1, (performance.now() - start) / PRESENT_CAM_MS);
-        // easeInOutQuad
-        const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-        api.updateScene({
-          appState: {
-            scrollX: fromScrollX + (toScrollX - fromScrollX) * e,
-            scrollY: fromScrollY + (toScrollY - fromScrollY) * e,
-            zoom: { value: fromZoom + (zoom - fromZoom) * e },
-          } as never,
-          captureUpdate: CaptureUpdateAction.NEVER,
-        });
-        if (t < 1) presentCamRafRef.current = window.requestAnimationFrame(tick);
-        else presentCamRafRef.current = 0;
+        // easeOutQuart（官方同款）：起步就是最快，尾巴慢慢收，不留「先愣一下」的头
+        const e = 1 - Math.pow(1 - t, 4);
+        const appState: Record<string, unknown> = {
+          scrollX: fromScrollX + (toScrollX - fromScrollX) * e,
+          scrollY: fromScrollY + (toScrollY - fromScrollY) * e,
+          // zoom 走等比插值：线性插值在 0.5→1.6 这种跨度上是「先慢后猛地冲」，
+          // 只有按倍数分步才是视觉上匀速的推近（官方 interpolateValue 同款）
+          zoom: { value: fromZoom * Math.pow(zoom / fromZoom, e) },
+        };
+        // 飞行期间让 vendor 别因为 zoom 每帧在变就重建元素离屏缓存（官方动画也这么开）
+        if (first || t >= 1) appState.shouldCacheIgnoreZoom = t < 1;
+        api.updateScene({ appState: appState as never, captureUpdate: CaptureUpdateAction.NEVER });
+        if (t < 1) {
+          first = false;
+          presentCamRafRef.current = window.requestAnimationFrame(tick);
+        } else presentCamRafRef.current = 0;
       };
       presentCamRafRef.current = window.requestAnimationFrame(tick);
     },
@@ -1351,6 +1366,37 @@ export function StudioApp(props: StudioProps) {
     },
     [api, applyTextPatches, bumpAutoDeadline],
   );
+  /** 取消排队落地定时器：清 pending 的每一处都要一起清，否则旧定时器会把新意图提前落地 */
+  const cancelPresentFlush = (): void => {
+    if (!presentFlushTimerRef.current) return;
+    window.clearTimeout(presentFlushTimerRef.current);
+    presentFlushTimerRef.current = 0;
+  };
+  /**
+   * 记下一次换页意图，并把落地时刻钉在飞行窗结束那一瞬（不等 60ms 轮询）。
+   * 若期间又开了新的飞行窗（全屏尺寸稳定后重取景会），定时器自己顺延——宁可晚一点落，
+   * 也不要插在两段飞行中间当第三段。
+   */
+  const queuePresent = (nav: NavState, kind: PresentNav): void => {
+    presentPendingRef.current = { nav, kind };
+    cancelPresentFlush();
+    const fire = (): void => {
+      presentFlushTimerRef.current = 0;
+      const pending = presentPendingRef.current;
+      if (!pending) return;
+      const left = presentCamUntilRef.current - performance.now();
+      if (left > 0) {
+        presentFlushTimerRef.current = window.setTimeout(fire, left);
+        return;
+      }
+      presentPendingRef.current = null;
+      presentGoRef.current(pending.nav, pending.kind);
+    };
+    presentFlushTimerRef.current = window.setTimeout(
+      fire,
+      Math.max(0, presentCamUntilRef.current - performance.now()),
+    );
+  };
   /**
    * 落一次导航：动镜头 + 落补丁 + 起打字。
    *
@@ -1366,8 +1412,8 @@ export function StudioApp(props: StudioProps) {
       const next = toCursor(nav);
       const pageChanged = !!prev && next.page !== prev.page;
       if (pageChanged && performance.now() < presentCamUntilRef.current) {
-        // 镜头还在飞：先记下最后意图，等飞行窗结束再追——快速连按不丢页
-        presentPendingRef.current = { nav, kind };
+        // 镜头还在飞：记下最后意图，飞行窗一结束就追——快速连按既不丢页，也不留空窗
+        queuePresent(nav, kind);
         return;
       }
       if (pageChanged) {
@@ -1397,6 +1443,7 @@ export function StudioApp(props: StudioProps) {
       const cur = presentNavRef.current;
       if (!snap || !cur) return;
       finishTyping();
+      cancelPresentFlush();
       presentPendingRef.current = null;
       presentGo(navJump(snap.plans, cur, page), "jump");
     },
@@ -1438,6 +1485,7 @@ export function StudioApp(props: StudioProps) {
         const cur = presentNavRef.current;
         if (!cur) return;
         finishTyping();
+        cancelPresentFlush();
         presentPendingRef.current = null;
         presentGo(fromCursor(clampCursor(snap.plans, toCursor(cur)), cur), "jump");
         return;
@@ -1466,18 +1514,14 @@ export function StudioApp(props: StudioProps) {
     }
   };
   /*
-   * 唯一 interval（60ms）：① 相机飞行窗结束后把排队意图落下；
-   * ② 自动前进到点后走一步（打字中 / 飞行中 / 有排队时先不走）。
+   * 唯一 interval（60ms）：只管自动前进到点后走一步（打字中 / 飞行中 / 有排队时先不走）。
+   * 排队换页的落地已经交给 queuePresent 的定时器——它钉在飞行窗结束那一瞬，
+   * 用轮询落地会额外拖出最多 60ms 的空窗，连按就变成「飞一段、卡一下」。
    */
   useEffect(() => {
     if (!presenting) return;
     const timer = window.setInterval(() => {
       const now = performance.now();
-      const pending = presentPendingRef.current;
-      if (pending && now >= presentCamUntilRef.current) {
-        presentPendingRef.current = null;
-        presentGoRef.current(pending.nav, pending.kind);
-      }
       if (typingRef.current || presentPendingRef.current || presentPausedRef.current) return;
       const snap = presentSnapRef.current;
       if (!snap || snap.autoAdvance <= 0) return;
@@ -1490,6 +1534,15 @@ export function StudioApp(props: StudioProps) {
     }, 60);
     return () => window.clearInterval(timer);
   }, [presenting]);
+
+  // 卸载兜底：飞行中的相机 rAF 与排队落地定时器都要归零，否则回调会打到已销毁的画布上
+  useEffect(
+    () => () => {
+      if (presentCamRafRef.current) window.cancelAnimationFrame(presentCamRafRef.current);
+      if (presentFlushTimerRef.current) window.clearTimeout(presentFlushTimerRef.current);
+    },
+    [],
+  );
 
   /**
    * 进片场：先抓快照（原始 opacity / 全文 + 视口 + 视图模式 + 放映偏好），
@@ -1565,6 +1618,7 @@ export function StudioApp(props: StudioProps) {
       typingRef.current = null;
     }
     presentingRef.current = true;
+    cancelPresentFlush();
     presentCamUntilRef.current = 0;
     presentPendingRef.current = null;
     presentNavRef.current = null;
@@ -1618,6 +1672,11 @@ export function StudioApp(props: StudioProps) {
       const all = elems as unknown as (RunElement & TextElementLike)[];
       const opById = new Map(buildRestorePatches(all, snap.original).map((p) => [p.id, p.opacity]));
       const textById = new Map(buildTextRestorePatches(all, snap.textOriginal).map((p) => [p.id, p.text]));
+      // 飞行中退出：先掐掉相机 rAF，否则它会在回填之后继续抢写 scroll/zoom（镜头自己飘）
+      if (presentCamRafRef.current) {
+        window.cancelAnimationFrame(presentCamRafRef.current);
+        presentCamRafRef.current = 0;
+      }
       api.updateScene({
         elements: elems.map((e) => {
           const op = opById.get(e.id);
@@ -1630,6 +1689,8 @@ export function StudioApp(props: StudioProps) {
           scrollX: snap.scrollX,
           scrollY: snap.scrollY,
           zoom: { value: snap.zoom },
+          // 飞行中途退出时这个闸是开着的，必须关回去，否则后续缩放不重建缓存
+          shouldCacheIgnoreZoom: false,
           // 还原画框渲染开关（放映时关掉的）
           frameRendering: { ...snap.frameRendering },
           // 无条件还原网格：放映改的只是本次视图，不许写回用户偏好
@@ -1638,6 +1699,7 @@ export function StudioApp(props: StudioProps) {
         captureUpdate: CaptureUpdateAction.NEVER,
       });
     }
+    cancelPresentFlush();
     presentSnapRef.current = null;
     presentPendingRef.current = null;
     presentCamUntilRef.current = 0;
