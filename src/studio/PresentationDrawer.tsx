@@ -33,6 +33,7 @@ import {
   type MotionRow,
 } from "./presentation-motion.ts";
 import type { GraphState } from "./presentation-graph.ts";
+import { readPresentUi, writePresentUi, type PresentView } from "./presentation-ui";
 import type { PresentationSettings } from "./settings";
 import { FadeScroll, PresentationSettingsMenu, usePopoverDismiss } from "./PresentationSettingsMenu";
 
@@ -167,6 +168,8 @@ export function PresentationDrawer(props: {
    * 缺项时退回卡片缩略图先顶着，等高清图到了再换。
    */
   stageThumbs: Record<string, string>;
+  /** 视图记忆的命名空间（宿主传白板路径）：本页/页单停在哪，按白板各记各的 */
+  boardKey: string;
   /** 放映偏好（宿主设置的本地快照；改一项就往上写一项） */
   settings: PresentationSettings;
   onSetting: <K extends keyof PresentationSettings>(key: K, value: PresentationSettings[K]) => void;
@@ -225,8 +228,14 @@ export function PresentationDrawer(props: {
    * 第八十五轮：A 方案——抽屉打开就是编排模式。
    * 「本页」把画框内容放大成一张可点的编排画布（编号热区 ↔ 右栏行双向联动），
    * 「页单」保留原来的缩略图浏览/排序/入片。默认落在本页：用户开抽屉就是为了排动效。
+   * 第八十九轮：视图按白板记住，关掉再开别每次都从「本页」重新点。
    */
-  const [view, setView] = useState<"page" | "list">("page");
+  const [view, setView] = useState<PresentView>(() => readPresentUi(props.boardKey)?.view ?? "page");
+  const changeView = (next: PresentView): void => {
+    if (next === view) return;
+    setView(next);
+    writePresentUi(props.boardKey, { view: next });
+  };
   /** 当前选中的编排条（点画面热区或右栏行都写这里） */
   const [activeKey, setActiveKey] = useState<string | null>(null);
   /** 悬浮联动：不算重状态，只在两边加高亮类 */
@@ -687,7 +696,7 @@ export function PresentationDrawer(props: {
               type="button"
               className={"exs-present-seg__btn" + (view === "page" ? " exs-present-seg__btn--on" : "")}
               aria-pressed={view === "page"}
-              onClick={() => setView("page")}
+              onClick={() => changeView("page")}
               title={t("本页：在画面里点元素编排")}
             >
               {t("本页")}
@@ -696,7 +705,7 @@ export function PresentationDrawer(props: {
               type="button"
               className={"exs-present-seg__btn" + (view === "list" ? " exs-present-seg__btn--on" : "")}
               aria-pressed={view === "list"}
-              onClick={() => setView("list")}
+              onClick={() => changeView("list")}
               title={t("页单：翻页、排序、入片")}
             >
               {t("页单")}

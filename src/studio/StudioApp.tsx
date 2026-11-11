@@ -31,6 +31,7 @@ import type { SkillLayout } from "./ai/skill-dispatch";
 import type { StyleLibraryApi } from "./ai/style-library";
 import { IMAGE_TO_MATERIAL, INSERT_BOARD_CARD, OUTLINE_COLOR, PRESENTATION, railActionMount, railActionOf, type RailActionId, type RailActionMeta } from "./rail-actions.ts";
 import { deckOf, deckSignature, moveSlide, PRESENTATION_KEY, slideTitle, toggleSlide, toggleSlideReveal, visibleSlides, type Deck, type DeckPatch, type FrameLike, type Slide } from "./presentation-plan";
+import { readPresentUi, writePresentUi } from "./presentation-ui";
 import { frameSizeFor, nextFrameSpot, type FrameRatio } from "./frame-presets.ts";
 import { makeElement } from "./ea-element.ts";
 import { STAGE_MAX, THUMB_MAX, thumbSignature, type ThumbElement } from "./presentation-thumbs.ts";
@@ -205,6 +206,24 @@ function restorePatchOf(el: RunElement, want: number): DrawPatch {
     opacity: want,
     restore: shapeRestoreOf(el),
   };
+}
+
+/**
+ * 元数据（customData）只改内容时 vendor 的版本号不变，而脏指纹只哈希 versionNonce——
+ * 不换 nonce 的写入会被判成「没改过」，等不到自动保存（效果/页序/入片/改名都会静默丢）。
+ * 这里按 vendor 的口径：真正变了的元素 +1 version、换一个新 nonce。
+ * 无变化的补丁（例如把页拖回原位）直接跳过，免得多一个撤销点、白落一次盘。
+ */
+function freshNonce(): number {
+  return Math.floor(Math.random() * 2 ** 31);
+}
+
+function sameJson(a: unknown, b: unknown): boolean {
+  try {
+    return JSON.stringify(a ?? {}) === JSON.stringify(b ?? {});
+  } catch {
+    return false;
+  }
 }
 
 export type StudioProps = {
@@ -746,6 +765,11 @@ export function StudioApp(props: StudioProps) {
   const [deck, setDeck] = useState<Deck>(() => ({ slides: [], hasOrdered: false }));
   const [presentSel, setPresentSel] = useState(0);
   /**
+   * 面板视图记忆的命名空间：按白板路径各记各的（新建板「创建即落盘」，一般都有路径）。
+   * 只影响「停在哪一页/哪个视图」，不写进白板文件。
+   */
+  const presentBoardKey = initialPath ?? "draft";
+  /**
    * 第七十六轮：放映图状态（面板提示用）——板子上有画框之间的箭头吗？
    * 有 → 放映沿箭头走（可分叉、可绕圈）；没有 → 按片单顺序翻。
    * 跟 deck 一起在 syncDeck 里更新（onChange 每帧都跑，靠签名去重）。
@@ -1193,18 +1217,23 @@ export function StudioApp(props: StudioProps) {
     (patches: DeckPatch[]): void => {
       if (!api || patches.length === 0) return;
       const byId = new Map(patches.map((p) => [p.id, p.patch]));
+      let changed = false;
+      const elements = api.getSceneElements().map((e) => {
+        const patch = byId.get(e.id);
+        if (!patch) return e;
+        const before = e.customData as Record<string, unknown> | undefined;
+        const custom = { ...before };
+        for (const [key, value] of Object.entries(patch)) {
+          custom[key] = { ...(custom[key] as Record<string, unknown> | undefined), ...value };
+        }
+        // 同值不写：拖回原位 / 重复点同一个选项不该白落一次盘
+        if (sameJson(custom, before)) return e;
+        changed = true;
+        return { ...e, customData: custom, version: (e.version ?? 1) + 1, versionNonce: freshNonce() };
+      });
+      if (!changed) return;
       api.updateScene({
-        elements: api
-          .getSceneElements()
-          .map((e) => {
-            const patch = byId.get(e.id);
-            if (!patch) return e;
-            const custom = { ...(e.customData as Record<string, unknown> | undefined) };
-            for (const [key, value] of Object.entries(patch)) {
-              custom[key] = { ...(custom[key] as Record<string, unknown> | undefined), ...value };
-            }
-            return { ...e, customData: custom };
-          }) as never,
+        elements: elements as never,
         captureUpdate: CaptureUpdateAction.IMMEDIATELY,
       });
     },
@@ -1233,6 +1262,15 @@ export function StudioApp(props: StudioProps) {
     if (!s) return [];
     return pageRows(api.getSceneElements() as unknown as RunElement[], s.id);
   }, [api, deck.slides, motionRev, presentOpen, presentSel, presenting]);
+  /**
+   * 选中页记忆：抽屉开着且不在放映时跟着选页写回。
+   * 放映中跳过——那是在看片，不该把「上次编排的那页」改成最后一页。
+   */
+  useEffect(() => {
+    if (!presentOpen || presenting) return;
+    const s = deck.slides[presentSel];
+    if (s) writePresentUi(presentBoardKey, { selId: s.id });
+  }, [presentOpen, presenting, presentSel, deck.slides, presentBoardKey]);
   /** 编排写入和页序一样：正常场景更新（可撤销、会标脏、自动保存照旧） */
   const setRowMotion = useCallback(
     (ids: readonly string[], edit: MotionEdit): void => applyDeckPatches(setMotionPatch(ids, edit)),
@@ -1243,8 +1281,17 @@ export function StudioApp(props: StudioProps) {
     (id: string, name: string): void => {
       if (!api) return;
       const next = name.trim();
+      let changed = false;
+      const elements = api.getSceneElements().map((e) => {
+        if (e.id !== id) return e;
+        if (((e as { name?: string | null }).name ?? "") === next) return e;
+        changed = true;
+        // 改名同样只动非版本字段：不换 nonce 就进不了脏指纹（口径同 applyDeckPatches）
+        return { ...e, name: next, version: (e.version ?? 1) + 1, versionNonce: freshNonce() };
+      });
+      if (!changed) return;
       api.updateScene({
-        elements: api.getSceneElements().map((e) => (e.id === id ? { ...e, name: next } : e)) as never,
+        elements: elements as never,
         captureUpdate: CaptureUpdateAction.IMMEDIATELY,
       });
     },
@@ -1257,11 +1304,23 @@ export function StudioApp(props: StudioProps) {
   );
   const openPresentDrawer = useCallback((): void => {
     setPresentSettings(readPresentSettings());
+    // 上次停在哪一页：按画框 id 找回来（页序可拖，下标会漂），镜头一起开过去——
+    // 否则重开面板等于「选中的页还在，视野却留在别处」，还得再点一次页卡。
+    const ui = readPresentUi(presentBoardKey);
+    if (ui?.selId) {
+      const idx = deckRef.current.slides.findIndex((s) => s.id === ui.selId);
+      const s = idx >= 0 ? deckRef.current.slides[idx] : null;
+      if (s) {
+        setPresentSel(idx);
+        presentSelRef.current = idx;
+        window.requestAnimationFrame(() => focusFrameRef.current(s.id, presentSettings.fit));
+      }
+    }
     setPresentOpen(true);
     // 开抽屉就排队画缩略图（别等下一次 onChange 的防抖）
     thumbsOnRef.current = true;
     scheduleThumbs(true);
-  }, [readPresentSettings, scheduleThumbs]);
+  }, [readPresentSettings, scheduleThumbs, presentBoardKey, presentSettings.fit]);
   const changePresentSetting = useCallback(
     <K extends keyof PresentationSettings,>(key: K, value: PresentationSettings[K]): void => {
       const next = normalizePresentationSettings({ ...presentSettings, [key]: value });
@@ -2770,16 +2829,25 @@ export function StudioApp(props: StudioProps) {
    * action 通道（keyTest 抄 fork 源码）：⌘D=复制、Delete=删除、⌘Z=撤销、
    * ⌘⇧Z=重做、⌘(=|−|0)=放大/缩小/重置缩放（zoom 三键的 keyTest 是 code 加
    * ⌘/Shift，⌘ 已满足）。撤销栈与缩放锚点（视口中心）原生完整。
+   *
+   * 派发目标必须是 `.excalidraw` 容器：vendor 默认 handleKeyboardGlobally=false，
+   * 它的 onKeyDown 只挂在这个容器上（React 委托）。发到 document 上的事件不会
+   * 冒泡进容器，任何 action 的 keyTest 都跑不到——撤销/重做点了没反应就是这个。
+   *
+   * mod 默认按 ⌘/Ctrl 组合发；但 Delete 的 keyTest 明确要求「不带 ⌘」
+   * （`(Backspace|Delete) && !CTRL_OR_CMD`），所以删除要 mod:false 发裸键。
    */
   const fireVendorAction = useCallback(
-    (key: string, code: string, opts?: { shift?: boolean }) => {
+    (key: string, code: string, opts?: { shift?: boolean; mod?: boolean }) => {
       const isApple = /Mac|iPhone|iPad/.test(navigator.userAgent);
-      document.dispatchEvent(
+      const mod = opts?.mod ?? true;
+      const target = rootRef.current?.querySelector<HTMLElement>(".excalidraw") ?? document;
+      target.dispatchEvent(
         new KeyboardEvent("keydown", {
           key,
           code,
-          metaKey: isApple,
-          ctrlKey: !isApple,
+          metaKey: isApple && mod,
+          ctrlKey: !isApple && mod,
           shiftKey: opts?.shift ?? false,
           bubbles: true,
           cancelable: true,
@@ -2790,7 +2858,7 @@ export function StudioApp(props: StudioProps) {
   );
 
   const duplicateSelection = useCallback(() => fireVendorAction("d", "KeyD"), [fireVendorAction]);
-  const deleteSelection = useCallback(() => fireVendorAction("Delete", "Delete"), [fireVendorAction]);
+  const deleteSelection = useCallback(() => fireVendorAction("Delete", "Delete", { mod: false }), [fireVendorAction]);
   const undoSelection = useCallback(() => fireVendorAction("z", "KeyZ"), [fireVendorAction]);
   const redoSelection = useCallback(() => fireVendorAction("z", "KeyZ", { shift: true }), [fireVendorAction]);
   const zoomIn = useCallback(() => fireVendorAction("=", "Equal"), [fireVendorAction]);
@@ -3324,6 +3392,7 @@ export function StudioApp(props: StudioProps) {
           graph={presentGraph}
           thumbs={presentThumbs}
           stageThumbs={presentStageThumbs}
+          boardKey={presentBoardKey}
           settings={presentSettings}
           onSetting={changePresentSetting}
           selected={Math.min(presentSel, Math.max(0, deck.slides.length - 1))}

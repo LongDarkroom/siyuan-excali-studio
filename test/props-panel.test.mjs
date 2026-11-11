@@ -188,14 +188,28 @@ test("StudioApp：hasSelection + propsOpen 双门控，五键全走合成键盘�
   assert.match(APP, /className=\{propsOpen \? "exs-bar-btn exs-bar-btn--on" : "exs-bar-btn"\}/, "🎨 checked 态走 --on 类");
   // 合成键盘事件通道（keyTest 抄 fork actionCanvas/actionHistory）
   assert.match(APP, /fireVendorAction\("d", "KeyD"\)/, "复制 = ⌘D");
-  assert.match(APP, /fireVendorAction\("Delete", "Delete"\)/, "删除 = Delete");
+  assert.match(APP, /fireVendorAction\("Delete", "Delete", \{ mod: false \}\)/, "删除 = 裸 Delete（keyTest 要求不带 ⌘）");
   assert.match(APP, /fireVendorAction\("z", "KeyZ"\)/, "撤销 = ⌘Z");
   assert.match(APP, /fireVendorAction\("z", "KeyZ", \{ shift: true \}\)/, "重做 = ⌘⇧Z");
   assert.match(APP, /fireVendorAction\("=", "Equal"\)/, "放大 = ⌘=");
   assert.match(APP, /fireVendorAction\("-", "Minus"\)/, "缩小 = ⌘−");
   assert.match(APP, /fireVendorAction\("0", "Digit0"\)/, "重置缩放 = ⌘0");
   assert.match(APP, /shiftKey: opts\?\.shift \?\? false/, "合成事件要带 shiftKey");
-  assert.match(APP, /document\.dispatchEvent\(/, "事件派发到 document（vendor 监听处）");
+  assert.match(APP, /const mod = opts\?\.mod \?\? true/, "默认带 ⌘/Ctrl，Delete 可关");
+  assert.match(APP, /metaKey: isApple && mod/, "mod 开关要作用到 metaKey");
+  assert.match(APP, /ctrlKey: !isApple && mod/, "mod 开关要作用到 ctrlKey");
+  // 派发目标必须是 .excalidraw 容器：vendor 默认 handleKeyboardGlobally=false，
+  // onKeyDown 只挂容器上，发 document 的事件冒泡不进容器 → 撤销/重做无反应的根因
+  assert.match(
+    APP,
+    /querySelector<HTMLElement>\("\.excalidraw"\) \?\? document/,
+    "事件派发到 .excalidraw 容器（vendor onKeyDown 挂点）",
+  );
+  assert.equal(
+    /document\.dispatchEvent\(\s*new KeyboardEvent\("keydown"/.test(APP),
+    false,
+    "不得把键盘事件派发到 document",
+  );
   // 图标走线性体系（底栏七枚带 strokeWidth=2，对齐 vendor 的粗描边）
   for (const icon of ["ICON_PALETTE", "ICON_DUPLICATE", "ICON_DELETE", "ICON_UNDO", "ICON_REDO", "ICON_MINUS", "ICON_PLUS"]) {
     assert.match(APP, new RegExp(`<LineIcon[^>]*d=\\{${icon}\\}`), `${icon} 用线性图标体系`);
