@@ -81,7 +81,7 @@ node scripts/excali-board.mjs append --workspace /path/to/思源工作空间 --b
 |---|---|
 | B 站 | [微光突围](https://space.bilibili.com/39780528) |
 | QQ 群 | **123795105** |
-| 爱发电 | [支持开发](https://ifdian.net/a/3435d) |
+| 爱发电 | [支持开发](https://afdian.com/a/3435d) |
 
 赞助不是使用条件：功能对所有人一样完整，也不影响答疑顺序。
 
