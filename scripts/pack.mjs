@@ -34,10 +34,11 @@ const FILES = [
 ];
 // embed/：画布内嵌思源块的 Embeddable 渲染页（copy-dist 从 src-embed/siyuan/ 拷来）
 // demo/：AI 绘图效果图（README 效果展示引用；集市渲染 README 相对路径需同包）
-// script/excali-*：两份 Agent Skill（绘画 + 风格）。第八十三轮把 excali-draw 也打进来——
+// script/excali-*：三份 Agent Skill（绘画 + 风格 + 打磨）。第八十三轮把 excali-draw 也打进来——
 // 面板「技能分发」要复制它的绝对路径给外部 Agent，缺了这条集市用户抄到的路径就是空的。
+// 打磨 skill 自带 audit / render 脚本（纯 node，无依赖），只随面板给路径，不依赖仓库里的 scripts/。
 // 注意 scripts/（复数，无头 CLI 源码）仍然不进包：集市版没有命令行，提示词会按事实改走内置工具。
-const DIRS = ["i18n", "fonts", "embed", "demo", "script/excali-draw", "script/excali-style"];
+const DIRS = ["i18n", "fonts", "embed", "demo", "script/excali-draw", "script/excali-style", "script/excali-polish"];
 
 let failed = false;
 for (const f of FILES) {

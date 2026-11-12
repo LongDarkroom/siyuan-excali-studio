@@ -3026,10 +3026,103 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   line-height: 1.5;
 }
 
-/* 主按钮按最长文案「复制提示词」预留宽度，切到「已复制」不许缩（零位移） */
+/* 一句话需求：卡片、输入框、例子、风格与复制键是一整块，视觉上别再套一层卡片 */
+.exs-root .exs-ai-skill__compose {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--exs-hover);
+}
+
+.exs-root .exs-ai-skill__compose .exs-ai-skill__card {
+  padding: 0;
+  background: transparent;
+}
+
+.exs-root .exs-ai-skill__needRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.exs-root .exs-ai-skill__need {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: 54px;
+  padding: 7px 9px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 8px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
+  font-family: var(--exs-font-ui);
+  font-size: 12px;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+}
+
+.exs-root .exs-ai-skill__need::placeholder {
+  color: var(--exs-text-secondary);
+}
+
+.exs-root .exs-ai-skill__need:focus {
+  border-color: var(--exs-accent);
+}
+
+.exs-root .exs-ai-skill__examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.exs-root .exs-ai-skill__examples > span {
+  color: var(--exs-text-secondary);
+  font-size: 11px;
+}
+
+.exs-root .exs-ai-skill__chip {
+  padding: 3px 9px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 999px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
+  font-family: var(--exs-font-ui);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.exs-root .exs-ai-skill__chip:hover {
+  border-color: var(--exs-accent);
+  color: var(--exs-accent);
+}
+
+.exs-root .exs-ai-skill__select {
+  flex: none;
+  margin-left: auto;
+  box-sizing: border-box;
+  max-width: 132px;
+  padding: 3px 6px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 7px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text-secondary);
+  font-family: var(--exs-font-ui);
+  font-size: 11px;
+  outline: none;
+}
+
+.exs-root .exs-ai-skill__select:focus {
+  border-color: var(--exs-accent);
+}
+
+/* 主按钮按最长文案「复制完整指令」预留宽度，切到「已复制」不许缩（零位移） */
 .exs-root .exs-ai-skill__primary {
   flex: none;
-  min-width: 96px;
+  min-width: 104px;
   padding: 6px 12px;
   border: none;
   border-radius: 8px;

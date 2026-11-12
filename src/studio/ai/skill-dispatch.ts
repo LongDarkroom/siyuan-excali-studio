@@ -4,13 +4,13 @@
  * 纯函数模块——不 import React / siyuan / vendor，node 单测直接跑。
  *
  * 分工：SKILL.md 负责「怎么做」，这里只负责「在哪儿」。
- * 两份 SKILL.md 里写的是 `<思源工作空间>` / `<本仓库目录>` 这类占位符，
+ * 三份 SKILL.md 里写的是 `<思源工作空间>` / `<本仓库目录>` 这类占位符，
  * 插件知道真实绝对路径，复制出去的提示词必须当场把它填好——否则 Agent 拿到
  * 一段带尖括号的模板，只会到处找文件。
  *
  * 通道口径：集市版（package.zip）不带 scripts/，命令行根本不存在，
  * 这时提示词必须改成「只用思源内置工具；SKILL.md 里跑命令的步骤全部跳过」。
- * 两份文案的区别不是措辞偏好，是事实（见 scripts/pack.mjs 的 DIRS）。
+ * 两种文案的区别不是措辞偏好，是事实（见 scripts/pack.mjs 的 DIRS）。
  */
 
 /** 与 script/excali-draw/SKILL.md 的 frontmatter metadata.version 必须一致（测试盯着） */
@@ -18,6 +18,7 @@ export const SKILL_VERSION = "1.0.0";
 
 export const SKILL_NAME = "excali-draw";
 export const STYLE_SKILL_NAME = "excali-style";
+export const POLISH_SKILL_NAME = "excali-polish";
 
 /** Agent 规范里跨客户端共享的落点（思源 3.8.1 / Cursor / Copilot / Codex 都读这里） */
 export const AGENT_SKILLS_DIR = "~/.agents/skills";
@@ -55,6 +56,11 @@ export function drawSkillDir(layout: SkillLayout): string {
 
 export function styleSkillDir(layout: SkillLayout): string {
   return root(layout) + "/script/" + STYLE_SKILL_NAME;
+}
+
+/** 打磨已有白板：体检 + 真字形验收 + 回真源修 */
+export function polishSkillDir(layout: SkillLayout): string {
+  return root(layout) + "/script/" + POLISH_SKILL_NAME;
 }
 
 /** 无头 CLI 的绝对路径（集市版这个文件不存在，别让 Agent 白跑） */
@@ -101,6 +107,7 @@ const MCP_TOOLS =
 export function promptText(layout: SkillLayout): string {
   const draw = drawSkillDir(layout);
   const style = styleSkillDir(layout);
+  const polish = polishSkillDir(layout);
   const lines = [
     "我在用思源笔记的白板插件 Excali Studio 画图。先读这个技能文件，再按它说的做：",
     draw + "/SKILL.md",
@@ -127,20 +134,26 @@ export function promptText(layout: SkillLayout): string {
         "（完整名通常带 plugin__siyuan-excali-studio__ 前缀）",
       "本机没有命令行（集市安装版不带 scripts/）：SKILL.md 里让跑 scripts/excali-board.mjs 的步骤全部跳过，改用上面的工具。",
       "风格 skill 里的 tools/preview.mjs 自检步骤也跳过，改用 excali_file_read_board 回读元素数量与文字。",
+      "打磨 skill 的体检/渲染脚本同理跑不了：只按列出的问题清单回读核对，不要伪造运行结果。",
     );
   }
   lines.push("如果上面的工具你一个都没有：只按 SKILL.md 产出计划 JSON，不要伪造工具调用。");
   lines.push("先读完再动手；不要自己手写 SVG。");
   lines.push("");
   lines.push("要统一风格或批量出图，再读：" + style + "/SKILL.md");
-  // 只列工作区里真实装着的包：没装却点名 = 绘图时 style:unknown-style
+  lines.push("要打磨已有白板（缺色块、字体单一、被裁切/遮挡、演示顺序乱），再读：" + polish + "/SKILL.md");
+  // 只列真正可用的名字：内置预设永远在，风格包没装就不点名（没装却点名 = style:unknown-style）
   const styles = layout.styles ?? [];
   if (layout.styles === undefined) {
-    lines.push("风格用 style 参数传已安装的包名（见插件面板的风格包列表），不要自己配色。");
+    lines.push("风格用 style 参数传已安装的包名（内建 pencil / marker / blueprint 也可用；见插件面板的风格包列表），不要自己配色。");
   } else if (styles.length === 0) {
-    lines.push("还没有安装风格包：让用户在插件面板里装一个，或先用内置基线 pencil / marker / blueprint；不要自己配色。");
+    lines.push("还没有安装风格包：先用内建基线 pencil / marker / blueprint；不要自己配色。");
   } else {
-    lines.push("已安装的风格包：" + styles.join(" / ") + "。style 参数只传这些名字，不要自己配色。");
+    lines.push(
+      "可用风格：内建 pencil / marker / blueprint；已安装的风格包：" +
+        styles.join(" / ") +
+        "。style 参数只传这些名字，不要自己配色。",
+    );
   }
   return lines.join("\n");
 }
@@ -152,8 +165,39 @@ export function indexLine(layout: SkillLayout): string {
     drawSkillDir(layout) +
     "/SKILL.md 再动手（要统一风格再读 " +
     styleSkillDir(layout) +
-    "/SKILL.md，风格用 style 包名传）。"
+    "/SKILL.md，风格用 style 包名传；要打磨已有白板读 " +
+    polishSkillDir(layout) +
+    "/SKILL.md）。"
   );
+}
+
+/**
+ * 一句话需求：把「画什么」接在通用提示词后面，需求为空时完全保持旧行为。
+ *
+ * 需求不是命令参数，写法千差万别——这里只做两件事：把换行压平，避免复制出去
+ * 被聊天框截成半句；再补一段固定的验收要求，让 Agent 先列大纲、按内容选版面、
+ * 画完自检，而不是直接堆形状。
+ */
+export function drawRequestText(layout: SkillLayout, need: string, style = ""): string {
+  const base = promptText(layout);
+  const text = need.replace(/\s+/g, " ").trim();
+  const pack = style.trim();
+  const styleLine = pack
+    ? '风格：style 传 "' + pack + '"，配色、线宽、字号都交给它，不要自己调。'
+    : "";
+  if (!text) return styleLine ? base + "\n" + styleLine : base;
+  const lines = [base, "", "我的需求：" + text];
+  if (styleLine) lines.push(styleLine);
+  lines.push(
+    "",
+    "出图要求：",
+    "· 先列出 3–6 个要点的大纲再动手；一张图只讲一个主题。",
+    "· 按内容选版面：流程用 lr/tb，并列用 grid，脑图用 radial；不要硬塞成一条流程。",
+    "· 标题、正文、注释至少三层字号；配色只用风格包，不要自己调。",
+    "· 画完按打磨技能的清单自检（填充闭合、无裁切遮挡、文字不溢出），再交付。",
+    "· 交付时告诉我白板路径，不要只说「已完成」。",
+  );
+  return lines.join("\n");
 }
 
 /** 单个风格包的调用指令：把「长什么样」整体外包给风格包 */

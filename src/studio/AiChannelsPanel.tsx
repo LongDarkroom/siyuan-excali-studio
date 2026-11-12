@@ -6,7 +6,7 @@
  * 文案全部来自 ai/channels.ts 的元数据——四道门的语义（注册门/调用门/软门/
  * 入口门）必须与实现一字不差，改门先改元数据。
  *
- * 第八十三轮：下面加一节「技能分发」——把两份 SKILL.md 的位置当场填成绝对路径，
+ * 第八十三轮：下面加一节「技能分发」——把各份 SKILL.md 的位置当场填成绝对路径，
  * 复制成一段 Agent 读得懂的话。四条通道讲的是「谁能调」，这一节讲的是「怎么让
  * 外来的 Agent 自己学会调」，所以是并列关系，不是第五个开关。
  *
@@ -22,10 +22,11 @@ import {
   SKILL_VERSION,
   agentSkillLink,
   channelNote,
+  drawRequestText,
   drawSkillDir,
   indexLine,
   installCommand,
-  promptText,
+  polishSkillDir,
   styleSkillDir,
   type SkillLayout,
 } from "./ai/skill-dispatch";
@@ -58,6 +59,9 @@ export function AiChannelsPanel(props: AiChannelsPanelProps) {
   const [styleEntries, setStyleEntries] = useState<StyleEntry[] | null>(null);
   const [styleError, setStyleError] = useState("");
   const [styleModalOpen, setStyleModalOpen] = useState(false);
+  // 「想画什么」是用户唯一要写的东西；风格留空 = 自动按主题挑
+  const [need, setNeed] = useState("");
+  const [drawStyle, setDrawStyle] = useState("");
   const skillBodyRef = useRef<HTMLDivElement | null>(null);
 
   const reloadStyles = useCallback(async (): Promise<void> => {
@@ -121,6 +125,8 @@ export function AiChannelsPanel(props: AiChannelsPanelProps) {
   const installed = (styleEntries ?? []).filter((e) => e.installed && !e.error).map((e) => e.name);
   // 还没读到列表时 styles 缺省（提示词只说「见面板列表」），读到后才点名
   const promptSkill: SkillLayout = styleEntries === null ? skill : { ...skill, styles: installed };
+  // 内置预设永远可用；已装风格包追加在后面（与内置重名的不重复列）
+  const extraStyles = installed.filter((n) => !["pencil", "marker", "blueprint"].includes(n));
 
   return (
     <div className="exs-ai-scrim" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -162,17 +168,62 @@ export function AiChannelsPanel(props: AiChannelsPanelProps) {
         <div className="exs-ai-skill">
           <div className="exs-ai-skill__head">
             <b>{t("技能分发")}</b>
-            <span>{t("让 Agent 会画 · 会参照风格")}</span>
+            <span>{t("让 Agent 会画 · 会参照风格 · 会打磨")}</span>
           </div>
-          <div className="exs-ai-skill__card">
-            <span className="exs-ai-skill__dot" />
-            <div className="exs-ai-skill__mid">
-              <div className="exs-ai-skill__title">{t("技能已随插件 · v{version}", { version: SKILL_VERSION })}</div>
-              <div className="exs-ai-skill__sub">{t("复制提示词发给 Agent —— 它会按路径读技能，再动手画")}</div>
+          <div className="exs-ai-skill__compose">
+            <div className="exs-ai-skill__card">
+              <span className="exs-ai-skill__dot" />
+              <div className="exs-ai-skill__mid">
+                <div className="exs-ai-skill__title">{t("让 Agent 画一张")}</div>
+                <div className="exs-ai-skill__sub">
+                  {t("技能已随插件 · v{version}；写一句，粘给 Agent 就能开画", { version: SKILL_VERSION })}
+                </div>
+              </div>
             </div>
-            <button className="exs-ai-skill__primary" onClick={() => copy("prompt", promptText(promptSkill))}>
-              {copied === "prompt" ? t("已复制") : t("复制提示词")}
-            </button>
+            <div className="exs-ai-skill__needRow">
+              <textarea
+                id="exs-need-input"
+                className="exs-ai-skill__need"
+                rows={2}
+                value={need}
+                placeholder={t("想画什么？例：帮我画一张英语语法讲解图")}
+                onChange={(e) => setNeed(e.target.value)}
+              />
+              <button
+                className="exs-ai-skill__primary"
+                onClick={() => copy("prompt", drawRequestText(promptSkill, need, drawStyle))}
+              >
+                {copied === "prompt" ? t("已复制") : need.trim() ? t("复制完整指令") : t("复制提示词")}
+              </button>
+            </div>
+            <div className="exs-ai-skill__examples">
+              <span>{t("例子")}</span>
+              {[
+                ["英语语法讲解图", "帮我画一张英语语法讲解图 —— 时态总览"],
+                ["注册流程图", "帮我画一张注册与登录流程图"],
+                ["读书笔记脑图", "帮我画一张《原子习惯》读书笔记脑图"],
+              ].map(([label, fill]) => (
+                <button key={label} className="exs-ai-skill__chip" onClick={() => setNeed(t(fill))}>
+                  {t(label)}
+                </button>
+              ))}
+              <select
+                className="exs-ai-skill__select"
+                aria-label={t("风格")}
+                value={drawStyle}
+                onChange={(e) => setDrawStyle(e.target.value)}
+              >
+                <option value="">{t("风格：自动")}</option>
+                <option value="pencil">pencil</option>
+                <option value="marker">marker</option>
+                <option value="blueprint">blueprint</option>
+                {extraStyles.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <button
             className="exs-ai-skill__fold"
@@ -200,6 +251,14 @@ export function AiChannelsPanel(props: AiChannelsPanelProps) {
                 styleSkillDir(skill),
                 t("复制路径"),
                 t("配色 / 线宽 / 字号 / 留白，只在「统一风格、批量出图」时读"),
+              )}
+              {row(
+                "polish",
+                t("打磨技能"),
+                shortPath(polishSkillDir(skill)),
+                polishSkillDir(skill),
+                t("复制路径"),
+                t("体检 + 真字形验收；缺色块 / 字体单一 / 被裁切 / 遮挡时读"),
               )}
               {row(
                 "install",

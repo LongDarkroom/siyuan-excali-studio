@@ -245,6 +245,8 @@ test("键位只在放映中接管，且不抢带修饰键的组合", () => {
   const body = APP.slice(at, APP.indexOf("window.addEventListener", at));
   assert.match(body, /const keys = presentKeysRef\.current;\s*\n\s*if \(!keys\) return;/, "非放映期一行都不碰");
   assert.match(body, /if \(event\.metaKey \|\| event\.ctrlKey \|\| event\.altKey\) return;/, "⌘/Ctrl/Alt 组合放行");
+  assert.match(body, /if \(isTextEntryTarget\(event\.target\)\) return;/, "输入类目标放行（在批注/文本框里打 f 不许切全屏）");
+  assert.match(body, /const host = rootRef\.current;\s*\n\s*if \(!host \|\| host\.offsetWidth === 0\) return;/, "页签被藏起（宿主宽 0）时不再接管");
   for (const key of ["Escape", "ArrowRight", "ArrowDown", "PageDown", " ", "Enter", "ArrowLeft", "ArrowUp", "PageUp", "Backspace", "Home", "End"]) {
     assert.ok(body.includes(`case "${key}"`), `缺键位：${key}`);
   }

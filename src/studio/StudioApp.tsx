@@ -3152,6 +3152,14 @@ export function StudioApp(props: StudioProps) {
       const keys = presentKeysRef.current;
       if (!keys) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+      // 2026-11-12：本监听挂在 window 捕获阶段，此前只判「在不在放映」。
+      // 放映没退出、只是切去别的页签（例如回阅读器写批注）时处理器仍然活着，
+      // 于是在批注里打个 f 就会把整个思源窗口切进/切出 macOS 原生全屏。
+      // 两道闸：① 输入类目标一律放行（批注、文本框、画布文字编辑都不抢）；
+      //        ② 宿主根节点被页签藏起（宽为 0）时不再接管。
+      if (isTextEntryTarget(event.target)) return;
+      const host = rootRef.current;
+      if (!host || host.offsetWidth === 0) return;
       let act: (() => void) | null = null;
       switch (event.key) {
         case "Escape":
