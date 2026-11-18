@@ -208,8 +208,9 @@ test("registerBoardDecorations：switch-protyle / click-editorcontent 重扫 + o
   assert.ok(fn.includes('"switch-protyle"'), "切页签重扫");
   assert.ok(fn.includes('"click-editorcontent"'), "点正文重扫（幂等）");
   assert.ok(fn.includes('"open-menu-image"'), "图片右键菜单");
-  assert.ok(fn.includes("svgAssetPathOf([detail.element])"), "图片右键用 detail.element 取路径");
-  assert.ok(fn.includes("isBoardDataPath"), "右键入口只对白板库内的 svg 开放");
+  assert.ok(fn.includes("offerOpenBoardMenu(detail.element)"), "图片右键用 detail.element 取路径");
+  assert.ok(index.includes("function siyuanMenu"), "思源事件 detail 不传 menu，菜单项必须走全局单例");
+  assert.ok(!fn.includes("detail.menu.addItem"), "历史根因：open-menu-image 的 detail 里没有 menu（调了必抛错）");
   assert.ok(index.includes("this.registerBoardDecorations();"), "onload 里接线");
 });
 

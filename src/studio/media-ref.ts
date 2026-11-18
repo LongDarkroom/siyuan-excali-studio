@@ -12,6 +12,28 @@
 /** 图片二进制的落盘目录（相对工作空间 /data；固定 assets/ 下，与保存目录设置解耦） */
 export const MEDIA_DIR = "assets/excali-media";
 
+/**
+ * img 的 data-src / src 原文 → 资产引用（assets/…svg|png）。
+ *
+ * 不走 `new URL(src, location.href)`：思源的 app 页面不在站点根（/stage/build/…），
+ * 相对写法 "assets/x.svg" 会被解析到 /stage/build/assets/ 下，判定直接失效
+ * ——2026-11-18 图片右键菜单项一直加不进去，这是其中一环。属性原文里本来就带
+ * 完整的 assets/ 段，按后缀截取即可；绝对地址、?t= 破缓存参数、URL 编码都能兜住。
+ */
+export function assetRefFromSrc(src: string): string | null {
+  const raw = String(src ?? "").trim();
+  if (raw === "") return null;
+  const cut = raw.split(/[?#]/)[0] ?? "";
+  let decoded = cut;
+  try {
+    decoded = decodeURIComponent(cut);
+  } catch {
+    // 非法编码保持原文
+  }
+  const m = /(?:^|\/)(assets\/[^/][^\s"'<>]*?\.(?:svg|png))$/i.exec(decoded);
+  return m ? (m[1] as string) : null;
+}
+
 /** data:image/png;base64,xxxx → { mime, bytes }；解析不了返回 null */
 export function parseDataUrl(dataURL: string): { mime: string; bytes: Uint8Array } | null {
   const m = /^data:([^;,]+)(?:;charset=[^;,]+)?;base64,([\s\S]+)$/.exec(dataURL.trim());

@@ -12,5 +12,5 @@
  */
 
 export { attachStudioTab, STUDIO_TAB_TYPE, type StudioTabData, type StudioTabHost, type StudioTabSession } from "./tab";
-export { decodeSvgScene, type LoadedScene, type SceneFilesHydrate } from "./scene";
-export { sceneToSvgText, type ExportScene, type SaveMedia } from "./svg";
+export { decodeSvgScene, decodePngScene, type LoadedScene, type SceneFilesHydrate } from "./scene";
+export { sceneToSvgText, sceneToPngBytes, type ExportScene, type SaveMedia } from "./svg";

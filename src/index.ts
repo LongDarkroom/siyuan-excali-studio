@@ -6,7 +6,7 @@
  * siyuan/doc.ts —— 这个文件只负责把它们接起来，并维护「哪些白板页签开着」。
  */
 
-import { Plugin, Setting, Dialog, confirm, openInputDialog, openTab, showMessage, Menu, type Custom, type Protyle, type subMenu } from "siyuan";
+import { Plugin, Setting, Dialog, confirm, openInputDialog, openTab, showMessage, Menu, type Custom, type IMenu, type Protyle, type subMenu } from "siyuan";
 import { initI18n, t } from "./i18n";
 import { installExcalidrawAssetPath, PLUGIN_WEB_DIR } from "./studio/assets";
 import { hostPlatform, joinPosix, openPathInFileManager, pickStyleFile, workspaceDataDir } from "./studio/desktop-bridge.ts";
@@ -14,7 +14,8 @@ import { STUDIO_ICON_ID, STUDIO_ICON_SVG, slashItemHtml } from "./studio/icons";
 // 第二十六轮 T3：vendor 引擎（scene/svg/tab 及其传递依赖）改走动态 import 的 lazy chunk，
 // 插件启动不再解析 8MB 级引擎——只有静态类型留在这里（import type 会整体擦除）。
 import type { LoadedScene } from "./studio/scene";
-import { hasNonEmptyScene, sceneTextsEquivalent } from "./studio/scene-codec";
+import type { ExportScene as SaveScene } from "./studio/svg";
+import { hasNonEmptyScene, hasSceneInImage, sceneTextsEquivalent } from "./studio/scene-codec";
 // 第三十轮：图形模板库纯逻辑（解析/合并/diff 计划）——文件读写留本文件
 import { LOCAL_LIB_NAME, mergeLibFiles, parseLibFile, planLibraryWrites, serializeLibFile } from "./studio/stencil";
 // 第三十四轮：脚本侧边栏广播事件（独立小模块，避免主包拉进 React 图）
@@ -76,8 +77,8 @@ import {
 } from "./studio/siyuan-link";
 import {
   activeProtyle,
+  imageAssetPathOf,
   refreshAssetImages,
-  svgAssetPathOf,
   trackEditor,
   fetchBlockMetas,
   resolveLute,
@@ -147,6 +148,20 @@ function escapeHtml(s: string): string {
 }
 function escapeAttr(s: string): string {
   return escapeHtml(s);
+}
+
+/**
+ * 思源的全局菜单单例。
+ *
+ * 2026-11-18 根因：`open-menu-image` / `click-blockicon` 的 detail 里只有
+ * `{protyle, element|blockElements}`，**没有 menu**——之前调 `detail.menu.addItem`
+ * 每次都在事件里抛 TypeError，菜单项从来没加进去过。宿主自己在 emit 之后直接对
+ * 全局菜单 popup()，加项也走同一个单例（Embed Excalidraw 同口径）。
+ */
+function siyuanMenu(): { addItem: (item: IMenu) => unknown } | null {
+  const menus = (window as unknown as { siyuan?: { menus?: { menu?: { addItem: (item: IMenu) => unknown } } } })
+    .siyuan?.menus;
+  return menus?.menu ?? null;
 }
 
 export default class ExcaliStudioPlugin extends Plugin {
@@ -638,7 +653,7 @@ export default class ExcaliStudioPlugin extends Plugin {
       get accent() {
         return plugin.settings.accentStroke ? readSiyuanAccent() : null;
       },
-      onSave: (svgText, currentPath) => this.saveSvg(svgText, currentPath),
+      onSave: (svgText, currentPath, scene) => this.saveSvg(svgText, currentPath, scene),
       saveMedia: (dataURL, mime) => this.saveBoardMedia(dataURL, mime),
       openDocLink: (link) => this.openBoardDocLink(link),
       promptFileName: (suggested, title) => this.promptFileName(suggested, title),
@@ -2270,10 +2285,11 @@ export default class ExcaliStudioPlugin extends Plugin {
     if (!dataPath) return null;
     // 第二十五轮：迁移可能还在搬文件，读完设置/迁移再摸盘
     await this.ready;
-    const text = await getFileText(dataPath);
-    const { decodeSvgScene } = await this.lazyMod();
+    const { decodeSvgScene, decodePngScene } = await this.lazyMod();
     // 第二十六轮 T1：载荷里的图片是 excali-media 引用，先注水成 dataURL 再进画布
-    const initial = await decodeSvgScene(text, (files) => this.hydrateSceneFiles(files));
+    const initial = /\.png$/i.test(dataPath)
+      ? await decodePngScene(await getFileBytes(dataPath), (files) => this.hydrateSceneFiles(files))
+      : await decodeSvgScene(await getFileText(dataPath), (files) => this.hydrateSceneFiles(files));
     this.rememberRecent(dataPath);
     return initial;
   }
@@ -2440,35 +2456,70 @@ export default class ExcaliStudioPlugin extends Plugin {
 
   /**
    * 块图标菜单（块左侧 ⋮）里加「用 Excali 白板打开」。
-   * 只在被点的块里含 assets/*.svg 图片时出现；菜单项必须同步添加，
-   * 所以不预读文件内容——「是不是本插件的白板」留到页签里解码时判断。
+   * 判定与图片右键共用 offerOpenBoardMenu（详见该方法的注释）。
    */
   private registerBlockIconMenu(): void {
     this.eventBus.on("click-blockicon", ({ detail }) => {
-      const path = svgAssetPathOf(detail.blockElements);
-      if (!path) return;
-      detail.menu.addItem({
-        icon: STUDIO_ICON_ID,
-        label: t("用 Excali 白板打开"),
-        click: () => void this.openExisting(path),
-      });
+      this.offerOpenBoardMenu(detail?.blockElements ?? []);
     });
+  }
+
+  /**
+   * 图片（svg|png）菜单项：「用 Excali 白板打开」。
+   *
+   * 两步判定：库里登记过的板同步加（一次比较，菜单项按原始顺序出现）；外部图
+   * 先读内容确认载荷再补加——与 Embed Excalidraw 同口径，普通图片不误弹。
+   * 误点保护只剩「读盘失败/不是白板」一条，菜单项本身不再是个噪声入口。
+   * 菜单是全局单例：事件 detail 里没有 menu（见 siyuanMenu 注释）。
+   */
+  private offerOpenBoardMenu(roots: HTMLElement | HTMLElement[]): void {
+    const dataPath = imageAssetPathOf(roots);
+    if (!dataPath) return;
+    const add = (): void => {
+      const menu = siyuanMenu();
+      if (!menu) return;
+      try {
+        menu.addItem({
+          icon: STUDIO_ICON_ID,
+          label: t("用 Excali 白板打开"),
+          click: () => void this.openExisting(dataPath),
+        });
+      } catch (e) {
+        console.warn("[excali-studio] 菜单项添加失败", e);
+      }
+    };
+    if (this.boardFiles.some((f) => f.dataPath === dataPath)) {
+      add();
+      return;
+    }
+    void (async () => {
+      let ok = false;
+      try {
+        ok = hasSceneInImage(await getFileBytes(dataPath));
+      } catch {
+        ok = false;
+      }
+      if (ok) add();
+    })();
   }
 
   /* ---------------- 2026-10-25 交互框（B2）：文档内白板图片块的三条入口 ---------------- */
 
-  /** 白板库内的资产引用（assets/excali/*.svg 形态）从任意 src 写法里提取；不是白板返回 null */
+  /**
+   * 白板资产引用从任意 src 写法里提取。
+   * 认两类：① 落在保存目录里（库内板）；② Embed Excalidraw 之类的外来板
+   * （文件名约定 `excalidraw-*`，写在 assets 根或子目录）——按名字判定是为了
+   * 装饰扫描保持同步（每次 DOM 变化都要扫，不能异步读盘）。
+   * 真伪的最终判定仍在打开页签时解码：名字对了但内容不是板，会进错误页。
+   */
   private boardAssetRefOf(ref: string): string | null {
     const raw = String(ref ?? "").split("#")[0].split("?")[0];
-    const m = /\/?(assets\/[^\s]+?\.svg)$/i.exec(raw);
+    const m = /\/?(assets\/[^\s]+?\.(?:svg|png))$/i.exec(raw);
     if (!m) return null;
+    const asset = m[1] as string;
     const dir = this.settings.saveDir.replace(/\/+$/, "");
-    return m[1].startsWith(dir + "/") ? m[1] : null;
-  }
-
-  /** /data 数据路径是否落在白板保存目录里（图片右键入口的判定用） */
-  private isBoardDataPath(dataPath: string): boolean {
-    return dataPath.startsWith(toDataPath(this.settings.saveDir.replace(/\/+$/, "")));
+    if (asset.startsWith(dir + "/")) return asset;
+    return /(^|\/)excalidraw-[^/]+\.(?:svg|png)$/i.test(asset) ? asset : null;
   }
 
   /** 悬停 ↗ / 斜杠插入后的跳板：按资产引用打开画板页签 */
@@ -2494,17 +2545,11 @@ export default class ExcaliStudioPlugin extends Plugin {
     };
     this.eventBus.on("switch-protyle", ({ detail }) => rescan(detail?.protyle));
     this.eventBus.on("click-editorcontent", ({ detail }) => rescan(detail?.protyle));
-    // 图片右键菜单（思源原生事件，detail.element 即图片元素）：块图标菜单对**所有**
-    // assets svg 开放，图片右键收敛到白板库
+    // 图片右键菜单（思源原生事件，detail.element 即图片容器）：判定交给
+    // offerOpenBoardMenu——库内板同步、外部图读内容确认，svg 与 png 都认。
     this.eventBus.on("open-menu-image", ({ detail }) => {
       if (!(detail?.element instanceof HTMLElement)) return;
-      const path = svgAssetPathOf([detail.element]);
-      if (!path || !this.isBoardDataPath(path)) return;
-      detail.menu.addItem({
-        icon: STUDIO_ICON_ID,
-        label: t("用 Excali 白板打开"),
-        click: () => void this.openExisting(path),
-      });
+      this.offerOpenBoardMenu(detail.element);
     });
   }
 
@@ -2772,7 +2817,7 @@ export default class ExcaliStudioPlugin extends Plugin {
   private promptOpenPath(): void {
     openInputDialog({
       title: t("按路径打开…"),
-      label: t("工作空间内的 SVG 路径"),
+      label: t("工作空间内的图片路径（SVG / PNG）"),
       placeholder: "assets/excali-20261015-120000.svg",
       value: "",
       confirmText: t("打开"),
@@ -2855,9 +2900,23 @@ export default class ExcaliStudioPlugin extends Plugin {
    * 交给思源自己的历史/数据快照。落盘前两道等价判定（正文逐字、载荷语义），
    * 归一化带来的字节差不再刷 mtime、不再惊动同步。
    */
-  private async saveSvg(svgText: string, currentPath: string | null): Promise<{ path: string }> {
+  private async saveSvg(svgText: string, currentPath: string | null, scene?: SaveScene): Promise<{ path: string }> {
     if (!currentPath) throw new Error("saveSvg 只接受已有文件（新建走 createBoardFile）");
     const target = toDataPath(currentPath);
+    // PNG 白板（Embed Excalidraw 的 PNG 模式）：像素 + tEXt 载荷一起重写，
+    // 预览跟着场景走；SVG 侧的语义等价门不适用（那是文本比较）。
+    if (/\.png$/i.test(target)) {
+      if (!scene) throw new Error("PNG 白板保存缺少场景数据");
+      const { sceneToPngBytes } = await this.lazyMod();
+      const bytes = await sceneToPngBytes(scene, {
+        saveMedia: (dataURL, mime) => this.saveBoardMedia(dataURL, mime),
+      });
+      await putBytes(target, bytes, "image/png");
+      refreshAssetImages(target);
+      this.rememberRecent(target);
+      void this.refreshBoardLib();
+      return { path: target };
+    }
     let current: string | null = null;
     try {
       current = await getFileText(target);

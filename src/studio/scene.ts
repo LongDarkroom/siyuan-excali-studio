@@ -11,9 +11,9 @@
  */
 
 import { restore } from "@excalidraw/excalidraw";
-import { decodeSvgPayload } from "./scene-codec.ts";
+import { decodePngPayload, decodeSvgPayload, type ScenePayload } from "./scene-codec.ts";
 
-export { SceneError, hasEmbeddedScene, hasNonEmptyScene, decodeSvgPayload, encodeSvgPayload, SCENE_MARKER } from "./scene-codec.ts";
+export { SceneError, hasEmbeddedScene, hasNonEmptyScene, decodeSvgPayload, decodePngPayload, hasSceneInImage, encodeSvgPayload, encodePngPayloadJson, SCENE_MARKER } from "./scene-codec.ts";
 export type { SceneFailReason, ScenePayload } from "./scene-codec.ts";
 
 export type LoadedScene = {
@@ -30,7 +30,15 @@ export type LoadedScene = {
 export type SceneFilesHydrate = (files: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
 export async function decodeSvgScene(svgText: string, hydrate?: SceneFilesHydrate): Promise<LoadedScene> {
-  const scene = decodeSvgPayload(svgText);
+  return restoreScene(decodeSvgPayload(svgText), hydrate);
+}
+
+/** PNG（Excalidraw tEXt 载荷）→ 可直接喂给画板的数据；其余流程与 SVG 完全一致 */
+export async function decodePngScene(pngBytes: Uint8Array, hydrate?: SceneFilesHydrate): Promise<LoadedScene> {
+  return restoreScene(decodePngPayload(pngBytes), hydrate);
+}
+
+async function restoreScene(scene: ScenePayload, hydrate?: SceneFilesHydrate): Promise<LoadedScene> {
   const files = hydrate ? await hydrate(scene.files) : scene.files;
   const restored = restore(
     {

@@ -37,6 +37,7 @@ const ICONS = stripComments(src("studio/icons.ts"));
 const SCENE = stripComments(src("studio/scene.ts"));
 const CODEC = stripComments(src("studio/scene-codec.ts"));
 const DOC = stripComments(src("siyuan/doc.ts"));
+const MEDIA_REF = stripComments(src("studio/media-ref.ts"));
 const SETTINGS = stripComments(src("studio/settings.ts"));
 const WELCOME_TSX = stripComments(src("studio/StudioWelcome.tsx"));
 const MENU_TSX = stripComments(src("studio/StudioMenu.tsx"));
@@ -128,7 +129,7 @@ test("契约·M1 打开已有白板：读回 → 解码 → 覆盖同一个文�
 
 test("契约·覆盖保存后文件名不变（不产生第二份图）", () => {
   // 画板侧记路径：pathRef 里是当前文件，flush 时把它交给宿主去覆盖
-  assert.match(APP, /const saved = await onSave\(svgText, path\);/, "把当前路径交给宿主，宿主才知道该覆盖谁");
+  assert.match(APP, /const saved = await onSave\(svgText, path, sceneOut\);/, "把当前路径（和场景，PNG 落盘要用）交给宿主");
   assert.match(APP, /pathRef\.current = saved;/, "覆盖成功后路径原样留住（创建时已在，不会变）");
 });
 
@@ -203,13 +204,14 @@ test("契约·打开白板弹窗：scope 类、搜索常驻、列表行 Apple �
   assert.match(CSS, /\.exs-board-picker-dialog \.exs-picker__badge \{[^}]*color: var\(--exs-dlg-accent\)/, "「已打开」角标跟品牌色");
 });
 
-test("契约·M2 文档内入口：块图标菜单只对 assets/*.svg 出现", () => {
+test("契约·M2 文档内入口：块图标菜单对 assets 图片（svg/png）出现", () => {
   assert.match(INDEX, /"click-blockicon"/, "块菜单事件没接，文档里的图就没有回编辑的入口");
-  assert.match(INDEX, /svgAssetPathOf\(detail\.blockElements\)/, "判定必须基于被点的块，不能猜选中的是哪个");
-  assert.match(INDEX, /detail\.menu\.addItem\(/, "菜单项要同步 addItem");
-  assert.match(DOC, /export function svgAssetPathOf/, "块元素 → svg 路径的判定在 doc.ts，两处入口共用");
-  assert.match(DOC, /\/\\\.svg\$\/i/, "只对 .svg 出现：/\\\\.svg$/i 这种正则字面量必须留在源码里");
-  assert.match(DOC, /\/assets\//, "只对工作空间 assets 下的资源出现，外链图不能拦");
+  assert.match(INDEX, /offerOpenBoardMenu\(detail\?\.blockElements/, "判定必须基于被点的块，不能猜选中的是哪个");
+  assert.match(INDEX, /siyuanMenu\(\)\.|const menu = siyuanMenu\(\)/, "菜单项走全局单例（detail 里没有 menu）");
+  assert.match(DOC, /export function imageAssetPathOf/, "块元素 → 图片路径的判定在 doc.ts，两处入口共用");
+  assert.match(MEDIA_REF, /svg\|png/, "svg 与 png 都认（Embed Excalidraw 的 PNG 模式）");
+  assert.ok(MEDIA_REF.includes("assets/"), "只对工作空间 assets 下的资源出现，外链图不能拦");
+  assert.match(INDEX, /hasSceneInImage\(/, "外部图先读内容确认载荷，普通图片不误弹");
 });
 
 test("契约·建档已移除（2026-10-27）：白板 = 纯文件，无文档绑定层", () => {
@@ -347,7 +349,7 @@ test("契约·导出链路（第二十六轮 T1 重写）：预览与载荷分�
   assert.equal(/exportEmbedScene/.test(SVG), false, "vendor 内嵌已摘掉：预览与载荷分离");
   assert.match(SVG, /encodeSvgPayload\(/, "载荷走 scene-codec 的自有编码（与 vendor 同构、互认不破）");
   assert.match(SVG, /opts\?\.saveMedia/, "saveMedia 传入时 files 换成外置引用；不传保持内嵌（旧口径兼容）");
-  assert.match(SVG, /payloadFiles\[id\] = \{\s*id,\s*mimeType/, "外置条目 = { id, mimeType, created, path }，不带 dataURL");
+  assert.match(SVG, /out\[id\] = \{\s*id,\s*mimeType/, "外置条目 = { id, mimeType, created, path }，不带 dataURL");
   assert.match(SVG, /includes\(SCENE_MARKER\)/, "导出后必须校验标记，否则「导出成功」是假的");
   assert.match(SVG, /XMLSerializer/);
   // 编码侧在纯模块里：白名单 appState + bstring 镜像解码
@@ -380,7 +382,8 @@ test("契约·第二十六轮：分包加载 / 图片外置接线 / 嵌入图点
   assert.match(INDEX, /MEDIA_DIR,\s*bytesToDataURL,\s*mediaFileName,\s*parseDataUrl/, "media-ref 纯工具静态进主包");
   assert.match(INDEX, /private async saveBoardMedia/, "宿主实现 dataURL → 内容寻址文件");
   // T1 打开注水：loadScene 带 hydrate
-  assert.match(INDEX, /decodeSvgScene\(text, \(files\) => this\.hydrateSceneFiles\(files\)\)/, "打开时把 path 引用读回 dataURL");
+  assert.match(INDEX, /decodeSvgScene\(await getFileText\(dataPath\), \(files\) => this\.hydrateSceneFiles\(files\)\)/, "打开时把 path 引用读回 dataURL");
+  assert.match(INDEX, /decodePngScene\(await getFileBytes\(dataPath\)/, "PNG 白板走 tEXt 载荷解码");
   // T5：文档里点白板嵌入图开画板（capture 监听 + 库缓存同步判定 + 卸载摘除）
   assert.match(INDEX, /private registerEmbedClick/, "嵌入图点击入口");
   assert.match(INDEX, /document\.addEventListener\("click", this\.embedClickHandler, true\)/, "capture 阶段拦，来得及按住思源图片预览");

@@ -22,6 +22,7 @@
  */
 
 import { deflate, inflate } from "pako";
+import { isPngBytes, pngSceneJson } from "./png-scene.ts";
 
 /** Excalidraw 内嵌 scene 的识别标记：导出时写在 <svg> 首个注释节点 */
 export const SCENE_MARKER = "svg-source:excalidraw";
@@ -120,13 +121,18 @@ export function decodeSvgPayload(svgText: string): ScenePayload {
   } catch {
     throw new SceneError("bad-payload", "载荷不是合法 JSON");
   }
+  return sceneFromParsed(parsed);
+}
+
+/** 包装 JSON（SVG base64 解出 / PNG tEXt 原文）→ scene 三件套 */
+function sceneFromParsed(parsed: unknown): ScenePayload {
   if (!parsed || typeof parsed !== "object") throw new SceneError("bad-payload", "载荷不是对象");
 
   const scene = unwrapPayload(parsed as Record<string, unknown>);
   if (scene.type !== "excalidraw") throw new SceneError("wrong-type", String(scene.type));
 
   // 第二十一轮：创建即文件，空 scene（显式空数组）是合法状态——新建的白板文件
-  // 还没画一笔，用户清空后没再画的文件也是它，点开都该是正常空画板。
+  // 还没画一笔，用户清空后也没再画的文件也是它，点开都该是正常空画板。
   // 键缺失/非数组仍是坏档（不是本插件写出的 scene）。
   if (!Array.isArray(scene.elements)) throw new SceneError("bad-payload", "scene 缺 elements 数组");
   const elements = scene.elements;
@@ -136,6 +142,38 @@ export function decodeSvgPayload(svgText: string): ScenePayload {
     appState: (scene.appState && typeof scene.appState === "object" ? scene.appState : {}) as Record<string, unknown>,
     files: (scene.files && typeof scene.files === "object" ? scene.files : {}) as Record<string, unknown>,
   };
+}
+
+/**
+ * 从 PNG 里解出 scene 三件套（Excalidraw 的 tEXt 载荷，未做 base64 包装）。
+ * 没有 tEXt 载荷 → no-payload；JSON/包装/类型不对 → 对应 reason。
+ */
+export function decodePngPayload(pngBytes: Uint8Array): ScenePayload {
+  const json = pngSceneJson(pngBytes);
+  if (json === null) throw new SceneError("no-payload", "PNG 里没有 Excalidraw tEXt 载荷");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    throw new SceneError("bad-payload", "载荷不是合法 JSON");
+  }
+  return sceneFromParsed(parsed);
+}
+
+/** 图片字节是否是一份可编辑白板（菜单入口判定用，不抛错；SVG / PNG 都认） */
+export function hasSceneInImage(bytes: Uint8Array): boolean {
+  try {
+    if (isPngBytes(bytes)) {
+      decodePngPayload(bytes);
+      return true;
+    }
+    const text = new TextDecoder("utf-8").decode(bytes);
+    if (!hasEmbeddedScene(text)) return false;
+    decodeSvgPayload(text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** 处理 encoded 包装（vendor 的 Si/vi 对）；返回 scene 对象 */
@@ -260,12 +298,10 @@ export type EncodableScene = {
 };
 
 /**
- * scene 三件套 → SVG `<metadata>` 载荷段（含 svg-source 标记注释）。
- * 返回值以 `<!-- svg-source:excalidraw -->` 开头、`</metadata>` 结尾，
- * 调用方负责插进 `<svg ...>` 开标签之后。bstring 编码：deflate → latin1
- * 字节串 → base64（latin1 包 base64，对齐 vendor 的 btoa 语义）。
+ * scene 三件套 → bstring 包装 JSON（deflate → latin1 字节串）。
+ * SVG 侧再套 base64；PNG 侧直接按 latin1 写进 tEXt，所以抽出来共用。
  */
-export function encodeSvgPayload(scene: EncodableScene): string {
+function payloadWrapperJson(scene: EncodableScene): string {
   const inner = JSON.stringify({
     type: "excalidraw",
     version: 2,
@@ -274,13 +310,22 @@ export function encodeSvgPayload(scene: EncodableScene): string {
     files: scene.files,
     appState: persistableAppState(scene.appState),
   });
-  const wrapper = JSON.stringify({
+  return JSON.stringify({
     version: "1",
     encoding: "bstring",
     compressed: true,
     encoded: bytesToLatin1(deflate(new TextEncoder().encode(inner))),
   });
-  const b64 = btoa(wrapper);
+}
+
+/**
+ * scene 三件套 → SVG `<metadata>` 载荷段（含 svg-source 标记注释）。
+ * 返回值以 `<!-- svg-source:excalidraw -->` 开头、`</metadata>` 结尾，
+ * 调用方负责插进 `<svg ...>` 开标签之后。bstring 编码：deflate → latin1
+ * 字节串 → base64（latin1 包 base64，对齐 vendor 的 btoa 语义）。
+ */
+export function encodeSvgPayload(scene: EncodableScene): string {
+  const b64 = btoa(payloadWrapperJson(scene));
   return (
     `<!-- ${SCENE_MARKER} -->` +
     `<metadata>` +
@@ -289,4 +334,9 @@ export function encodeSvgPayload(scene: EncodableScene): string {
     `<!-- payload-start -->${b64}<!-- payload-end -->` +
     `</metadata>`
   );
+}
+
+/** scene 三件套 → PNG tEXt 的包装 JSON（不套 base64，见 png-scene.ts 说明） */
+export function encodePngPayloadJson(scene: EncodableScene): string {
+  return payloadWrapperJson(scene);
 }

@@ -13,6 +13,7 @@ import { getAllEditor, type IProtyle, type Plugin } from "siyuan";
 import { blockMetasSqlOf } from "../studio/embeddable";
 import { docHitOf, docSearchSql, type DocSearchHit } from "../studio/doc-search.ts";
 import { t } from "../i18n";
+import { assetRefFromSrc } from "../studio/media-ref.ts";
 import { assetWebPath, fromAssetRef } from "../studio/storage.ts";
 
 let lastProtyle: IProtyle | null = null;
@@ -127,26 +128,17 @@ export function refreshAssetImages(dataPath: string): number {
   return count;
 }
 
-/** img 的 src → 工作空间 /data 路径；不是 /assets/ 下的资源返回 null */
-export function assetPathFromSrc(src: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(src, location.href);
-  } catch {
-    return null;
-  }
-  const path = decodeURIComponent(url.pathname);
-  if (!path.startsWith("/assets/")) return null;
-  return fromAssetRef(path.replace(/^\/+/, ""));
-}
-
-/** 块元素里第一张 assets/*.svg 图片 → /data 路径；没有就返回 null（块图标菜单判定用） */
-export function svgAssetPathOf(blockElements: HTMLElement[]): string | null {
-  for (const block of blockElements) {
-    const img = block.tagName === "IMG" ? (block as HTMLImageElement) : block.querySelector("img");
+/**
+ * 元素/块列表里第一张 assets 图片（svg|png）→ /data 路径；没有返回 null。
+ * 路径判定规则在 media-ref.assetRefFromSrc（纯逻辑、可单测）。
+ */
+export function imageAssetPathOf(roots: HTMLElement | HTMLElement[]): string | null {
+  for (const root of Array.isArray(roots) ? roots : [roots]) {
+    const img = root.tagName === "IMG" ? root : root.querySelector("img");
     if (!img) continue;
-    const path = assetPathFromSrc(img.getAttribute("src") || img.dataset.src || "");
-    if (path && /\.svg$/i.test(path)) return path;
+    const ref =
+      assetRefFromSrc(img.getAttribute("data-src") || "") ?? assetRefFromSrc(img.getAttribute("src") || "");
+    if (ref) return fromAssetRef(ref);
   }
   return null;
 }

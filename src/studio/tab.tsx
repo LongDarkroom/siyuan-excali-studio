@@ -17,6 +17,7 @@ import { SceneError, type LoadedScene } from "./scene";
 import { StudioApp, type StudioProps } from "./StudioApp";
 import { fileNameOf, toDataPath } from "./storage";
 import type { BoardActions } from "./board-actions";
+import type { ExportScene } from "./svg";
 import { STUDIO_TAB_TYPE, type StudioTabData } from "./tab-type";
 
 export { STUDIO_TAB_TYPE };
@@ -69,7 +70,7 @@ export type StudioTabHost = Pick<
    *  页签侧恢复成功后重走一遍读盘渲染 */
   restoreFromBackup: (dataPath: string) => Promise<boolean>;
   /** 落盘通道（第二十一轮：只覆盖已有文件——新建走宿主 createBoardFile，路径开页签时就带好） */
-  onSave: (svgText: string, currentPath: string | null) => Promise<{ path: string }>;
+  onSave: (svgText: string, currentPath: string | null, scene?: ExportScene) => Promise<{ path: string }>;
   /** 第二十六轮 T1：图片外置通道（dataURL → assets/excali-media 引用路径） */
   saveMedia: (dataURL: string, mime: string) => Promise<string>;
   /** 第二十六轮 T6：画布元素 `siyuan:doc/<id>` 链接点击 → 宿主开文档 */
@@ -108,9 +109,9 @@ export function describeSceneError(e: unknown): string {
   if (e instanceof SceneError) {
     switch (e.reason) {
       case "no-payload":
-        return t("这个 SVG 里没有可编辑的白板数据（不是本插件或 Excalidraw 导出的）");
+        return t("这张图片里没有可编辑的白板数据（不是本插件或 Excalidraw 导出的）");
       case "wrong-type":
-        return t("这个 SVG 里内嵌的不是 Excalidraw 场景");
+        return t("这张图片里内嵌的不是 Excalidraw 场景");
       case "unsupported-encoding":
       case "unsupported-version":
         return t("这个白板用了暂不支持的格式：{detail}", { detail: e.detail || e.reason });
@@ -260,8 +261,8 @@ export function attachStudioTab(custom: Custom, host: StudioTabHost): StudioTabS
         initial={initial}
         initialPath={data.dataPath}
         accent={host.accent}
-        onSave={async (svgText, currentPath) => {
-          const result = await host.onSave(svgText, currentPath);
+        onSave={async (svgText, currentPath, scene) => {
+          const result = await host.onSave(svgText, currentPath, scene);
           // 覆盖保存路径不变；data.dataPath 在创建时已写好（文件先行），这里原地确认
           data.dataPath = result.path;
           tab.updateTitle(fileNameOf(result.path));

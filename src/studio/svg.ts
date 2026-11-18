@@ -1,7 +1,8 @@
-import { exportToSvg } from "@excalidraw/excalidraw";
+import { exportToBlob, exportToSvg } from "@excalidraw/excalidraw";
 import type { AppState, BinaryFiles } from "@excalidraw/excalidraw/types";
 import type { NonDeletedExcalidrawElement } from "@excalidraw/excalidraw/element/types";
-import { SCENE_MARKER, encodeSvgPayload } from "./scene-codec.ts";
+import { SCENE_MARKER, encodePngPayloadJson, encodeSvgPayload } from "./scene-codec.ts";
+import { pngWithScene } from "./png-scene.ts";
 import { parseDataUrl } from "./media-ref";
 import { themeDefaultCanvasColor } from "./theme";
 
@@ -61,29 +62,7 @@ export async function sceneToSvgText(scene: ExportScene, opts?: { saveMedia?: Sa
   });
   ensureSvgBackground(svg, scene.appState.viewBackgroundColor, false);
 
-  let payloadFiles: Record<string, unknown> = scene.files as unknown as Record<string, unknown>;
-  if (opts?.saveMedia) {
-    payloadFiles = {};
-    for (const [id, f] of Object.entries(scene.files)) {
-      const dataURL = (f as { dataURL?: unknown }).dataURL;
-      if (typeof dataURL !== "string" || dataURL === "") {
-        payloadFiles[id] = f; // 没有内容的条目原样保留（不该出现，防御）
-        continue;
-      }
-      const parsed = parseDataUrl(dataURL);
-      if (!parsed) {
-        payloadFiles[id] = f; // 解不出字节的 dataURL（非 base64 形态）只能内嵌
-        continue;
-      }
-      const path = await opts.saveMedia(dataURL, parsed.mime);
-      payloadFiles[id] = {
-        id,
-        mimeType: (f as { mimeType?: string }).mimeType || parsed.mime,
-        created: (f as { created?: number }).created,
-        path,
-      };
-    }
-  }
+  const payloadFiles = await externalizeFiles(scene.files, opts?.saveMedia);
 
   const payload = encodeSvgPayload({
     elements: scene.elements as unknown as unknown[],
@@ -100,4 +79,68 @@ export async function sceneToSvgText(scene: ExportScene, opts?: { saveMedia?: Sa
     throw new Error("导出的 SVG 未内嵌可编辑 scene（缺 svg-source:excalidraw 标记）");
   }
   return `<?xml version="1.0" encoding="UTF-8"?>\n${withPayload}\n`;
+}
+
+/** files 表里的 dataURL → 外置 path 引用（saveMedia 缺省时原样返回） */
+async function externalizeFiles(
+  files: BinaryFiles,
+  saveMedia?: SaveMedia,
+): Promise<Record<string, unknown>> {
+  if (!saveMedia) return files as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [id, f] of Object.entries(files)) {
+    const dataURL = (f as { dataURL?: unknown }).dataURL;
+    if (typeof dataURL !== "string" || dataURL === "") {
+      out[id] = f; // 没有内容的条目原样保留（不该出现，防御）
+      continue;
+    }
+    const parsed = parseDataUrl(dataURL);
+    if (!parsed) {
+      out[id] = f; // 解不出字节的 dataURL（非 base64 形态）只能内嵌
+      continue;
+    }
+    const path = await saveMedia(dataURL, parsed.mime);
+    out[id] = {
+      id,
+      mimeType: (f as { mimeType?: string }).mimeType || parsed.mime,
+      created: (f as { created?: number }).created,
+      path,
+    };
+  }
+  return out;
+}
+
+/**
+ * 画板场景 → PNG 字节（覆盖保存外部的 PNG 白板用）。
+ *
+ * 两步：① vendor 的 exportToBlob 重新渲染像素（与 SVG 侧 exportToSvg 同一份场景，
+ * 预览跟着改动走，不会出现「场景新、图还旧」）；② 载荷自己编成 bstring 包装 JSON，
+ * 替换 PNG 里同关键字 tEXt（与 Excalidraw/Embed Excalidraw 互认）。
+ * files 同样外置成 path 引用（与 SVG 侧一致）。
+ */
+export async function sceneToPngBytes(scene: ExportScene, opts?: { saveMedia?: SaveMedia }): Promise<Uint8Array> {
+  const appState = {
+    ...scene.appState,
+    exportBackground: true,
+    exportScale: Math.min(window.devicePixelRatio || 1, 2),
+  };
+  // 位图没有 CSS 兜底：空串「默认」要落成具体色，否则导出透明底
+  if (!appState.viewBackgroundColor) appState.viewBackgroundColor = themeDefaultCanvasColor();
+  const blob = await exportToBlob({
+    elements: scene.elements,
+    appState: appState as Partial<AppState>,
+    files: scene.files,
+    mimeType: "image/png",
+    exportPadding: 10,
+  });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const payloadFiles = await externalizeFiles(scene.files, opts?.saveMedia);
+  return pngWithScene(
+    bytes,
+    encodePngPayloadJson({
+      elements: scene.elements as unknown as unknown[],
+      appState: appState as unknown as Record<string, unknown>,
+      files: payloadFiles,
+    }),
+  );
 }

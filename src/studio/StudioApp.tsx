@@ -101,7 +101,7 @@ import { outlineTargets } from "./outline.ts";
 import type { ScriptRunOpts } from "./ea-api";
 import { HIGHLIGHTER_EVENT, RAIL_VIEW_EVENT, SCRIPT_PIN_EVENT } from "./script-pin";
 import { StudioWelcome } from "./StudioWelcome";
-import { sceneToSvgText } from "./svg";
+import { sceneToSvgText, type ExportScene as SaveScene } from "./svg";
 import { canvasBitsOf, dirtyFromStamp, filesStampOf, sceneStampOf } from "./scene-dirty";
 import {
   HL_ROUGHNESS,
@@ -234,7 +234,7 @@ export type StudioProps = {
   /** 思源强调色（设置里关掉则为 null） */
   accent: string | null;
   /** 落盘通道；只覆盖已有文件（新建在宿主侧 createBoardFile 完成）。返回 /data 路径 */
-  onSave: (svgText: string, currentPath: string | null) => Promise<string>;
+  onSave: (svgText: string, currentPath: string | null, scene?: SaveScene) => Promise<string>;
   /** 第二十六轮 T1：图片外置通道——dataURL 写成 assets/excali-media 内容寻址文件，返回引用路径 */
   saveMedia: (dataURL: string, mime: string) => Promise<string>;
   /** 第二十六轮 T6：图形点击 `siyuan:` 链接（文档 / 白板卡片）→ 宿主按协议分发 */
@@ -2729,7 +2729,7 @@ export function StudioApp(props: StudioProps) {
       };
       // 第二十六轮 T1：图片外置——载荷里的 files 换成 assets/excali-media 引用
       const svgText = await sceneToSvgText(sceneOut, { saveMedia });
-      const saved = await onSave(svgText, path);
+      const saved = await onSave(svgText, path, sceneOut);
       pathRef.current = saved;
       savedAtRef.current = Date.now();
       applySavedBaseline(scene);
