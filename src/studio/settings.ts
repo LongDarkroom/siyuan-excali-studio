@@ -10,6 +10,7 @@
 import { DEFAULT_HIGHLIGHTER, normalizeHighlighter, type HighlighterConfig } from "./pens.ts";
 import { DEFAULT_PINNED_ACTIONS, normalizePinnedActions, type RailActionId } from "./rail-actions.ts";
 import { normalizeAiChannels, DEFAULT_AI_CHANNELS, type AiChannels } from "./ai/channels.ts";
+import { AUTO_FX_TYPES, defaultEffect, isEffectId, type EffectId } from "./presentation-motion.ts";
 
 /**
  * 第二十五轮：白板专属目录（工作空间相对路径）。
@@ -68,6 +69,12 @@ export type PresentationSettings = {
    * 开：按 → 走右边的出边、按 ↓ 走下边的出边；关：方向键就是普通前进/后退。
    */
   directional: boolean;
+  /**
+   * 第九十一轮：用户改过的「自动档」默认效果（按元素类型）。
+   * 只存例外：与内置默认相同的档不写——将来内置口径调整时，没表过态的类仍跟着变。
+   * 值域/键域在 normalizePresentationSettings 里收口（AUTO_FX_TYPES + EFFECT_IDS）。
+   */
+  autoEffects: Record<string, EffectId>;
 };
 
 export const DEFAULT_PRESENTATION: PresentationSettings = {
@@ -86,6 +93,8 @@ export const DEFAULT_PRESENTATION: PresentationSettings = {
   fullscreen: true,
   // 方向键沿边导航默认关：没画箭头连线时它没有意义，开了反而让人以为方向键失灵
   directional: false,
+  // 空表 = 全按类型的内置默认（文本浮现、图形/箭头划线、图片升起、其余弹入）
+  autoEffects: {},
 };
 
 /**
@@ -103,6 +112,19 @@ function clampNum(v: unknown, lo: number, hi: number, fallback: number): number 
   return Math.min(hi, Math.max(lo, v));
 }
 
+/** 自动档覆盖表归一：键只认知道类型、值只认已知档；等于内置默认的直接丢掉（保持稀疏） */
+function normalizeAutoEffects(raw: unknown): Record<string, EffectId> {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const out: Record<string, EffectId> = {};
+  for (const type of AUTO_FX_TYPES) {
+    const v = r[type];
+    if (!isEffectId(v)) continue;
+    if (v === defaultEffect(type)) continue;
+    out[type] = v;
+  }
+  return out;
+}
+
 /** 演示设置归一：缺键给默认，脏值夹回合法区间（速度 8~200ms，留白 0.5~1，自动前进 0~300s） */
 export function normalizePresentationSettings(raw: unknown): PresentationSettings {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<Record<keyof PresentationSettings, unknown>>;
@@ -118,6 +140,7 @@ export function normalizePresentationSettings(raw: unknown): PresentationSetting
     autoAdvance: Math.round(clampNum(r.autoAdvance, 0, 300, d.autoAdvance)),
     fullscreen: boolOr(r.fullscreen, d.fullscreen),
     directional: boolOr(r.directional, d.directional),
+    autoEffects: normalizeAutoEffects(r.autoEffects),
   };
 }
 

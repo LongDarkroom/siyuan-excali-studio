@@ -420,3 +420,158 @@ export function drawFrame(el: DrawElementLike, box: DrawBox, p: number, opacity?
     geom: { x: el.x, y: el.y, width: x1 - x0, height: y1 - y0, points: poly, swap },
   };
 }
+
+/* ------------------------------ 第九十轮：箭头/连线「画出来」 ------------------------------ */
+
+/**
+ * 填充高亮是「推一条前沿把面裁掉」，箭头/连线是细笔画，没有面可裁。
+ * 这里改成**沿它自己的路径长出来**：每帧只留「笔尖之前」的那一段点集喂给 vendor，
+ * 箭头尖自然跟着走。两条硬规矩：
+ * ① 直线/手画折线用原控制点，只在末端插一个笔尖点——落定恢复时一个像素都不差；
+ * ② 弧线沿原曲线每隔 TRACE_STEP 钉一个定点，**只追加、不回改**。整段重新均分会让已画
+ *    出的部分逐帧变形（观感像果冻），所以定点一旦落下就不再动，只有笔尖附近那一段在长。
+ *
+ * 直角路由箭头（elbowed）也走同一套：vendor 渲染时直接吃 element.points（只做拐角圆角），
+ * 不会按绑定重算；只有走 mutateElement 的写入才重算，而放映补丁是 updateScene 整替换。
+ */
+export const TRACE_STEP = 30;
+/** 每段三次贝塞尔的采样数：30px 左右的定点间距下，形状误差远小于一个像素 */
+const TRACE_SAMPLES = 32;
+
+export type StrokePath = {
+  /** 采样折线（元素局部坐标） */
+  dense: [number, number][];
+  cum: number[];
+  len: number;
+  /** 弧长上的定点（不含起点）：曲线的固定落点；直线/折线就是原控制点 */
+  anchors: { at: number; pt: [number, number] }[];
+};
+
+export function isTraceableStroke(e: DrawElementLike): boolean {
+  if (e.isDeleted) return false;
+  if (e.type !== "arrow" && e.type !== "line") return false;
+  const pts = e.points;
+  if (!pts || pts.length < 2) return false;
+  for (let i = 1; i < pts.length; i += 1) {
+    if (Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]) > 0.5) return true;
+  }
+  return false;
+}
+
+/** points-on-curve 的 curveToBezier（vendor 曲线箭头用的同一套公式，tightness=0） */
+function curveToBezier(pts: readonly DrawPoint[]): [number, number][] {
+  const len = pts.length;
+  const clone = (p: DrawPoint): [number, number] => [p[0], p[1]];
+  if (len < 3) return [clone(pts[0]), clone(pts[0]), clone(pts[1]), clone(pts[1])];
+  if (len === 3) return [clone(pts[0]), clone(pts[1]), clone(pts[2]), clone(pts[2])];
+  const pad: DrawPoint[] = [pts[0], pts[0], ...pts.slice(1), pts[len - 1]];
+  const out: [number, number][] = [clone(pad[0])];
+  for (let i = 1; i + 2 < pad.length; i += 1) {
+    const c1: [number, number] = [
+      pad[i][0] + (pad[i + 1][0] - pad[i - 1][0]) / 6,
+      pad[i][1] + (pad[i + 1][1] - pad[i - 1][1]) / 6,
+    ];
+    const c2: [number, number] = [
+      pad[i + 1][0] + (pad[i][0] - pad[i + 2][0]) / 6,
+      pad[i + 1][1] + (pad[i][1] - pad[i + 2][1]) / 6,
+    ];
+    out.push(c1, c2, clone(pad[i + 1]));
+  }
+  return out;
+}
+
+function sampleCurve(pts: readonly DrawPoint[]): [number, number][] {
+  const c = curveToBezier(pts);
+  const out: [number, number][] = [c[0]];
+  for (let i = 0; i + 3 < c.length; i += 3) {
+    const p0 = c[i];
+    const p1 = c[i + 1];
+    const p2 = c[i + 2];
+    const p3 = c[i + 3];
+    for (let j = 1; j <= TRACE_SAMPLES; j += 1) {
+      const t = j / TRACE_SAMPLES;
+      const u = 1 - t;
+      out.push([
+        u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0],
+        u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1],
+      ]);
+    }
+  }
+  return out;
+}
+
+function pointAtPath(path: StrokePath, target: number): [number, number] {
+  const { dense, cum } = path;
+  let lo = 0;
+  let hi = cum.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid] < target) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo === 0) return [dense[0][0], dense[0][1]];
+  const a = dense[lo - 1];
+  const b = dense[lo];
+  const span = cum[lo] - cum[lo - 1];
+  const t = span > 0 ? Math.min(1, (target - cum[lo - 1]) / span) : 0;
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+}
+
+/** 一条箭头/连线的路径表；退化到没有长度就 null（调用方回落淡入） */
+export function strokePathOf(e: DrawElementLike): StrokePath | null {
+  if (!isTraceableStroke(e)) return null;
+  const ctrl = (e.points ?? []).map((q): [number, number] => [q[0], q[1]]);
+  const curved = !!e.roundness && ctrl.length >= 3;
+  const dense = curved ? sampleCurve(ctrl) : ctrl;
+  const cum: number[] = [0];
+  for (let i = 1; i < dense.length; i += 1) {
+    cum.push(cum[i - 1] + Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]));
+  }
+  const len = cum[cum.length - 1] ?? 0;
+  if (!(len > 0.5)) return null;
+
+  const anchors: { at: number; pt: [number, number] }[] = [];
+  if (curved) {
+    let next = TRACE_STEP;
+    for (let i = 1; i < dense.length && next <= len; i += 1) {
+      while (next <= cum[i] && next <= len) {
+        anchors.push({ at: next, pt: pointAtPath({ dense, cum, len, anchors: [] }, next) });
+        next += TRACE_STEP;
+      }
+    }
+  } else {
+    for (let i = 1; i < ctrl.length; i += 1) anchors.push({ at: cum[i], pt: ctrl[i] });
+  }
+  return { dense, cum, len, anchors };
+}
+
+/** 某一帧的描线几何：笔尖之前的定点 + 一个移动的笔尖点 */
+export function traceFrame(el: DrawElementLike, path: StrokePath, p: number): DrawFrame {
+  if (p <= 0) return { kind: "hidden" };
+  if (p >= 1) return { kind: "done" };
+  const target = path.len * p;
+  const pts: [number, number][] = [[path.dense[0][0], path.dense[0][1]]];
+  for (const a of path.anchors) {
+    if (a.at > target - 0.5) break;
+    pts.push([a.pt[0], a.pt[1]]);
+  }
+  const tip = pointAtPath(path, target);
+  const last = pts[pts.length - 1];
+  if (Math.hypot(tip[0] - last[0], tip[1] - last[1]) > 0.6) pts.push(tip);
+  if (pts.length < 2) return { kind: "hidden" };
+
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const q of pts) {
+    x0 = Math.min(x0, q[0]);
+    y0 = Math.min(y0, q[1]);
+    x1 = Math.max(x1, q[0]);
+    y1 = Math.max(y1, q[1]);
+  }
+  return {
+    kind: "clip",
+    geom: { x: el.x, y: el.y, width: x1 - x0, height: y1 - y0, points: pts, swap: false },
+  };
+}

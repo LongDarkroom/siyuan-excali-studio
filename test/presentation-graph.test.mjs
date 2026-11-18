@@ -219,6 +219,20 @@ test("导航：先走完本页分条，再换页", () => {
   assert.equal(s2?.page, 1, "本页走完才换页");
 });
 
+test("从这一步播放：游标直接落在那一条，越界夹回本页，整页页仍是 -1", () => {
+  const withUnits = [
+    { id: "a", type: "rectangle", x: 0, y: 0, width: 10, height: 10, frameId: "f1" },
+    { id: "b", type: "rectangle", x: 0, y: 100, width: 10, height: 10, frameId: "f1" },
+    { id: "c", type: "rectangle", x: 0, y: 200, width: 10, height: 10, frameId: "f1" },
+  ];
+  const p = planPage(withUnits, "f1");
+  assert.equal(navStart([p], null, 0, 1).step, 1, "第 2 步 = 游标 1");
+  assert.equal(navStart([p], null, 0, 99).step, 2, "越界夹到最后一条");
+  assert.equal(navStart([p], null, 0, -5).step, 0, "负数夹回第一条");
+  const whole = mkPlans(["f1"]);
+  assert.equal(navStart(whole, null, 0, 3).step, -1, "整页没有分条，给了步号也不生效");
+});
+
 test("导航：有图时沿边换页（不是按片单顺序）", () => {
   const frames = [frame("f1", 0, 0), frame("f2", 600, 0), frame("f3", 1200, 0)];
   // f1 → f3（跳过 f2）

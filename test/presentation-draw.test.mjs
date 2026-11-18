@@ -18,9 +18,13 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DRAW_SEGMENTS,
+  TRACE_STEP,
   drawBoxOf,
   drawFrame,
   isDrawableElement,
+  isTraceableStroke,
+  strokePathOf,
+  traceFrame,
 } from "../src/studio/presentation-draw.ts";
 import {
   EFFECTS,
@@ -59,6 +63,40 @@ const ribbon = (id, over = {}) => ({
   ...over,
 });
 const BOX = { x: 100, y: 50, w: 200, h: 40 };
+
+/** 箭头的最小替身：直线两点起步，折线/弧线都由 points + roundness 决定 */
+const arrow = (id, over = {}) => ({
+  id,
+  type: "arrow",
+  x: 100,
+  y: 50,
+  width: 200,
+  height: 0,
+  angle: 0,
+  points: [
+    [0, 0],
+    [200, 0],
+  ],
+  ...over,
+});
+/** 弧线箭头：vendor 用 roundness 把控制点再平滑成曲线 */
+const curve = (id, over = {}) => ({
+  id,
+  type: "arrow",
+  x: 40,
+  y: 40,
+  width: 240,
+  height: 160,
+  angle: 0,
+  roundness: { type: 3 },
+  points: [
+    [0, 120],
+    [60, 0],
+    [180, 0],
+    [240, 120],
+  ],
+  ...over,
+});
 
 /** 形状的最小替身：轮廓完全由 type + 宽高 + 圆角决定（vendor 公式同源） */
 const shape = (id, type, over = {}) => ({
@@ -286,42 +324,179 @@ test("旋转的形状：轮廓在元素坐标系里裁，外接框按旋转后�
   assert.ok(f.geom.height > 0 && f.geom.height <= 120 + 1e-6);
 });
 
-/* ------------------------------ ② 编排与现场 ------------------------------ */
+/* --------------------------- ①b 箭头/连线「画出来」 --------------------------- */
 
-test("效果注册：第五档是显式选的，默认档永远不会自动变成划线", () => {
+test("可描判据：直箭头、折线、弧线、直角路由都算；文字/画笔/图片/退化点不算", () => {
+  assert.equal(isTraceableStroke(arrow("a")), true);
+  assert.equal(isTraceableStroke({ ...arrow("a"), type: "line" }), true, "普通连线也能画出来");
+  assert.equal(isTraceableStroke(curve("c")), true);
+  assert.equal(isTraceableStroke({ ...arrow("a"), elbowed: true }), true, "直角路由渲染时直接吃 points，截断有效");
+  assert.equal(isTraceableStroke({ ...arrow("a"), type: "freedraw" }), false);
+  assert.equal(isTraceableStroke({ ...arrow("a"), isDeleted: true }), false);
+  assert.equal(isTraceableStroke({ ...arrow("a"), points: [[0, 0]] }), false);
+  assert.equal(isTraceableStroke({ ...arrow("a"), points: [[0, 0], [0, 0]] }), false, "零长度没有可画的路径");
+});
+
+test("直箭头：每帧只是原控制点的前缀 + 一个笔尖点，落定恢复零差异", () => {
+  const a = arrow("a");
+  const path = strokePathOf(a);
+  assert.ok(path);
+  assert.equal(path.len, 200);
+  assert.deepEqual(path.anchors.map((q) => q.at), [200], "没有中间定点，锚点就是原控制点");
+  assert.deepEqual(traceFrame(a, path, 0), { kind: "hidden" });
+  assert.deepEqual(traceFrame(a, path, 1), { kind: "done" });
+  const f = traceFrame(a, path, 0.5);
+  assert.equal(f.kind, "clip");
+  assert.deepEqual(f.geom.points, [[0, 0], [100, 0]], "首点 + 笔尖，没有任何插出来的抖动点");
+  assert.equal(f.geom.x, a.x, "x/y 不挪，坐标本来就相对元素原点");
+  assert.equal(f.geom.y, a.y);
+  assert.equal(f.geom.swap, false, "箭头不换类型，收笔也不用还原");
+});
+
+test("直角路由箭头：按存好的折线画，最后一段截到笔尖、拐点不丢", () => {
+  const a = arrow("elbow", {
+    elbowed: true,
+    width: 160,
+    height: 120,
+    points: [[0, 0], [160, 0], [160, 120]],
+  });
+  const path = strokePathOf(a);
+  assert.ok(path, "直角箭头也要有路径表");
+  assert.equal(path.len, 280);
+  const f = traceFrame(a, path, 0.85); // 238 / 280：刚过第二个拐点
+  assert.equal(f.kind, "clip");
+  assert.deepEqual(f.geom.points, [[0, 0], [160, 0], [160, 78]]);
+  assert.deepEqual(traceFrame(a, path, 0).kind, "hidden");
+  assert.deepEqual(traceFrame(a, path, 1).kind, "done");
+});
+
+test("折线箭头：拐点原样保留，笔尖落在半路也不丢角", () => {
+  const a = arrow("a", {
+    width: 100,
+    height: 100,
+    points: [
+      [0, 0],
+      [100, 0],
+      [100, 100],
+    ],
+  });
+  const path = strokePathOf(a);
+  assert.ok(path);
+  assert.equal(path.len, 200);
+  assert.deepEqual(path.anchors.map((q) => q.at), [100, 200]);
+  const f = traceFrame(a, path, 0.75);
+  assert.equal(f.kind, "clip");
+  assert.deepEqual(f.geom.points, [[0, 0], [100, 0], [100, 50]], "前两个控制点原样，笔尖在第二段中间");
+});
+
+test("弧线：沿曲线采样，定点按固定弧长只追加，已画的部分一个字都不改", () => {
+  const c = curve("c");
+  const path = strokePathOf(c);
+  assert.ok(path);
+  assert.ok(path.len > 260, `曲线比控制折线长，实测 ${path.len}`);
+  assert.deepEqual(path.dense[0], [0, 120], "起点仍是第一个控制点");
+  assert.deepEqual(path.dense[path.dense.length - 1], [240, 120], "终点仍是最后一个控制点");
+  assert.ok(path.dense.length > 60, "曲线要采样成密集折线才喂得动 vendor");
+  const steps = path.anchors.map((q) => q.at);
+  assert.ok(steps.length >= 5, `曲线要钉一排定点，实测 ${steps.length}`);
+  for (let i = 1; i < steps.length; i += 1) {
+    assert.ok(Math.abs(steps[i] - steps[i - 1] - TRACE_STEP) < 1e-6, "定点间距恒定，笔尖速度才均匀");
+  }
+  const early = traceFrame(c, path, 0.45);
+  const late = traceFrame(c, path, 0.8);
+  assert.equal(early.kind, "clip");
+  assert.equal(late.kind, "clip");
+  const frozen = early.geom.points.slice(0, -1); // 去掉还在走的笔尖
+  assert.ok(frozen.length >= 3);
+  assert.deepEqual(late.geom.points.slice(0, frozen.length), frozen, "先落下的定点不许回改（回改就是果冻感）");
+});
+
+test("弧线：露出长度跟着进度走、步进均匀，笔尖不会忽快忽慢", () => {
+  const c = curve("c");
+  const path = strokePathOf(c);
+  let prev = -1;
+  const tipSteps = [];
+  let lastTip = null;
+  for (let i = 0; i <= 40; i += 1) {
+    const f = traceFrame(c, path, i / 40);
+    assert.equal(f.kind, i === 0 ? "hidden" : i === 40 ? "done" : "clip");
+    if (f.kind !== "clip") continue;
+    const pts = f.geom.points;
+    let drawn = 0;
+    for (let k = 1; k < pts.length; k += 1) {
+      drawn += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]);
+    }
+    assert.ok(drawn >= prev - 1e-6, `p=${i / 40} 反而缩回去了`);
+    assert.ok(Math.abs(drawn - path.len * (i / 40)) < 3, `露出长度要对上笔尖位置：${drawn} vs ${path.len * (i / 40)}`);
+    prev = drawn;
+    const tip = pts[pts.length - 1];
+    if (lastTip) {
+      const d = Math.hypot(tip[0] - lastTip[0], tip[1] - lastTip[1]);
+      if (d > 1e-6) tipSteps.push(d);
+    }
+    lastTip = tip;
+  }
+  const avg = tipSteps.reduce((a, b) => a + b, 0) / tipSteps.length;
+  const worst = Math.max(...tipSteps);
+  assert.ok(worst < avg * 1.6, `笔尖步进忽快忽慢：平均 ${avg.toFixed(2)}，最大 ${worst.toFixed(2)}`);
+});
+
+test("描线包围盒按已画的部分算：上坡到半路不会占满整个框", () => {
+  const c = curve("c");
+  const path = strokePathOf(c);
+  const f = traceFrame(c, path, 0.25);
+  assert.equal(f.kind, "clip");
+  assert.ok(f.geom.width > 0 && f.geom.width < c.width, "宽度只到笔尖附近");
+  assert.ok(f.geom.height > 0 && f.geom.height <= c.height);
+  assert.equal(f.geom.swap, false);
+});
+
+
+
+test("效果注册：箭头/连线默认就是划线，文本/图片/形状不会被抢走", () => {
   assert.ok(EFFECT_IDS.includes("draw"));
   assert.equal(EFFECT_LABELS.draw, "划线");
   assert.equal(EFFECTS.draw.ms, 760, "比其余四档长一点，是手刷一下的节奏");
   assert.equal(EFFECTS.draw.dx, 0, "划线不挪位置");
   assert.equal(EFFECTS.draw.dy, 0);
-  for (const type of ["text", "arrow", "line", "image", "rectangle", "freedraw"]) {
+  assert.deepEqual(EFFECTS.draw.cubic, [0.3, 0.02, 0.14, 1], "起步轻、收尾长，才像顺着手背滑出去");
+  assert.equal(defaultEffect("arrow"), "draw", "箭头默认画出来");
+  assert.equal(defaultEffect("line"), "draw", "连线默认也画出来");
+  assert.equal(defaultEffect("rectangle"), "draw", "矩形默认荧光笔划线");
+  assert.equal(defaultEffect("ellipse"), "draw");
+  assert.equal(defaultEffect("diamond"), "draw");
+  for (const type of ["text", "image", "freedraw"]) {
     assert.notEqual(defaultEffect(type), "draw", `${type} 的自动档不许是划线`);
   }
 });
 
-test("抽屉的行要能看出「这条划得开」：填充折线/矩形 true，纯文字 false", () => {
+test("抽屉的行要能看出「这条画得出来」：填充折线/矩形/箭头 true，纯文字 false", () => {
   const rows = motionRows(
     [
       ribbon("hl"),
       { id: "box", type: "rectangle", x: 0, y: 0, width: 80, height: 40 },
       { id: "txt", type: "text", x: 0, y: 200, width: 80, height: 20, text: "标题" },
+      arrow("ar"),
+      { ...arrow("elbow"), elbowed: true },
     ],
     [
       { key: "e:hl", ids: ["hl"] },
       { key: "e:box", ids: ["box"] },
       { key: "e:txt", ids: ["txt"] },
+      { key: "e:ar", ids: ["ar"] },
+      { key: "e:elbow", ids: ["elbow"] },
     ],
   );
-  assert.deepEqual(rows.map((r) => r.drawable), [true, true, false]);
+  assert.deepEqual(rows.map((r) => r.drawable), [true, true, false, true, true], "直角路由箭头也能画");
 });
 
-test("现场：几何补丁 NEVER、按快照回填、没可划的回落浮现", () => {
+test("现场：几何补丁 NEVER、按快照回填；有面走清洗扫、细笔画走描线", () => {
   const at = APP.indexOf("const applyDrawPatches");
   assert.ok(at > 0, "要有独立的几何补丁函数（不能塞进坐标补丁里）");
   const body = APP.slice(at, APP.indexOf("const motionRef", at));
   assert.match(body, /captureUpdate: CaptureUpdateAction\.NEVER/, "放映补丁不进撤销栈");
   assert.match(body, /const next: Record<string, unknown> = \{/, "补丁要能增删字段（形状换形）");
-  assert.match(body, /if \(p\.points\) next\.points = p\.points;/, "折线才写 points，形状还原时不塞空数组");
+  assert.match(body, /if \(p\.points\) next\.points = p\.points;/, "折线/箭头才写 points，形状还原时不塞空数组");
   assert.match(
     body,
     /if \(p\.swap\) \{[\s\S]{0,220}next\.type = "line";[\s\S]{0,220}next\.polygon = true;[\s\S]{0,220}next\.roundness = null;/,
@@ -332,25 +507,28 @@ test("现场：几何补丁 NEVER、按快照回填、没可划的回落浮现",
     /\} else if \(p\.restore\) \{[\s\S]{0,220}delete next\.points;[\s\S]{0,220}next\.type = p\.restore\.type;/,
     "收笔/中断写回原来的类型，并把临时折线点删干净",
   );
-  assert.match(APP, /function shapeRestoreOf[\s\S]{0,200}type: el\.type \?\? "line"/, "按快照记下原类型");
+  assert.match(APP, /function shapeRestoreOf[\s\S]{0,200}el\.type === "line" \|\| el\.type === "arrow"/, "折线/箭头有原生 points，不用换类型");
 
   const motion = APP.slice(APP.indexOf("const motionRef"), APP.indexOf("const presentApply"));
+  assert.match(motion, /trace\.set\(id, strokePathOf\(e\)\)/, "开跑前把每条箭头的路径表算好");
+  assert.match(motion, /isDrawableElement\(b\.el\) && box/, "有可裁的面才走前沿清洗扫");
   assert.match(motion, /drawFrame\(b\.el, box, p\.o, want\)/, "进度 + 该显示的透明度一起喂给几何层");
-  assert.match(motion, /if \(box === null\) \{[\s\S]{0,400}Math\.round\(\(run\.target\.get\(id\) \?\? OPACITY_DEFAULT\) \* p\.o\)/, "没有可划元素时回落浮现");
-  assert.match(motion, /if \(!isDrawableElement\(b\.el\)\)/, "绑定文字跟着淡入，不参与裁剪");
+  assert.match(motion, /traceFrame\(b\.el, run\.trace\.get\(id\) as StrokePath, p\.o\)/, "箭头/连线沿路径长出来");
+  assert.match(motion, /if \(!f\) \{[\s\S]{0,400}Math\.round\(want \* p\.o\)/, "没有几何的成员（绑定文字/路由箭头）回落淡入");
   assert.match(motion, /if \(!run\.hidden\.has\(id\)\)/, "藏起来的只写一次，不每帧重画");
   assert.match(motion, /if \(!run\.settled\.has\(id\)\)/, "收笔后落回原几何，只写一次");
 
   const finish = APP.slice(APP.indexOf("const finishMotion"), APP.indexOf("const startMotion"));
-  assert.match(finish, /restorePatchOf\(b\.el, want\)/, "中断也按快照还原：折线回 points、形状回类型");
-  assert.match(APP, /points: el\.type === "line" \? el\.points \?\? \[\] : undefined/, "折线回填折线；形状不带 points");
+  assert.match(finish, /restorePatchOf\(b\.el, want\)/, "中断也按快照还原：折线/箭头回 points、形状回类型");
+  assert.match(finish, /isDrawableElement\(b\.el\) \|\| isTraceableStroke\(b\.el\)/, "描了一半的箭头也要还原");
+  assert.match(APP, /points: el\.type === "line" \|\| el\.type === "arrow" \? el\.points \?\? \[\] : undefined/, "折线/箭头回填原始点集；形状不带 points");
   assert.match(APP, /applyDrawPatches\(finalGeo\);/, "收尾同样落原几何");
 });
 
 test("抽屉：只给画得开的条显示「划线」，菜单高度按六项留位", () => {
-  assert.match(DRAWER, /if \(id === "draw" && !fxMenu\.row\.drawable\) return null;/, "文字/图片/箭头那几条不显示这一档");
-  assert.match(DRAWER, /const menuH = 312;/, "菜单从五项变六项，贴底时整块还要露出来");
-  assert.match(DRAWER, /draw: "顺着它自己的形状擦出来/, "菜单副行说人话");
+  assert.match(DRAWER, /if \(id === "draw" && !fxRow\.drawable\) return null;/, "文字/图片/直角路由那几条不显示这一档");
+  assert.match(DRAWER, /const menuH = 384;/, "菜单多了「以后这类默认」，贴底时整块还要露出来");
+  assert.match(DRAWER, /draw: "顺着它自己的形状画出来/, "菜单副行说人话");
 });
 
 /* ------------------------------ ③ 分层与文案 ------------------------------ */
@@ -365,10 +543,21 @@ test("纯几何层：不碰 React / 思源 / vendor，也不 import 兄弟模块
   assert.match(M, /from "\.\/presentation-draw\.ts"/, "编排层引用同一份判据，别各写一套");
 });
 
+test("「合」可撤销、多条的组能「拆」：快照还原优先，其它重排清历史", () => {
+  assert.match(DRAWER, /const undoMerge = /, "撤销入口");
+  assert.match(DRAWER, /mergeToast\.before/, "撤销回到合并前那张组表");
+  assert.match(DRAWER, /aria-label=\{t\("拆回独立步"\)\}/, "组头有「拆」");
+  assert.match(DRAWER, /lastIndexOf\(groupSignature\(g\)\)/, "合并出来的组按快照还原，不过度拆碎");
+  assert.match(DRAWER, /splitOrderGroup\(groups, index\)/, "本来就在一组的几条拆成各自一步");
+  assert.match(DRAWER, /window\.setTimeout\(\(\) => setMergeToast\(null\), 6000\)/, "提示条是一次性的，不常驻");
+  const drops = DRAWER.split("clearMergeHistory();").length - 1;
+  assert.ok(drops >= 4, `拖动/↑↓/固定顺序都要清历史，实测 ${drops} 处`);
+});
+
 test("i18n：划线名与说明双语齐备", () => {
   const zh = json("i18n/zh_CN.json");
   const en = json("i18n/en_US.json");
-  for (const k of ["划线", "顺着它自己的形状擦出来，适合高亮、笔刷这类填充图形。"]) {
+  for (const k of ["划线", "顺着它自己的形状画出来，适合图形、高亮、笔刷和箭头连线。"]) {
     assert.equal(zh[k], k, `zh 缺词条：${k}`);
     assert.ok(typeof en[k] === "string" && en[k] !== k, `en 缺词条：${k}`);
   }

@@ -227,9 +227,10 @@ test("进片场：抓快照 → 关编辑 → 藏抽屉 → 落第一屏", () =>
   const body = APP.slice(at, APP.indexOf("const exitPresentation", at));
   assert.match(
     body,
-    /plans: shown\.map\(\(s, i\) => planPage\(all, s\.id, ps\.reveal && pageReveal\[i\]\)\)/,
-    "片单按 visibleSlides 建计划；整页页 / 全局逐条关闭时不分条",
+    /plans: shown\.map\(\(s, i\) => planPage\(all, s\.id, ps\.reveal && pageReveal\[i\], ps\.autoEffects\)\)/,
+    "片单按 visibleSlides 建计划；整页页 / 全局逐条关闭时不分条；自动档按用户改过的类型默认",
   );
+  assert.match(body, /autoEffects: \{ \.\.\.ps\.autoEffects \}/, "类型默认进片场时定格，中途改设置不追");
   assert.match(body, /original: snapshotOpacity\(all\)/, "原始透明度快照");
   assert.match(body, /textOriginal: snapshotText\(all as unknown as TextElementLike\[\]\)/, "全文快照");
   assert.match(body, /scrim: ps\.scrim,[\s\S]{0,400}autoAdvance: ps\.autoAdvance/, "放映偏好进片场时定格");

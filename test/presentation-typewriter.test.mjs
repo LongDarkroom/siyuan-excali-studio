@@ -121,6 +121,8 @@ test("设置归一：缺键回落默认，速度/留白/自动前进夹在合法
     // 第七十六轮：全屏 + 方向键沿边导航（Advanced Canvas 同款）
     fullscreen: true,
     directional: false,
+    // 第九十一轮：自动档的类型默认，空表 = 全按内置
+    autoEffects: {},
   });
   assert.deepEqual(normalizePresentationSettings(undefined), DEFAULT_PRESENTATION, "老设置没有这一段也能用");
   const dirty = normalizePresentationSettings({
@@ -141,6 +143,13 @@ test("设置归一：缺键回落默认，速度/留白/自动前进夹在合法
   assert.equal(normalizePresentationSettings({ fit: 0.1 }).fit, 0.5, "留白下限");
   assert.equal(normalizePresentationSettings({ autoAdvance: 999 }).autoAdvance, 300, "自动前进上限");
   assert.deepEqual(
+    normalizePresentationSettings({
+      autoEffects: { rectangle: "pop", text: "fade", arrow: "nope", embeddable: "rise", ellipse: 3 },
+    }).autoEffects,
+    { rectangle: "pop" },
+    "自动档只留认识的类型和安全的值；等于内置默认的项丢掉（保持稀疏）",
+  );
+  assert.deepEqual(
     normalizeSettings({ presentation: { speed: 40 } }).presentation,
     { ...DEFAULT_PRESENTATION, speed: 40 },
     "宿主整份设置归一也走这条",
@@ -156,7 +165,7 @@ test("进片场：逐条开关 + 页级例外一起决定 units", () => {
   assert.equal(planPage(all, "f1", false).units.length, 0);
   assert.match(
     APP,
-    /plans: shown\.map\(\(s, i\) => planPage\(all, s\.id, ps\.reveal && pageReveal\[i\]\)\)/,
+    /plans: shown\.map\(\(s, i\) => planPage\(all, s\.id, ps\.reveal && pageReveal\[i\], ps\.autoEffects\)\)/,
     "全局逐条关或这一页 all 时，plan 不分条",
   );
 });
@@ -271,7 +280,8 @@ test("样式：设置气泡/开关/右栏编排都有类，且用 accent 不用�
     ".exs-present-switch",
     ".exs-present-inspector",
     ".exs-present-seg__btn",
-    ".exs-present-seq",
+    ".exs-present-pgroup",
+    ".exs-present-stepper",
     ".exs-present-close--on",
   ]) {
     assert.ok(CSS.includes(cls + " {") || CSS.includes(cls + ":"), `缺样式：${cls}`);

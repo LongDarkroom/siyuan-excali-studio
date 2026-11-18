@@ -17,7 +17,7 @@
 import { compareReadingOrder, PRESENTATION_KEY } from "./presentation-plan.ts";
 import type { DeckPatch } from "./presentation-plan.ts";
 import type { StepUnit } from "./presentation-run.ts";
-import { isDrawableElement } from "./presentation-draw.ts";
+import { isDrawableElement, isTraceableStroke } from "./presentation-draw.ts";
 
 /** 元素级元数据的命名空间，和片单共用一个 key（字段不同、互不覆盖）——单一真源，不许各写一份字面量 */
 export const MOTION_KEY = PRESENTATION_KEY;
@@ -49,8 +49,9 @@ export const EFFECTS: Record<EffectId, EffectSpec> = {
   pop: { id: "pop", ms: 340, cubic: [0.34, 1.56, 0.64, 1], dx: 0, dy: 24 },
   rise: { id: "rise", ms: 320, cubic: [0.22, 1, 0.36, 1], dx: 0, dy: 44 },
   slide: { id: "slide", ms: 260, cubic: [0.25, 1, 0.5, 1], dx: -36, dy: 0 },
-  // 划线不挪位置：进度只喂给「前沿推到哪」；760ms 比其余四档长，是手刷一下的真实感
-  draw: { id: "draw", ms: 760, cubic: [0.37, 0, 0.28, 1], dx: 0, dy: 0 },
+  // 划线不挪位置：进度只喂给「前沿推到哪 / 笔尖画到哪」；760ms 比其余四档长，是手刷一下的真实感。
+  // 第九十轮：曲线从对称的 ease-in-out 改成「起步轻、长收尾」，笔画末端滑进去，观感更丝滑。
+  draw: { id: "draw", ms: 760, cubic: [0.3, 0.02, 0.14, 1], dx: 0, dy: 0 },
 };
 
 export const EFFECT_IDS: readonly EffectId[] = ["fade", "pop", "rise", "slide", "draw"];
@@ -178,17 +179,50 @@ export function explicitEffect(e: MotionElementLike): EffectId | null {
 
 const TYPE_FALLBACK: Record<string, EffectId> = {
   text: "fade",
-  arrow: "slide",
-  line: "slide",
+  // 第九十轮：箭头/连线默认「画出来」，不是滑进来——这是演示里最像手写的一档
+  arrow: "draw",
+  line: "draw",
+  // 矩形/圆/菱形默认「划线」：前沿从一侧扫过去，像荧光笔在纸上划开
+  rectangle: "draw",
+  ellipse: "draw",
+  diamond: "draw",
   image: "rise",
 };
 
 /**
- * 没显式选档时的默认：文本浮现、箭头/连线从左边滑进来、图片升起、其余形状弹入。
- * 这是「画完就能放」的口径——用户什么都不调也是成套的动作，而不是齐刷刷硬切。
+ * 第九十一轮：哪些类型允许用户改「自动档」的默认效果。
+ * 与 TYPE_NAMES 同集合——名字都在抽屉里露过面，用户知道自己在调什么。
+ * 没列进来的类型（嵌入块之类）继续吃兜底 pop，也不给设置项。
  */
-export function defaultEffect(type?: string): EffectId {
-  if (type && TYPE_FALLBACK[type]) return TYPE_FALLBACK[type];
+export const AUTO_FX_TYPES = [
+  "text",
+  "rectangle",
+  "ellipse",
+  "diamond",
+  "arrow",
+  "line",
+  "freedraw",
+  "image",
+  "frame",
+] as const;
+
+export type AutoFxOverrides = Readonly<Record<string, EffectId>>;
+
+export function isAutoFxType(v: unknown): boolean {
+  return typeof v === "string" && (AUTO_FX_TYPES as readonly string[]).includes(v);
+}
+
+/**
+ * 没显式选档时的默认：文本浮现、图形/箭头划线、图片升起、其余（画笔/画框）弹入。
+ * 这是「画完就能放」的口径——用户什么都不调也是成套的动作，而不是齐刷刷硬切。
+ * 第二参是用户按类型改过的默认（PresentationSettings.autoEffects），只覆盖这里，别处不管。
+ */
+export function defaultEffect(type?: string, overrides?: AutoFxOverrides): EffectId {
+  if (type) {
+    const hit = overrides?.[type];
+    if (isEffectId(hit)) return hit;
+    if (TYPE_FALLBACK[type]) return TYPE_FALLBACK[type];
+  }
   return "pop";
 }
 
@@ -212,14 +246,18 @@ function leadOf(ids: readonly string[], byId: Map<string, MotionElementLike>): M
 }
 
 /** 一条的效果：先看有没有人显式选过（按 ids 顺序，第一个说话），否则按带头元素的类型给 */
-export function resolveEffect(ids: readonly string[], all: readonly MotionElementLike[]): { effect: EffectId; auto: boolean } {
+export function resolveEffect(
+  ids: readonly string[],
+  all: readonly MotionElementLike[],
+  overrides?: AutoFxOverrides,
+): { effect: EffectId; auto: boolean } {
   const byId = byIdOf(all);
   for (const id of ids) {
     const e = byId.get(id);
     const hit = e ? explicitEffect(e) : null;
     if (hit) return { effect: hit, auto: false };
   }
-  return { effect: defaultEffect(leadOf(ids, byId)?.type), auto: true };
+  return { effect: defaultEffect(leadOf(ids, byId)?.type, overrides), auto: true };
 }
 
 export function effectOfUnit(ids: readonly string[], all: readonly MotionElementLike[]): EffectId {
@@ -255,6 +293,60 @@ function unionBox(list: readonly MotionElementLike[]): { id: string; x: number; 
 /** 场景坐标下的包围盒（一条里所有元素的外接框，含跟容器的绑定文字） */
 export type UnitBox = { x: number; y: number; w: number; h: number };
 
+/** 场景坐标下的一个落点：编号徽标钉在这里 */
+export type UnitAnchor = { x: number; y: number };
+
+/** 折线（箭头/连线）按弧长取中点：徽标要落在笔画上，而不是外接框的空角落 */
+function polylineMid(e: MotionElementLike): UnitAnchor | null {
+  const pts = e.points;
+  if (!pts || pts.length < 2) return null;
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) {
+    total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  }
+  if (!(total > 0)) return null;
+  let left = total / 2;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const seg = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (seg > 0 && left <= seg) {
+      const t = left / seg;
+      return { x: e.x + a[0] + (b[0] - a[0]) * t, y: e.y + a[1] + (b[1] - a[1]) * t };
+    }
+    left -= seg;
+  }
+  const last = pts[pts.length - 1];
+  return { x: e.x + last[0], y: e.y + last[1] };
+}
+
+/**
+ * 徽标锚点：箭头/连线取自己折线的弧长中点（三条从同一点分叉的箭头才不会叠在一起），
+ * 其余取包围盒左上角往里缩一点（和原热区徽标的位置一致）。
+ */
+export function anchorOfUnit(ids: readonly string[], byId: Map<string, MotionElementLike>): UnitAnchor {
+  for (const id of ids) {
+    const e = byId.get(id);
+    if (!e) continue;
+    if ((e.type === "arrow" || e.type === "line") && e.points && e.points.length >= 2) {
+      const mid = polylineMid(e);
+      if (mid) return mid;
+    }
+  }
+  const b = boxOfIds(ids, byId);
+  return { x: b.x + Math.min(10, b.w / 2), y: b.y + Math.min(10, b.h / 2) };
+}
+
+/** 箭头/连线的折线（场景坐标）：预览里拿它做线状可点区域，外接框只留给非线状元素 */
+function wireOfUnit(ids: readonly string[], byId: Map<string, MotionElementLike>): UnitAnchor[] | null {
+  for (const id of ids) {
+    const e = byId.get(id);
+    if (!e || (e.type !== "arrow" && e.type !== "line") || !e.points || e.points.length < 2) continue;
+    return e.points.map((p) => ({ x: e.x + p[0], y: e.y + p[1] }));
+  }
+  return null;
+}
+
 /** 抽屉的行：一条 = 页内一个可编排单元（还没按步号合并），带着自己的效果与步号 */
 export type MotionRow = {
   key: string;
@@ -268,8 +360,19 @@ export type MotionRow = {
   step: number | null;
   /** 场景坐标包围盒：本页预览上画热区用（和 revealUnits 的分组口径同源） */
   box: UnitBox;
+  /** 编号徽标的落点（箭头落在笔画中点，其余落在框内左上） */
+  anchor: UnitAnchor;
+  /** 箭头/连线：预览里默认不描整块虚框（折线外接框是空地方，会误导） */
+  linear: boolean;
+  /** 折线的场景坐标（只有箭头/连线有）：预览里按这条线做可点区域 */
+  wire: UnitAnchor[] | null;
   /** 这一条里有没有能「划线」的填充折线（没有就不在菜单里给这一档） */
   drawable: boolean;
+  /**
+   * 带头元素的类型（vendor 的 type 字面量，认不出就是空串）。
+   * 抽屉的「以后这类默认」按它写设置；绑定文字不算带头，所以整条跟容器走。
+   */
+  kind: string;
 };
 
 /** 行标题：有文字就取文字，否则取类型中文名；截断交给 CSS，这里只给单行 */
@@ -321,10 +424,14 @@ function boxOfIds(ids: readonly string[], byId: Map<string, MotionElementLike>):
  * 分条 + 标上效果/步号（抽屉用这份）。输入是 revealUnits 的结果——
  * 分组口径（同组一起、绑定文字跟容器）只在 run 里算一次，这里只贴元数据。
  */
-export function motionRows(all: readonly MotionElementLike[], units: readonly StepUnit[]): MotionRow[] {
+export function motionRows(
+  all: readonly MotionElementLike[],
+  units: readonly StepUnit[],
+  overrides?: AutoFxOverrides,
+): MotionRow[] {
   const byId = byIdOf(all);
   return units.map((u) => {
-    const fx = resolveEffect(u.ids, all);
+    const fx = resolveEffect(u.ids, all, overrides);
     return {
       key: u.key,
       ids: u.ids,
@@ -333,9 +440,16 @@ export function motionRows(all: readonly MotionElementLike[], units: readonly St
       auto: fx.auto,
       step: stepOfUnit(u.ids, all),
       box: boxOfIds(u.ids, byId),
+      anchor: anchorOfUnit(u.ids, byId),
+      kind: leadOf(u.ids, byId)?.type ?? "",
+      linear: u.ids.some((id) => {
+        const e = byId.get(id);
+        return e?.type === "arrow" || e?.type === "line";
+      }),
+      wire: wireOfUnit(u.ids, byId),
       drawable: u.ids.some((id) => {
         const e = byId.get(id);
-        return !!e && isDrawableElement(e);
+        return !!e && (isDrawableElement(e) || isTraceableStroke(e));
       }),
     };
   });
@@ -485,24 +599,99 @@ export function motionGroups(
 }
 
 /**
- * 抽屉「出场顺序」预览的分组：与 mergeByStep 同口径——
- * 编过步的按步号升序，没编的合成一组排最后（组内仍是阅读顺序）。
- * together=true（整页）时只有一组，顺序与步号都不生效。
+ * 抽屉「出场顺序」的一组 = 放映时的一次按键。
+ * 口径与 mergeByStep 完全一致：编过步的按步号升序在前，未编步的每条按阅读顺序
+ * 各自成一组排最后。**两边同序同长**，所以 playIndex 就是放映游标 step + 1。
  */
-export type SequenceGroup = { key: string; step: number | null; labels: string[]; together?: boolean };
+export type OrderGroup = {
+  /** React key：`s:<步号>` / `auto:<行 key>`；整页模式为 `all` */
+  key: string;
+  /** 显式步号；null = 未编步（自动排在编过的之后） */
+  step: number | null;
+  /** 未编步、跟着阅读顺序走 */
+  auto: boolean;
+  /** 1 起的播放步号：画布徽标、步进条、「从这一步播放」都用它 */
+  playIndex: number;
+  rows: MotionRow[];
+};
 
-export function sequenceGroups(rows: readonly MotionRow[], together: boolean): SequenceGroup[] {
+/** 组序就是播放序：换位/合并后必须重算，别带着旧步号出走（不改入参） */
+function withPlayIndex(groups: readonly OrderGroup[]): OrderGroup[] {
+  return groups.map((g, i) => ({ ...g, playIndex: i + 1 }));
+}
+
+export function orderedGroups(rows: readonly MotionRow[], together: boolean): OrderGroup[] {
   if (rows.length === 0) return [];
-  if (together) return [{ key: "all", step: null, labels: [], together: true }];
+  if (together) return [{ key: "all", step: null, auto: true, playIndex: 1, rows: [...rows] }];
   const steps = [...new Set(rows.flatMap((r) => (r.step === null ? [] : [r.step])))].sort((a, b) => a - b);
-  const groups: SequenceGroup[] = steps.map((step) => ({
+  const groups: OrderGroup[] = steps.map((step) => ({
     key: `s:${step}`,
     step,
-    labels: rows.filter((r) => r.step === step).map((r) => r.label),
+    auto: false,
+    playIndex: 0,
+    rows: rows.filter((r) => r.step === step),
   }));
-  const loose = rows.filter((r) => r.step === null).map((r) => r.label);
-  if (loose.length > 0) groups.push({ key: "auto", step: null, labels: loose });
-  return groups;
+  for (const r of rows) {
+    if (r.step === null) groups.push({ key: `auto:${r.key}`, step: null, auto: true, playIndex: 0, rows: [r] });
+  }
+  return withPlayIndex(groups);
+}
+
+/** 每行 → 播放步号（画布徽标、未出场压暗用） */
+export function playIndexOf(groups: readonly OrderGroup[]): Map<string, number> {
+  const out = new Map<string, number>();
+  groups.forEach((g, i) => {
+    for (const r of g.rows) out.set(r.key, i + 1);
+  });
+  return out;
+}
+
+/** 拖拽 / ↑↓ 换位；越界或原位原样返回（调用方拿长度/同一性判断「没发生」） */
+export function moveOrderGroup(groups: readonly OrderGroup[], from: number, to: number): OrderGroup[] {
+  if (from === to || from < 0 || to < 0 || from >= groups.length || to >= groups.length) return [...groups];
+  const list = [...groups];
+  const [g] = list.splice(from, 1);
+  list.splice(to, 0, g);
+  return withPlayIndex(list);
+}
+
+/** 并入上一步：两组的行进同一次按键；第一组没有上一步，原样返回 */
+export function mergeOrderGroup(groups: readonly OrderGroup[], index: number): OrderGroup[] {
+  if (index <= 0 || index >= groups.length) return [...groups];
+  const list = [...groups];
+  const up = list[index - 1];
+  const cur = list[index];
+  list[index - 1] = { ...up, auto: up.auto && cur.auto, rows: [...up.rows, ...cur.rows] };
+  list.splice(index, 1);
+  return withPlayIndex(list);
+}
+
+/**
+ * 「拆」：把一组的每条拆回各自一步，位置不变。
+ * 合并过的组优先按快照还原（调用方自己管快照），这里只兜底「本来就是一组的几条」。
+ * 只有一条的组原样返回，调用方拿长度/同一性判断「没发生」。
+ */
+export function splitOrderGroup(groups: readonly OrderGroup[], index: number): OrderGroup[] {
+  const g = groups[index];
+  if (!g || g.rows.length <= 1) return [...groups];
+  const parts: OrderGroup[] = g.rows.map((r, i) => ({
+    key: `split:${g.key}:${i}`,
+    step: null,
+    auto: r.step === null,
+    playIndex: 0,
+    rows: [r],
+  }));
+  return withPlayIndex([...groups.slice(0, index), ...parts, ...groups.slice(index + 1)]);
+}
+
+/**
+ * 顺序定稿：按现在的组序写死 1..n 步（含原本未编步的），一次提交、一个撤销点。
+ * 顺序没动时写出来的值和原值相同，宿主那一层的「同值不写」会把它吃掉。
+ */
+export type OrderEdit = { ids: string[]; step: number };
+
+export function orderEdits(groups: readonly OrderGroup[]): OrderEdit[] {
+  return groups.map((g, i) => ({ ids: g.rows.flatMap((r) => [...r.ids]), step: i + 1 }));
 }
 
 /** 整场动画还要跑多久（最后一组的错峰 + 它自己的时长） */

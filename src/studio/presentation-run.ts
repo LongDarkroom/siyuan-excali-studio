@@ -15,7 +15,7 @@
  */
 
 import { compareReadingOrder } from "./presentation-plan.ts";
-import { mergeByStep, motionRows, type MotionElementLike, type MotionRow } from "./presentation-motion.ts";
+import { mergeByStep, motionRows, type AutoFxOverrides, type MotionElementLike, type MotionRow } from "./presentation-motion.ts";
 
 export const OPACITY_DEFAULT = 100;
 
@@ -130,8 +130,12 @@ export function revealUnits(all: readonly RunElement[], frameId: string): StepUn
  * 编排视图：页内每一条「谁、什么效果、第几步出」——抽屉用它。
  * 分组口径全部来自 revealUnits（同组一起、绑定文字跟容器），这里只贴元数据。
  */
-export function pageRows(all: readonly RunElement[], frameId: string): MotionRow[] {
-  return motionRows(all as readonly MotionElementLike[], revealUnits(all, frameId));
+export function pageRows(
+  all: readonly RunElement[],
+  frameId: string,
+  autoEffects?: AutoFxOverrides,
+): MotionRow[] {
+  return motionRows(all as readonly MotionElementLike[], revealUnits(all, frameId), autoEffects);
 }
 
 /**
@@ -140,12 +144,17 @@ export function pageRows(all: readonly RunElement[], frameId: string): MotionRow
  * 游标 step 恒为 -1，整页元素同时出场。
  * 分条建好后过一道 mergeByStep：标了同步号的那些**合成一次按键**（动画里再错峰）。
  */
-export function planPage(all: readonly RunElement[], frameId: string, reveal = true): RunPlan {
+export function planPage(
+  all: readonly RunElement[],
+  frameId: string,
+  reveal = true,
+  autoEffects?: AutoFxOverrides,
+): RunPlan {
   const frame = all.find((e) => e.id === frameId && e.type === "frame" && alive(e));
   return {
     frameId,
     box: frame ? { x: frame.x, y: frame.y, w: frame.width ?? 0, h: frame.height ?? 0 } : { x: 0, y: 0, w: 0, h: 0 },
-    units: reveal ? mergeByStep(pageRows(all, frameId)) : [],
+    units: reveal ? mergeByStep(pageRows(all, frameId, autoEffects)) : [],
     memberIds: pageMembers(all, frameId).map((e) => e.id),
   };
 }

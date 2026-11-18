@@ -26,11 +26,21 @@ import {
   EFFECT_IDS,
   EFFECT_LABELS,
   STEP_MAX,
+  defaultEffect,
+  isAutoFxType,
+  mergeOrderGroup,
+  moveOrderGroup,
+  orderEdits,
+  orderedGroups,
+  playIndexOf,
   rowHotspots,
-  sequenceGroups,
+  splitOrderGroup,
+  typeNameOf,
   type EffectId,
   type MotionEdit,
   type MotionRow,
+  type OrderEdit,
+  type OrderGroup,
 } from "./presentation-motion.ts";
 import type { GraphState } from "./presentation-graph.ts";
 import { readPresentUi, writePresentUi, type PresentView } from "./presentation-ui";
@@ -45,6 +55,9 @@ const ICON_EYE =
 /** 斜线（排除页的眼睛上叠一道） */
 const ICON_SLASH = "M4,20L20,4";
 
+/** 组的行集合签名（与顺序无关）：合并后用来认「这一组是不是刚合出来的」 */
+const groupSignature = (g: OrderGroup): string => g.rows.map((r) => r.key).sort().join("|");
+
 /** 设置：推子 */
 const ICON_SLIDERS = "M4,7h8M17,7h3M4,12h3M11,12h9M4,17h8M17,17h3";
 
@@ -53,12 +66,12 @@ const FX_DESC: Record<EffectId, string> = {
   fade: "淡入并微微上移，最克制。",
   pop: "带一点过冲再定住，最醒目。",
   rise: "从下方升上来，位移更大。",
-  slide: "从左滑入，适合箭头和连线。",
-  draw: "顺着它自己的形状擦出来，适合高亮、笔刷这类填充图形。",
+  slide: "从左滑入，适合整块内容。",
+  draw: "顺着它自己的形状画出来，适合图形、高亮、笔刷和箭头连线。",
 };
 
 /** 「自动」的说明：没选过档时按元素类型给，用户不用逐条挑也不齐刷刷硬切 */
-const AUTO_DESC = "跟着元素类型走：文本浮现、图形弹入、图片升起、箭头滑入。";
+const AUTO_DESC = "跟着元素类型走：文本浮现、图形划线、图片升起、箭头画出。";
 
 /** 拖动把手：两列小圆点（strokeLinecap=round 时零长线段就是圆点） */
 const ICON_GRIP = "M9,7h.01M15,7h.01M9,12h.01M15,12h.01M9,17h.01M15,17h.01";
@@ -191,15 +204,21 @@ export function PresentationDrawer(props: {
   rows: MotionRow[];
   /** 改一条的效果/步号 → 宿主写元素 customData（可撤销、会标脏） */
   onRowMotion: (ids: readonly string[], edit: MotionEdit) => void;
+  /**
+   * 第九十轮：整页顺序换了（拖拽/↑↓/并入上一步/固定顺序）→ 宿主一次写死 1..n 步。
+   * 必须一次提交：一次重排只该是一个撤销点。
+   */
+  onReorder: (edits: OrderEdit[]) => void;
   /** 第八十轮：双击页名改画框名（宿主写场景，抽屉自己不碰） */
   onRename: (id: string, name: string) => void;
   /** 点「开始演示」→ 放映控制器接管 */
   onStart: () => void;
   /**
    * 第八十七轮：页卡播放键 → 从这一页开始放映（传画框 id）。
+   * 第九十轮：带 step（1 起）时从这一页的第几步起播，「从这一步播放」用它。
    * 页单里的「看这一页」只开镜头；这枚才进片场，两者别混。
    */
-  onStartAt: (id: string) => void;
+  onStartAt: (id: string, step?: number) => void;
   onClose: () => void;
 }) {
   const { slides } = props.deck;
@@ -240,10 +259,45 @@ export function PresentationDrawer(props: {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   /** 悬浮联动：不算重状态，只在两边加高亮类 */
   const [hoverKey, setHoverKey] = useState<string | null>(null);
+  /**
+   * 第九十轮：播放步号游标。null = 看全部；N = 停在第 N 步，
+   * 之后才出场的行与热区虚化，用来「预览到这一步」。
+   */
+  const [stepPos, setStepPos] = useState<number | null>(null);
+  /** 顺序列表拖拽：从哪一组、悬在哪一组上（只做落点提示，不写状态） */
+  const [orderDrag, setOrderDrag] = useState<{ from: number; over: number } | null>(null);
+  /**
+   * 「合」可逆：每合一次压一份合并前的组表，组头的「拆」按快照还原；
+   * 其它重排（拖动/↑↓/固定顺序）会把步号整体重写，旧快照就不作数了，一并清掉。
+   */
+  const [mergeStack, setMergeStack] = useState<{ after: string; before: OrderGroup[] }[]>([]);
+  const [mergeToast, setMergeToast] = useState<{ before: OrderGroup[]; text: string } | null>(null);
+  const mergeToastTimerRef = useRef(0);
+  const clearMergeHistory = (): void => {
+    window.clearTimeout(mergeToastTimerRef.current);
+    setMergeStack([]);
+    setMergeToast(null);
+  };
+  useEffect(() => () => window.clearTimeout(mergeToastTimerRef.current), []);
+  /**
+   * 画面徽标拖拽：编号就是把手。只做**预览**（列表与画面同步变号），
+   * 松手才走一次 onReorder——和右栏拖组一样，一次重排一个撤销点。
+   */
+  const [badgeDrag, setBadgeDrag] = useState<{ key: string; x: number; y: number; over: string | null; before: boolean } | null>(null);
+  const badgeDragRef = useRef<{ key: string; startX: number; startY: number; active: boolean; over: string | null; before: boolean } | null>(null);
+  /** 浮影跟手走 DOM 样式，不逐帧 setState（列表整棵重渲染会抖） */
+  const badgeGhostRef = useRef<HTMLSpanElement | null>(null);
+  /** 落定闪一下的那一条（只做视觉） */
+  const [settleKey, setSettleKey] = useState<string | null>(null);
   /** 效果菜单：挂在抽屉根上（行列表会滚，菜单不能跟着被裁） */
   const [fxMenu, setFxMenu] = useState<{ row: MotionRow; x: number; y: number } | null>(null);
   /** 悬浮提示（人话说明），同样挂根上，避免被滚动容器裁掉 */
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
+  /** 画布说明卡的延迟计时：手没停稳就取消，别划一下糊一张卡 */
+  const tipTimerRef = useRef(0);
+  /** 计时期间鼠标的位置：计时到了卡片就落在手停稳的地方 */
+  const tipAimRef = useRef({ x: 0, y: 0 });
+  useEffect(() => () => window.clearTimeout(tipTimerRef.current), []);
   const [infoOpen, setInfoOpen] = useState(false);
   const infoHostRef = useRef<HTMLDivElement | null>(null);
   usePopoverDismiss(infoOpen, () => setInfoOpen(false), infoHostRef);
@@ -560,7 +614,98 @@ export function PresentationDrawer(props: {
   const together = selSlide?.reveal === "all";
   /** 空白页 / 没内容：画面与底注都不摆「点元素」的指引，免得用户对着空地找编号 */
   const stageEmpty = !selSlide || selSlide.blank || props.rows.length === 0;
-  const seq = sequenceGroups(props.rows, together);
+  /**
+   * 第九十轮：右栏就是「按播放顺序的一组组」。
+   * 组 = 一次按键，口径与放映的 mergeByStep 同序同长，playIndex 直接就是放映游标 + 1。
+   */
+  const baseGroups = orderedGroups(props.rows, together);
+  /**
+   * 画面徽标拖动中的预览顺序：把「被拖徽标所在的组」挪到目标组的前/后。
+   * 只活在本地，松手才 commitOrder；组内多条同号，拖一条等于挪整组（和右栏一致）。
+   */
+  const groups = (() => {
+    if (!badgeDrag || !badgeDrag.over || together) return baseGroups;
+    const from = baseGroups.findIndex((g) => g.rows.some((r) => r.key === badgeDrag.key));
+    const ti = baseGroups.findIndex((g) => g.rows.some((r) => r.key === badgeDrag.over));
+    if (from < 0 || ti < 0 || ti === from) return baseGroups;
+    let to = badgeDrag.before ? ti : ti + 1;
+    if (to > from) to -= 1;
+    if (to === from) return baseGroups;
+    return moveOrderGroup(baseGroups, from, to);
+  })();
+  const playOf = playIndexOf(groups);
+  const basePlayOf = playIndexOf(baseGroups);
+  /** 拖徽标时浮签上的落点步号（预览顺序里的位置） */
+  const badgeDropNo = badgeDrag ? groups.findIndex((g) => g.rows.some((r) => r.key === badgeDrag.key)) + 1 : 0;
+  /**
+   * 徽标号：逐条模式 = 播放步号；整页模式没有「第几步」，退回阅读序 1..n，
+   * 免得所有元素都顶着同一个「1」。
+   */
+  const badgeOf = (key: string): number =>
+    together ? props.rows.findIndex((r) => r.key === key) + 1 : (playOf.get(key) ?? 0);
+  /** 游标夹在有效范围：改完顺序后步数可能变少 */
+  const curStep = stepPos === null ? null : Math.max(1, Math.min(stepPos, groups.length));
+  /** 换页 / 切整页：旧的步号游标与合并快照没有意义，回到「看全部」 */
+  useEffect(() => {
+    setStepPos(null);
+    window.clearTimeout(mergeToastTimerRef.current);
+    setMergeStack([]);
+    setMergeToast(null);
+  }, [props.selected, together]);
+
+  /** 一次重排 = 一次写入（一个撤销点）；顺序没动时宿主那层的同值跳过会吃掉 */
+  const commitOrder = (next: OrderGroup[]): void => {
+    if (next.length === 0) return;
+    props.onReorder(orderEdits(next));
+  };
+  const shiftGroup = (index: number, delta: number): void => {
+    if (together) return;
+    const at = index + delta;
+    if (at < 0 || at >= groups.length) return;
+    clearMergeHistory();
+    commitOrder(moveOrderGroup(groups, index, at));
+  };
+  const mergeUp = (index: number): void => {
+    if (together || index <= 0) return;
+    const next = mergeOrderGroup(groups, index);
+    const merged = next[index - 1];
+    setMergeStack((s) => [...s, { after: groupSignature(merged), before: groups }]);
+    setMergeToast({
+      before: groups,
+      text: t("已把第 {n} 步并入第 {m} 步", {
+        n: groups[index]?.playIndex ?? index + 1,
+        m: groups[index - 1]?.playIndex ?? index,
+      }),
+    });
+    window.clearTimeout(mergeToastTimerRef.current);
+    mergeToastTimerRef.current = window.setTimeout(() => setMergeToast(null), 6000);
+    commitOrder(next);
+  };
+  /** 撤销最近一次「合」：回到合之前的那张组表 */
+  const undoMerge = (): void => {
+    if (!mergeToast) return;
+    const before = mergeToast.before;
+    window.clearTimeout(mergeToastTimerRef.current);
+    setMergeToast(null);
+    setMergeStack((s) => s.slice(0, -1));
+    commitOrder(before);
+  };
+  /** 「拆」：合并出来的组按快照还原；本来就在一组的几条拆成各自一步 */
+  const splitGroup = (index: number): void => {
+    const g = groups[index];
+    if (together || !g || g.rows.length <= 1) return;
+    window.clearTimeout(mergeToastTimerRef.current);
+    setMergeToast(null);
+    const at = mergeStack.map((m) => m.after).lastIndexOf(groupSignature(g));
+    if (at >= 0) {
+      const before = mergeStack[at].before;
+      setMergeStack((s) => s.slice(0, at));
+      commitOrder(before);
+      return;
+    }
+    setMergeStack([]);
+    commitOrder(splitOrderGroup(groups, index));
+  };
   /** 分段开关只在该翻面时写一次：点当前这一档不该多一个撤销点 */
   const setReveal = (all: boolean): void => {
     if (!selSlide || (selSlide.reveal === "all") === all) return;
@@ -581,6 +726,7 @@ export function PresentationDrawer(props: {
   /** 选中一条：点画面热区时把右栏滚到这一行；点行本身不滚 */
   const selectRow = (key: string): void => {
     setActiveKey(key);
+    hideTip();
     window.requestAnimationFrame(() => {
       const root = rootRef.current;
       const sc = root?.querySelector<HTMLElement>(".exs-present-inspector__rows");
@@ -598,17 +744,41 @@ export function PresentationDrawer(props: {
 
   /** 提示坐标相对抽屉（抽屉有 backdrop-filter，fixed 在这层里不可靠） */
   const showTip = (e: React.MouseEvent, text: string): void => {
+    window.clearTimeout(tipTimerRef.current);
     const root = rootRef.current;
     if (!root) return;
     const rr = root.getBoundingClientRect();
     setTip({ text, x: e.clientX - rr.left, y: e.clientY - rr.top - 12 });
   };
-  const hideTip = (): void => setTip(null);
+  /**
+   * 画布上的说明卡会挡住板面：手停稳一会儿再弹，扫过去不弹。
+   * 停在热区里移动也不追鼠标——卡片只在入场点落下，读的时候不晃。
+   */
+  const showTipSoon = (e: React.MouseEvent, text: string): void => {
+    window.clearTimeout(tipTimerRef.current);
+    const root = rootRef.current;
+    if (!root) return;
+    tipAimRef.current = { x: e.clientX, y: e.clientY };
+    tipTimerRef.current = window.setTimeout(() => {
+      const rr = root.getBoundingClientRect();
+      const aim = tipAimRef.current;
+      setTip({ text, x: aim.x - rr.left, y: aim.y - rr.top - 12 });
+    }, 650);
+  };
+  /** 计时未到之前跟着鼠标走：卡片落在手停稳的地方，不落在刚划进来那一点 */
+  const trackTip = (e: React.MouseEvent): void => {
+    if (tipTimerRef.current) tipAimRef.current = { x: e.clientX, y: e.clientY };
+  };
+  const hideTip = (): void => {
+    window.clearTimeout(tipTimerRef.current);
+    setTip(null);
+  };
 
   /** 一条的悬浮说明：名字 + 实际效果 + 这一步是自动还是手选 */
   const tipForRow = (r: MotionRow): string => {
     const fx = r.auto ? `${t("自动")} · ${t(EFFECT_LABELS[r.effect])}` : t(EFFECT_LABELS[r.effect]);
-    const step = r.step === null ? "" : ` · ${t("第 {n} 步", { n: r.step })}`;
+    const n = playOf.get(r.key) ?? r.step;
+    const step = n == null ? "" : ` · ${t("第 {n} 步", { n })}`;
     return `${t(r.label)}\n${fx}${step}\n${t(r.auto ? AUTO_DESC : FX_DESC[r.effect])}`;
   };
 
@@ -617,7 +787,7 @@ export function PresentationDrawer(props: {
     if (!root || together) return;
     const rr = root.getBoundingClientRect();
     setActiveKey(r.key);
-    setTip(null);
+    hideTip();
     setFxMenu({ row: r, x: clientX - rr.left, y: clientY - rr.top });
   };
   const openFxMenuAtButton = (r: MotionRow, btn: HTMLElement): void => {
@@ -627,17 +797,145 @@ export function PresentationDrawer(props: {
   const applyFx = (effect: EffectId | null): void => {
     const cur = fxMenu;
     if (!cur) return;
+    // 菜单开着时行数据会随设置重算，按 key 取最新那份——同值判断别拿开菜单那一刻的旧值
+    const row = props.rows.find((r) => r.key === cur.row.key) ?? cur.row;
     setFxMenu(null);
     // 同值不写：一次写入就是一个撤销点（口径同步号）
-    if (effect === null ? cur.row.auto : !cur.row.auto && cur.row.effect === effect) return;
-    props.onRowMotion(cur.row.ids, { effect });
+    if (effect === null ? row.auto : !row.auto && row.effect === effect) return;
+    props.onRowMotion(row.ids, { effect });
+  };
+  /**
+   * 第九十一轮：「以后这类默认」——写进放映偏好的按类型覆盖表。
+   * null 或选回内置值 = 删掉覆盖项；只动设置，不改元素元数据（自动档的行会立刻按新默认显示）。
+   */
+  const setTypeDefault = (kind: string, effect: EffectId | null): void => {
+    const cur = props.settings.autoEffects;
+    const next: Record<string, EffectId> = { ...cur };
+    const now = effect === null || effect === defaultEffect(kind) ? null : effect;
+    if (now === (cur[kind] ?? null)) return;
+    if (now) next[kind] = now;
+    else delete next[kind];
+    props.onSetting("autoEffects", next);
+  };
+
+  /**
+   * 画面徽标 = 顺序把手：按住拖到别的编号上，左/上半个 = 插到它前面，右/下半个 = 插到它后面。
+   * 拖动中只改本地预览（列表与画面一起变号），松手才写一次 onReorder。
+   * 没拖动就松手 = 选中那一条（和点热区同效）。
+   */
+  const beginBadgeDrag = (e: React.PointerEvent<HTMLElement>, key: string): void => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (together) {
+      selectRow(key);
+      return;
+    }
+    const root = rootRef.current;
+    const cur = { key, startX: e.clientX, startY: e.clientY, active: false, over: null as string | null, before: true };
+    badgeDragRef.current = cur;
+
+    const groupOf = (k: string): number => baseGroups.findIndex((g) => g.rows.some((r) => r.key === k));
+    const from = groupOf(key);
+
+    /** 离指针最近、且不属于本组的徽标 = 落点；同组不放回自己身上 */
+    const nearest = (x: number, y: number): { key: string; before: boolean } | null => {
+      let best: HTMLElement | null = null;
+      let bestD = 44;
+      root?.querySelectorAll<HTMLElement>("[data-badgekey]").forEach((el) => {
+        const k = el.dataset.badgekey ?? "";
+        if (!k || groupOf(k) === from) return;
+        const r = el.getBoundingClientRect();
+        const d = Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2));
+        if (d < bestD) {
+          bestD = d;
+          best = el;
+        }
+      });
+      if (!best) return null;
+      const r = (best as HTMLElement).getBoundingClientRect();
+      const dx = x - (r.left + r.width / 2);
+      const dy = y - (r.top + r.height / 2);
+      // 以指针相对目标中心的「主轴」决定前后：左/上 → 前，右/下 → 后
+      return { key: (best as HTMLElement).dataset.badgekey ?? "", before: Math.abs(dx) > Math.abs(dy) ? dx < 0 : dy < 0 };
+    };
+
+    const onMove = (ev: PointerEvent): void => {
+      const c = badgeDragRef.current;
+      if (!c) return;
+      if (!c.active) {
+        // 4px 起步阈值：单纯点一下徽标只算选中
+        if (Math.hypot(ev.clientX - c.startX, ev.clientY - c.startY) < 4) return;
+        c.active = true;
+        hideTip();
+        const rr0 = root?.getBoundingClientRect();
+        setBadgeDrag({ key, x: ev.clientX - (rr0?.left ?? 0), y: ev.clientY - (rr0?.top ?? 0), over: null, before: true });
+      }
+      const rr = root?.getBoundingClientRect();
+      const x = ev.clientX - (rr?.left ?? 0);
+      const y = ev.clientY - (rr?.top ?? 0);
+      if (badgeGhostRef.current) {
+        badgeGhostRef.current.style.left = `${x}px`;
+        badgeGhostRef.current.style.top = `${y}px`;
+      }
+      const hit = nearest(ev.clientX, ev.clientY);
+      const over = hit?.key ?? null;
+      const before = hit?.before ?? true;
+      if (over === c.over && before === c.before) {
+        return;
+      }
+      c.over = over;
+      c.before = before;
+      setBadgeDrag({ key, x, y, over, before });
+    };
+
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== "Escape") return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      finish(false);
+    };
+
+    const finish = (commit: boolean): void => {
+      const c = badgeDragRef.current;
+      badgeDragRef.current = null;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("keydown", onKey, true);
+      setBadgeDrag(null);
+      if (!c) return;
+      if (!c.active) {
+        selectRow(key);
+        return;
+      }
+      if (!commit || !c.over) return;
+      const ti = groupOf(c.over);
+      if (from < 0 || ti < 0 || ti === from) return;
+      let to = c.before ? ti : ti + 1;
+      if (to > from) to -= 1;
+      if (to === from) return;
+      clearMergeHistory();
+      commitOrder(moveOrderGroup(baseGroups, from, to));
+      setSettleKey(key);
+      window.setTimeout(() => setSettleKey((k) => (k === key ? null : k)), 520);
+    };
+    const onUp = (): void => finish(true);
+    const onCancel = (): void => finish(false);
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("keydown", onKey, true);
   };
 
   const spots = selSlide
     ? rowHotspots(props.rows, { x: selSlide.x, y: selSlide.y, w: selSlide.w, h: selSlide.h })
     : [];
-  /** 热区徽标号 = 这一条在右栏列表里的序号（不在框内的条没有热区，但序号仍连续） */
-  const rowNo = new Map(props.rows.map((r, i) => [r.key, i + 1]));
+  /**
+   * 热区徽标号 = 播放步号（同一步的几条同号）——画面上的号就是「第几次按键」，
+   * 和右栏组头的「第 N 步」逐字对上。不在框内的条没有热区，但编号仍连续。
+   */
   const rowOf = (key: string): MotionRow | undefined => props.rows.find((r) => r.key === key);
   const stageUrl = selSlide ? props.stageThumbs[selSlide.id] || props.thumbs[selSlide.id] || "" : "";
   /** 画布按画框比例 contain 进可用区域；还没量到尺寸时先给个 16:9 的近似 */
@@ -648,12 +946,75 @@ export function PresentationDrawer(props: {
   const stageW = fit > 0 ? Math.max(1, Math.floor(fw * fit)) : 480;
   const stageH = fit > 0 ? Math.max(1, Math.floor(fh * fit)) : fw > 0 ? Math.round((480 * fh) / fw) : 270;
   const menuW = 232;
-  // 六项（自动 + 五档效果）实测约 310；给到 312 是为了贴底下沿时整块还能露出来
-  const menuH = 312;
+  // 六项（自动 + 五档效果）+ 底部「以后这类默认」实测约 370；给到 384 是贴底时整块还能露出来
+  const menuH = 384;
   const rootW = rootRef.current?.clientWidth ?? 1180;
   const rootH = rootRef.current?.clientHeight ?? 840;
+  // 菜单打开期间改「类型默认」会重算行数据：渲染一律用最新那一行，别停在开菜单那一刻的旧效果
+  const fxRow = fxMenu ? props.rows.find((r) => r.key === fxMenu.row.key) ?? fxMenu.row : null;
   const fxLeft = fxMenu ? Math.max(8, Math.min(fxMenu.x - menuW / 2, rootW - menuW - 8)) : 0;
   const fxTop = fxMenu ? Math.max(8, Math.min(fxMenu.y, rootH - menuH - 8)) : 0;
+  /**
+   * 编号徽标单独一层：落点取元素本体（箭头/连线取线的中点），不再跟着外接框左上角跑——
+   * 弯折箭头的外接框角落是空的，几条还常常共用同一个角，徽标会叠成一枚。
+   * 撞车时在锚点周围找最近的一个空位；实在挤不下就留在锚点上（叠着也比消失强）。
+   */
+  const stageSx = selSlide ? stageW / (selSlide.w || 1) : 0;
+  const stageSy = selSlide ? stageH / (selSlide.h || 1) : 0;
+  const badges: { key: string; left: number; top: number }[] = [];
+  if (selSlide && stageW > 0 && stageH > 0) {
+    const placed: { x: number; y: number }[] = [];
+    const fits = (x: number, y: number): boolean =>
+      x >= 10 && x <= stageW - 10 && y >= 10 && y <= stageH - 10 &&
+      !placed.some((p) => Math.abs(p.x - x) < 22 && Math.abs(p.y - y) < 18);
+    for (const s of spots) {
+      const r = rowOf(s.key);
+      if (!r) continue;
+      const ax = (r.anchor.x - selSlide.x) * stageSx;
+      const ay = (r.anchor.y - selSlide.y) * stageSy;
+      // 锚点本来就落在画框外的：这一页看不到它，不硬塞回框内
+      if (ax < 0 || ax > stageW || ay < 0 || ay > stageH) continue;
+      let x = ax;
+      let y = ay;
+      if (!fits(x, y)) {
+        // 先往下让（最常见的是同一起点的几条并列），再往右找；最多两圈
+        let ok = false;
+        for (let ring = 1; ring <= 10 && !ok; ring += 1) {
+          for (const [dx, dy] of [[0, 18 * ring], [22 * ring, 0], [-22 * ring, 0], [0, -18 * ring]]) {
+            if (fits(ax + dx, ay + dy)) {
+              x = ax + dx;
+              y = ay + dy;
+              ok = true;
+              break;
+            }
+          }
+        }
+        if (!ok) {
+          x = Math.max(10, Math.min(ax, stageW - 10));
+          y = Math.max(10, Math.min(ay, stageH - 10));
+        }
+      }
+      placed.push({ x, y });
+      badges.push({ key: s.key, left: x, top: y });
+    }
+  }
+  /** 线状元素（箭头/连线）的可点区域：沿笔画给 14px 宽的命中带，不再拿整块外接框接点击 */
+  const wires = selSlide
+    ? spots.flatMap((s) => {
+        const row = rowOf(s.key);
+        return row?.wire ? [{ spot: s, row }] : [];
+      })
+    : [];
+  const wireD = (row: MotionRow): string => {
+    if (!selSlide) return "";
+    return (row.wire ?? [])
+      .map((p, i) => {
+        const x = ((p.x - selSlide.x) * stageSx).toFixed(1);
+        const y = ((p.y - selSlide.y) * stageSy).toFixed(1);
+        return `${i === 0 ? "M" : "L"}${x} ${y}`;
+      })
+      .join(" ");
+  };
 
   return (
     <aside
@@ -795,14 +1156,20 @@ export function PresentationDrawer(props: {
                         )}
                         {spots.map((s) => {
                           const r = rowOf(s.key);
+                          // 线状元素走下面的 SVG 命中带：外接框一大片是空的，抢点击会盖住别的条
+                          if (r?.wire) return null;
                           return (
                             <button
                               key={s.key}
                               type="button"
                               className={
                                 "exs-present-hotspot" +
+                                (r?.linear ? " exs-present-hotspot--line" : "") +
                                 (s.key === activeKey ? " exs-present-hotspot--on" : "") +
-                                (s.key === hoverKey ? " exs-present-hotspot--hot" : "")
+                                (s.key === hoverKey ? " exs-present-hotspot--hot" : "") +
+                                (curStep !== null && (playOf.get(s.key) ?? 0) > curStep
+                                  ? " exs-present-hotspot--future"
+                                  : "")
                               }
                               style={{
                                 left: `${s.left}%`,
@@ -821,19 +1188,109 @@ export function PresentationDrawer(props: {
                               }}
                               onMouseEnter={(e) => {
                                 setHoverKey(s.key);
-                                if (r) showTip(e, tipForRow(r));
+                                if (r) showTipSoon(e, tipForRow(r));
                               }}
+                              onMouseMove={trackTip}
                               onMouseLeave={() => {
                                 setHoverKey(null);
                                 hideTip();
                               }}
                               aria-label={
                                 r
-                                  ? t("第 {n} 条：{name}", { n: rowNo.get(s.key) ?? 0, name: t(r.label) })
+                                  ? t("第 {n} 步：{name}", { n: badgeOf(s.key), name: t(r.label) })
                                   : t("元素")
                               }
+                            />
+                          );
+                        })}
+                        {wires.length ? (
+                          // 线状元素的可点区域：只沿笔画放 14px 命中带，箭头再多也不会互相盖住
+                          <svg
+                            className="exs-present-wires"
+                            viewBox={`0 0 ${stageW} ${stageH}`}
+                            preserveAspectRatio="none"
+                          >
+                            {wires.map(({ spot, row }) => (
+                              <g
+                                key={`w-${spot.key}`}
+                                className={
+                                  "exs-present-wire" +
+                                  (spot.key === activeKey ? " exs-present-wire--on" : "") +
+                                  (spot.key === hoverKey ? " exs-present-wire--hot" : "") +
+                                  (curStep !== null && (playOf.get(spot.key) ?? 0) > curStep
+                                    ? " exs-present-wire--future"
+                                    : "")
+                                }
+                              >
+                                <path className="exs-present-wire-mark" d={wireD(row)} />
+                                <path
+                                  className="exs-present-wire-hit"
+                                  d={wireD(row)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    selectRow(spot.key);
+                                  }}
+                                  onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    openFxMenu(row, e.clientX, e.clientY);
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    setHoverKey(spot.key);
+                                    showTipSoon(e, tipForRow(row));
+                                  }}
+                                  onMouseMove={trackTip}
+                                  onMouseLeave={() => {
+                                    setHoverKey(null);
+                                    hideTip();
+                                  }}
+                                  aria-label={t("第 {n} 步：{name}", { n: badgeOf(spot.key), name: t(row.label) })}
+                                />
+                              </g>
+                            ))}
+                          </svg>
+                        ) : null}
+                        {badges.map((b) => {
+                          const r = rowOf(b.key);
+                          const isSrc = badgeDrag?.key === b.key;
+                          const isOver = badgeDrag?.over === b.key;
+                          return (
+                            <button
+                              key={`b-${b.key}`}
+                              type="button"
+                              data-badgekey={b.key}
+                              className={
+                                "exs-present-badge" +
+                                (isSrc ? " exs-present-badge--src" : "") +
+                                (isOver ? " exs-present-badge--target" : "") +
+                                (settleKey === b.key ? " exs-present-badge--settle" : "") +
+                                (together ? " exs-present-badge--lock" : "") +
+                                (b.key === activeKey ? " exs-present-badge--on" : "") +
+                                (b.key === hoverKey ? " exs-present-badge--hot" : "") +
+                                (curStep !== null && (playOf.get(b.key) ?? 0) > curStep
+                                  ? " exs-present-badge--future"
+                                  : "")
+                              }
+                              style={{ left: b.left, top: b.top }}
+                              title={together ? t("整页一起出时不排顺序") : t("拖动改出场顺序")}
+                              aria-label={t("第 {n} 步：{name}，可拖动改顺序", {
+                                n: isSrc ? (basePlayOf.get(b.key) ?? 0) : badgeOf(b.key),
+                                name: r ? t(r.label) : t("元素"),
+                              })}
+                              onPointerDown={(e) => beginBadgeDrag(e, b.key)}
+                              // 徽标自己就是把手，别再冒泡成画布空白点击
+                              onClick={(e) => e.stopPropagation()}
+                              onMouseEnter={(e) => {
+                                setHoverKey(b.key);
+                                if (r) showTipSoon(e, tipForRow(r));
+                              }}
+                              onMouseMove={trackTip}
+                              onMouseLeave={() => {
+                                setHoverKey(null);
+                                hideTip();
+                              }}
                             >
-                              <span className="exs-present-hotspot__no">{rowNo.get(s.key)}</span>
+                              {isSrc ? (basePlayOf.get(b.key) ?? 0) : badgeOf(b.key)}
                             </button>
                           );
                         })}
@@ -848,7 +1305,7 @@ export function PresentationDrawer(props: {
                         <span>
                           {together
                             ? t("整页一起出：画面只做预览，逐条设定暂不生效。")
-                            : t("点画面里的元素选中它；右键直接换效果。")}
+                            : t("点元素选中；拖编号改顺序；右键换效果。")}
                         </span>
                       )}
                     </div>
@@ -1028,7 +1485,7 @@ export function PresentationDrawer(props: {
                         <ul>
                           <li>{t("画框里的每个文字、图形、图片、箭头都算一条。")}</li>
                           <li>{t("成组元素一起出场；附着在图形上的文字跟着图形走。")}</li>
-                          <li>{t("编号和下面这一行一一对应，点任意一边都会选中同一条。")}</li>
+                          <li>{t("画面编号 = 播放步号：第几次按键出现，同一步的几条同号。")}</li>
                           <li>{t("画框本身和画框外的元素不参与编排。")}</li>
                         </ul>
                         <button type="button" className="exs-present-info__ok" onClick={() => setInfoOpen(false)}>
@@ -1043,7 +1500,7 @@ export function PresentationDrawer(props: {
                   <span className="exs-present-inspector__hint">
                     {together
                       ? t("整页一起出；逐条设定暂不生效。")
-                      : t("点画面或列表选中一条；点效果换动作；步号相同的一起出。")}
+                      : t("拖组改顺序；点「第 N 步」预览；点效果换动作。")}
                   </span>
                   <div className="exs-present-seg" role="group" aria-label={t("这一页的出场方式")}>
                     <button
@@ -1066,6 +1523,56 @@ export function PresentationDrawer(props: {
                 </div>
               </header>
 
+              {together || props.rows.length === 0 ? null : (
+                <div className="exs-present-stepper" role="group" aria-label={t("逐步预览")}>
+                  <button
+                    type="button"
+                    className="exs-present-stepper__arrow"
+                    onClick={() => setStepPos(curStep === null ? groups.length : Math.max(1, curStep - 1))}
+                    disabled={groups.length < 2 || curStep === 1}
+                    title={t("上一步")}
+                    aria-label={t("上一步")}
+                  >
+                    ‹
+                  </button>
+                  <span className="exs-present-stepper__pos">
+                    {curStep === null
+                      ? t("共 {n} 步", { n: groups.length })
+                      : t("第 {n} / {m} 步", { n: curStep, m: groups.length })}
+                  </span>
+                  <button
+                    type="button"
+                    className="exs-present-stepper__arrow"
+                    onClick={() => setStepPos(curStep === null ? 1 : Math.min(groups.length, curStep + 1))}
+                    disabled={groups.length < 2 || curStep === groups.length}
+                    title={t("下一步")}
+                    aria-label={t("下一步")}
+                  >
+                    ›
+                  </button>
+                  <button
+                    type="button"
+                    className="exs-present-stepper__reset"
+                    onClick={() => setStepPos(null)}
+                    disabled={curStep === null}
+                    title={t("看全部：恢复显示整页")}
+                  >
+                    {t("看全部")}
+                  </button>
+                  <button
+                    type="button"
+                    className="exs-present-stepper__go"
+                    onClick={() => {
+                      if (selSlide && curStep !== null) props.onStartAt(selSlide.id, curStep);
+                    }}
+                    disabled={curStep === null}
+                    title={t("从这里进片场：前几步已经就位，再按一下就走这一步")}
+                  >
+                    {t("从这一步播放")}
+                  </button>
+                </div>
+              )}
+
               <FadeScroll
                 className={"exs-present-inspector__rows" + (together ? " exs-present-inspector__rows--muted" : "")}
               >
@@ -1075,128 +1582,236 @@ export function PresentationDrawer(props: {
                     {t("先在画框里放点东西，再回来排顺序。")}
                   </div>
                 ) : (
-                  <ol className="exs-present-mrows">
-                    {props.rows.map((r, i) => (
-                      <li
-                        key={r.key}
-                        data-rowkey={r.key}
-                        className={
-                          "exs-present-mrow" +
-                          (r.step === null ? "" : " exs-present-mrow--on") +
-                          (r.key === activeKey ? " exs-present-mrow--sel" : "")
-                        }
-                        // 点行空白处也能选中（和画面上点热区等价）；按钮/输入框自己处理
-                        onClick={(e) => {
-                          if ((e.target as HTMLElement).closest("button, input")) return;
-                          selectRow(r.key);
-                        }}
-                        onMouseEnter={() => setHoverKey(r.key)}
-                        onMouseLeave={() => setHoverKey(null)}
-                      >
-                        <span className="exs-present-mrow__no">{i + 1}</span>
-                        <span className="exs-present-mrow__label" title={t(r.label)}>
-                          {t(r.label)}
-                        </span>
-                        {/*
-                          效果按钮说人话：自动档显示「自动 · 浮现」——用户不用先学会四个图标
-                          才知道这条到底会怎么飞。点开是带说明的菜单，悬浮也有同一段说明。
-                        */}
-                        <button
-                          type="button"
-                          className={"exs-present-fxbtn" + (r.auto ? " exs-present-fxbtn--auto" : "")}
-                          onClick={(e) => openFxMenuAtButton(r, e.currentTarget)}
-                          onMouseEnter={(e) => showTip(e, tipForRow(r))}
-                          onMouseLeave={hideTip}
-                          onContextMenu={(e) => e.preventDefault()}
-                          aria-label={t("出场效果：{name}", {
-                            name: r.auto ? `${t("自动")} · ${t(EFFECT_LABELS[r.effect])}` : t(EFFECT_LABELS[r.effect]),
-                          })}
-                          aria-haspopup="menu"
-                          aria-expanded={fxMenu?.row.key === r.key}
-                          disabled={together}
-                        >
-                          <span className="exs-present-fxbtn__text">
-                            {r.auto ? `${t("自动")} · ${t(EFFECT_LABELS[r.effect])}` : t(EFFECT_LABELS[r.effect])}
-                          </span>
-                          <span className="exs-present-fxbtn__caret" aria-hidden="true">
-                            ⌄
-                          </span>
+                  <>
+                    {mergeToast ? (
+                      <div className="exs-present-mergebar" role="status">
+                        <span>{mergeToast.text}</span>
+                        <button type="button" onClick={undoMerge}>
+                          {t("撤销")}
                         </button>
-                        {/*
-                          key 带上步号：提交后宿主重算行，非受控输入框要跟着换成新值。
-                          代价是改完步号焦点会跳回列表——比「输入框显示的还是旧值」划算。
-                        */}
-                        <input
-                          key={`${r.key}:${r.step ?? ""}`}
-                          className="exs-present-mrow__step"
-                          type="number"
-                          min={1}
-                          max={STEP_MAX}
-                          step={1}
-                          defaultValue={r.step ?? ""}
-                          placeholder="·"
-                          title={t("第几步出场")}
-                          aria-label={t("第几步出场")}
-                          disabled={together}
-                          onBlur={(e) => commitStep(r, e.currentTarget.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              e.currentTarget.blur();
-                            } else if (e.key === "Escape") {
-                              e.preventDefault();
-                              e.currentTarget.value = r.step === null ? "" : String(r.step);
-                              e.currentTarget.blur();
-                            }
-                            e.stopPropagation();
-                          }}
-                        />
+                      </div>
+                    ) : null}
+                    <ol className="exs-present-mrows">
+                    {groups.map((g, gi) => (
+                      <li
+                        key={g.key}
+                        data-group={gi}
+                        tabIndex={0}
+                        className={
+                          "exs-present-pgroup" +
+                          (together ? " exs-present-pgroup--muted" : "") +
+                          (curStep === g.playIndex ? " exs-present-pgroup--cur" : "") +
+                          (curStep !== null && g.playIndex > curStep ? " exs-present-pgroup--future" : "") +
+                          (orderDrag?.from === gi ? " exs-present-pgroup--dragging" : "") +
+                          (orderDrag && orderDrag.over === gi && orderDrag.from !== gi
+                            ? " exs-present-pgroup--over"
+                            : "")
+                        }
+                        onDragOver={(e) => {
+                          if (together || !orderDrag) return;
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = "move";
+                          if (orderDrag.over !== gi) setOrderDrag({ ...orderDrag, over: gi });
+                        }}
+                        onDrop={(e) => {
+                          if (together || !orderDrag) return;
+                          e.preventDefault();
+                          clearMergeHistory();
+                          commitOrder(moveOrderGroup(groups, orderDrag.from, gi));
+                          setOrderDrag(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.altKey || e.metaKey || e.ctrlKey) return;
+                          if ((e.target as HTMLElement).closest("input, button")) return;
+                          if (e.key === "ArrowUp") {
+                            e.preventDefault();
+                            shiftGroup(gi, -1);
+                          } else if (e.key === "ArrowDown") {
+                            e.preventDefault();
+                            shiftGroup(gi, 1);
+                          }
+                        }}
+                      >
+                        <div className="exs-present-pgroup__head">
+                          <span
+                            className="exs-present-pgroup__grip"
+                            draggable={!together}
+                            onDragStart={(e) => {
+                              e.dataTransfer.effectAllowed = "move";
+                              e.dataTransfer.setData("text/plain", String(gi));
+                              // 拖影用整张组卡：只拖一个把手图标看不出在搬什么
+                              const card = (e.currentTarget as HTMLElement).closest("li");
+                              if (card) e.dataTransfer.setDragImage(card, 16, 14);
+                              setOrderDrag({ from: gi, over: gi });
+                            }}
+                            onDragEnd={() => setOrderDrag(null)}
+                            title={t("拖动改顺序")}
+                            aria-hidden="true"
+                          >
+                            <LineIcon d={ICON_GRIP} size={14} strokeWidth={2} />
+                          </span>
+                          <button
+                            type="button"
+                            className={"exs-present-pgroup__step" + (g.auto && !together ? " exs-present-pgroup__step--auto" : "")}
+                            onClick={() => setStepPos(curStep === g.playIndex ? null : g.playIndex)}
+                            disabled={together}
+                            title={together ? t("整页一起出") : t("预览到这一步")}
+                            aria-pressed={curStep === g.playIndex}
+                          >
+                            {together ? t("整页") : t("第 {n} 步", { n: g.playIndex })}
+                          </button>
+                          {g.auto && !together ? <span className="exs-present-pgroup__tag">{t("自动")}</span> : null}
+                          <span className="exs-present-pgroup__spacer" />
+                          <div className="exs-present-pgroup__ops">
+                            {g.rows.length > 1 ? (
+                              <button
+                                type="button"
+                                onClick={() => splitGroup(gi)}
+                                disabled={together}
+                                title={t("拆回独立步：每条各自出场")}
+                                aria-label={t("拆回独立步")}
+                              >
+                                拆
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => mergeUp(gi)}
+                              disabled={together || gi === 0}
+                              title={t("并入上一步：两组一起出场")}
+                              aria-label={t("并入上一步")}
+                            >
+                              合
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => shiftGroup(gi, -1)}
+                              disabled={together || gi === 0}
+                              title={t("上移")}
+                              aria-label={t("上移")}
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => shiftGroup(gi, 1)}
+                              disabled={together || gi === groups.length - 1}
+                              title={t("下移")}
+                              aria-label={t("下移")}
+                            >
+                              ↓
+                            </button>
+                          </div>
+                        </div>
+                        <ol className="exs-present-mrows">
+                          {g.rows.map((r) => (
+                            <li
+                              key={r.key}
+                              data-rowkey={r.key}
+                              className={
+                                "exs-present-mrow" +
+                                (r.step === null ? "" : " exs-present-mrow--on") +
+                                (r.key === activeKey ? " exs-present-mrow--sel" : "") +
+                                (curStep !== null && g.playIndex > curStep ? " exs-present-mrow--future" : "")
+                              }
+                              // 点行空白处也能选中（和画面上点热区等价）；按钮/输入框自己处理
+                              onClick={(e) => {
+                                if ((e.target as HTMLElement).closest("button, input")) return;
+                                selectRow(r.key);
+                              }}
+                              onMouseEnter={() => setHoverKey(r.key)}
+                              onMouseLeave={() => setHoverKey(null)}
+                            >
+                              <span className="exs-present-mrow__no">{badgeOf(r.key)}</span>
+                              <span className="exs-present-mrow__label" title={t(r.label)}>
+                                {t(r.label)}
+                              </span>
+                              {/*
+                                效果按钮说人话：自动档显示「自动 · 浮现」——用户不用先学会四个图标
+                                才知道这条到底会怎么飞。点开是带说明的菜单，悬浮也有同一段说明。
+                              */}
+                              <button
+                                type="button"
+                                className={"exs-present-fxbtn" + (r.auto ? " exs-present-fxbtn--auto" : "")}
+                                onClick={(e) => openFxMenuAtButton(r, e.currentTarget)}
+                                onMouseEnter={(e) => showTip(e, tipForRow(r))}
+                                onMouseLeave={hideTip}
+                                onContextMenu={(e) => e.preventDefault()}
+                                aria-label={t("出场效果：{name}", {
+                                  name: r.auto
+                                    ? `${t("自动")} · ${t(EFFECT_LABELS[r.effect])}`
+                                    : t(EFFECT_LABELS[r.effect]),
+                                })}
+                                aria-haspopup="menu"
+                                aria-expanded={fxMenu?.row.key === r.key}
+                                disabled={together}
+                              >
+                                <span className="exs-present-fxbtn__text">
+                                  {r.auto ? `${t("自动")} · ${t(EFFECT_LABELS[r.effect])}` : t(EFFECT_LABELS[r.effect])}
+                                </span>
+                                <span className="exs-present-fxbtn__caret" aria-hidden="true">
+                                  ⌄
+                                </span>
+                              </button>
+                              {/*
+                                key 带上步号：提交后宿主重算行，非受控输入框要跟着换成新值。
+                                代价是改完步号焦点会跳回列表——比「输入框显示的还是旧值」划算。
+                                在这里改号 = 把这条塞进哪个「第 N 步」组；组内多条就是一起出。
+                              */}
+                              <input
+                                key={`${r.key}:${r.step ?? ""}`}
+                                className="exs-present-mrow__step"
+                                type="number"
+                                min={1}
+                                max={STEP_MAX}
+                                step={1}
+                                defaultValue={r.step ?? ""}
+                                placeholder="·"
+                                title={t("第几步出场")}
+                                aria-label={t("第几步出场")}
+                                disabled={together}
+                                onBlur={(e) => commitStep(r, e.currentTarget.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    e.currentTarget.blur();
+                                  } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    e.currentTarget.value = r.step === null ? "" : String(r.step);
+                                    e.currentTarget.blur();
+                                  }
+                                  e.stopPropagation();
+                                }}
+                              />
+                            </li>
+                          ))}
+                        </ol>
                       </li>
                     ))}
-                  </ol>
+                    </ol>
+                  </>
                 )}
               </FadeScroll>
 
-              {props.rows.length === 0 ? null : (
-                <section className={"exs-present-seq" + (together ? " exs-present-seq--muted" : "")} aria-label={t("出场顺序")}>
-                  <div className="exs-present-seq__head">
-                    <span className="exs-present-seq__title">{t("出场顺序")}</span>
-                    <span className="exs-present-seq__hint">
-                      {together
-                        ? t("整页一起出，顺序与步号暂不生效")
-                        : t("步号升序；未编步的排最后、按阅读顺序")}
-                    </span>
-                  </div>
-                  <div className="exs-present-seq__list">
-                    {seq.map((g) => (
-                      <div key={g.key} className="exs-present-seq__row">
-                        <span
-                          className={"exs-present-seq__step" + (g.step === null ? " exs-present-seq__step--auto" : "")}
-                          title={g.step === null && !g.together ? t("按阅读顺序，排在编过步的之后") : undefined}
-                        >
-                          {g.together ? t("整页") : g.step === null ? t("自动") : t("第 {n} 步", { n: g.step })}
-                        </span>
-                        <span className="exs-present-seq__chips">
-                          {g.together ? (
-                            <span className="exs-present-seq__chip">{t("这一页所有内容一起出现")}</span>
-                          ) : (
-                            g.labels.map((label, i) => (
-                              <span key={`${g.key}:${i}`} className="exs-present-seq__chip" title={t(label)}>
-                                {t(label)}
-                              </span>
-                            ))
-                          )}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-
               <div className="exs-present-inspector__foot">
-                {together
-                  ? t("切回「逐条」后，下面每条的步号与效果会恢复生效。")
-                  : t("步号相同的一起出（自动错开 70ms）；留空 = 排在编过步的之后。")}
+                <span>
+                  {together
+                    ? t("切回「逐条」后，下面每条的步号与效果会恢复生效。")
+                    : t("拖组改顺序；「合」并入上一步、「拆」可还原；点「第 N 步」预览。")}
+                </span>
+                {together || props.rows.length === 0 ? null : (
+                  <button
+                    type="button"
+                    className="exs-present-inspector__pin"
+                    onClick={() => {
+                      clearMergeHistory();
+                      commitOrder(groups);
+                    }}
+                    title={t("固定顺序：把当前顺序写死为 1、2、3…，之后新加的元素排在最后")}
+                  >
+                    {t("固定顺序")}
+                  </button>
+                )}
               </div>
             </aside>
           </>
@@ -1282,21 +1897,21 @@ export function PresentationDrawer(props: {
       ) : null}
 
       {/* 效果菜单挂抽屉根：行列表会滚，菜单跟着行被裁掉就没法用 */}
-      {fxMenu ? (
+      {fxMenu && fxRow ? (
         <div className="exs-present-fxmenu" role="menu" aria-label={t("出场效果")} style={{ left: fxLeft, top: fxTop }}>
           <div className="exs-present-fxmenu__head">{t("出场效果")}</div>
           <button
             type="button"
             role="menuitemradio"
-            aria-checked={fxMenu.row.auto}
-            className={"exs-present-fxopt" + (fxMenu.row.auto ? " exs-present-fxopt--on" : "")}
+            aria-checked={fxRow.auto}
+            className={"exs-present-fxopt" + (fxRow.auto ? " exs-present-fxopt--on" : "")}
             onClick={() => applyFx(null)}
           >
             <span className="exs-present-fxopt__name">
               {t("自动")}
               <span className="exs-present-fxopt__hint">{t(AUTO_DESC)}</span>
             </span>
-            {fxMenu.row.auto ? (
+            {fxRow.auto ? (
               <span className="exs-present-fxopt__check" aria-hidden="true">
                 ✓
               </span>
@@ -1305,8 +1920,8 @@ export function PresentationDrawer(props: {
           <div className="exs-present-fxmenu__sep" />
           {EFFECT_IDS.map((id) => {
             // 划线只对填充折线有意义：文字/图片/箭头那几条不给这一档，免得选了没效果
-            if (id === "draw" && !fxMenu.row.drawable) return null;
-            const on = !fxMenu.row.auto && fxMenu.row.effect === id;
+            if (id === "draw" && !fxRow.drawable) return null;
+            const on = !fxRow.auto && fxRow.effect === id;
             return (
               <button
                 key={id}
@@ -1328,6 +1943,42 @@ export function PresentationDrawer(props: {
               </button>
             );
           })}
+          {isAutoFxType(fxRow.kind) ? (
+            <>
+              <div className="exs-present-fxmenu__sep" />
+              <div className="exs-present-fxdefault">
+                <div className="exs-present-fxdefault__head">
+                  {t("{type}以后默认", { type: t(typeNameOf(fxRow.kind)) })}
+                </div>
+                <div className="exs-present-fxdefault__opts" role="group" aria-label={t("{type}以后默认", { type: t(typeNameOf(fxRow.kind)) })}>
+                  {EFFECT_IDS.map((id) => {
+                    if (id === "draw" && !fxRow.drawable) return null;
+                    const on = (props.settings.autoEffects[fxRow.kind] ?? defaultEffect(fxRow.kind)) === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        aria-pressed={on}
+                        className={"exs-present-fxchip" + (on ? " exs-present-fxchip--on" : "")}
+                        onClick={() => setTypeDefault(fxRow.kind, id)}
+                      >
+                        {t(EFFECT_LABELS[id])}
+                      </button>
+                    );
+                  })}
+                  {props.settings.autoEffects[fxRow.kind] ? (
+                    <button
+                      type="button"
+                      className="exs-present-fxchip exs-present-fxchip--reset"
+                      onClick={() => setTypeDefault(fxRow.kind, null)}
+                    >
+                      {t("恢复内置")}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </>
+          ) : null}
         </div>
       ) : null}
 
@@ -1340,6 +1991,27 @@ export function PresentationDrawer(props: {
         >
           {tip.text}
         </div>
+      ) : null}
+
+      {/* 拖徽标时的跟手浮影 + 落点浮签（都挂抽屉根，不进行列表滚动裁剪） */}
+      {badgeDrag ? (
+        <span
+          ref={badgeGhostRef}
+          className={"exs-present-badge-ghost" + (badgeDrag.over ? "" : " exs-present-badge-ghost--out")}
+          style={{ left: badgeDrag.x, top: badgeDrag.y }}
+          aria-hidden="true"
+        >
+          {basePlayOf.get(badgeDrag.key) ?? ""}
+        </span>
+      ) : null}
+      {badgeDrag ? (
+        <span
+          className={"exs-present-drop-tag" + (badgeDrag.over ? "" : " exs-present-drop-tag--out")}
+          style={{ left: badgeDrag.x, top: badgeDrag.y }}
+          aria-hidden="true"
+        >
+          {badgeDrag.over ? t("放到第 {n} 步", { n: badgeDropNo }) : t("松手取消")}
+        </span>
       ) : null}
     </aside>
   );

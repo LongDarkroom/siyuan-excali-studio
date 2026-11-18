@@ -2371,6 +2371,8 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
      近白 #fbfbfd 与画布 #f6f6f4 只差一点，浅灰画布上浮不起来。 */
   --exs-menu-solid: #ffffff;
   --exs-menu-border: rgba(0, 0, 0, 0.09);
+  /* 卡片轮廓：抽屉里的组卡/行卡要能看出边界（0.09 的菜单描边在浅底上几乎看不见） */
+  --exs-card-border: rgba(0, 0, 0, 0.16);
   --exs-menu-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 3px 8px rgba(0, 0, 0, 0.06),
     0 18px 44px rgba(0, 0, 0, 0.18);
   --exs-text: #1d1d1f;
@@ -2425,6 +2427,7 @@ html[data-theme-mode="dark"] .exs-changelog-dialog {
 
   --exs-menu-solid: #2c2c2e;
   --exs-menu-border: rgba(255, 255, 255, 0.12);
+  --exs-card-border: rgba(255, 255, 255, 0.19);
   --exs-menu-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.5), 0 3px 8px rgba(0, 0, 0, 0.4),
     0 18px 44px rgba(0, 0, 0, 0.55);
   --exs-text: #f5f5f7;
@@ -4988,11 +4991,10 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
-/* 行列表：条目多就自己滚，给下面的「出场顺序」留位置 */
+/* 行列表：第九十轮起它就是「按播放顺序的分组」，占满右栏剩余高度自己滚 */
 .exs-present-inspector__rows {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
-  max-height: 58%;
   margin: 0;
   padding: 6px 10px 6px 8px;
   overscroll-behavior: contain;
@@ -5033,11 +5035,39 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 
 .exs-present-inspector__foot {
   flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 14px 9px;
   border-top: 0.5px solid var(--exs-separator);
   font-size: 10.5px;
   line-height: 1.5;
   color: var(--exs-text-secondary);
+}
+
+.exs-present-inspector__foot > span {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 「固定顺序」：把当前组序写死成 1..n 步，之后新加的元素自然排在最后 */
+.exs-present-inspector__pin {
+  flex: none;
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 8px;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 6px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
+  font-family: inherit;
+  font-size: 10.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.exs-present-inspector__pin:hover {
+  background: var(--exs-hover-strong);
 }
 
 .exs-present-mrow {
@@ -5060,7 +5090,7 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
 /* 编过步的行提亮一点：一眼看出哪些已经排进队了 */
 .exs-present-mrow--on {
   background: color-mix(in srgb, var(--exs-menu-solid) 82%, transparent);
-  border-color: var(--exs-menu-border);
+  border-color: var(--exs-card-border);
 }
 
 /* 名字最长（用户自己的文字），所以它独占弹性宽度并截断；控件按最长档预留不位移 */
@@ -5283,6 +5313,17 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   -webkit-user-drag: none;
 }
 
+/* 深色模式：演示预览是白板缩略图，白底铺满一整块会晃眼。
+   只把这块大图轻微降亮（0.88 后白≈#e0e0e0），内容色不篡改；
+   页单里的小缩略图不动——面积小，亮一点反而更清楚。 */
+.exs-root[data-theme-mode="dark"] .exs-present-stage__canvas {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.exs-root[data-theme-mode="dark"] .exs-present-stage__img {
+  filter: brightness(0.88);
+}
+
 .exs-present-stage__ph {
   position: absolute;
   inset: 0;
@@ -5352,6 +5393,15 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   inset: -6px;
 }
 
+/*
+ * 箭头/连线：外接框的大片是空的，默认不描这个框（悬停、选中照样高亮），
+ * 免得画面上出现一个看不出对应谁的虚线矩形。
+ */
+.exs-present-hotspot--line {
+  outline-color: transparent;
+  background: transparent;
+}
+
 .exs-present-hotspot:hover,
 .exs-present-hotspot--hot {
   background: color-mix(in srgb, var(--exs-accent) 10%, transparent);
@@ -5364,29 +5414,210 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   box-shadow: 0 0 0 3px var(--exs-focus-ring);
 }
 
-.exs-present-hotspot__no {
+/* 步进预览时还没轮到的条：虚化 + 点线，但仍可点（点了跳过去看它） */
+.exs-present-hotspot--future {
+  opacity: 0.3;
+  outline-style: dotted;
+}
+
+.exs-present-hotspot--future:hover {
+  opacity: 0.85;
+}
+
+/*
+ * 线状元素（箭头/连线）的命中带：沿笔画 14px，透明兜底；
+ * 高亮只画在笔画上，不再用外接框——几条箭头共用外接框会互相抢点击。
+ */
+.exs-present-wires {
   position: absolute;
-  left: 2px;
-  top: 2px;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.exs-present-wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.exs-present-wire-mark {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+  transition: stroke 120ms ease;
+}
+
+.exs-present-wire:hover .exs-present-wire-mark,
+.exs-present-wire--hot .exs-present-wire-mark {
+  stroke: var(--exs-accent);
+}
+
+.exs-present-wire--on .exs-present-wire-mark {
+  stroke: var(--exs-accent);
+  stroke-width: 3.5;
+}
+
+.exs-present-wire--future {
+  opacity: 0.35;
+}
+
+.exs-present-wire--future:hover {
+  opacity: 0.85;
+}
+
+.exs-present-stage__canvas--muted .exs-present-wire {
+  opacity: 0.5;
+}
+
+/*
+ * 编号徽标独立一层 + 顺序把手：落点是元素本体（箭头取线中点），不是外接框的角；
+ * 按住拖动改出场顺序（空位不吞点击，其余热区照常）。
+ */
+.exs-present-badge {
+  position: absolute;
+  z-index: 2;
   box-sizing: border-box;
   min-width: 16px;
   height: 16px;
+  margin: 0;
   padding: 0 4px;
   border: 0.5px solid var(--exs-accent);
   border-radius: 5px;
   background: var(--exs-menu-solid);
   color: var(--exs-text);
+  font-family: inherit;
   font-size: 9.5px;
   font-weight: 600;
   line-height: 15px;
   text-align: center;
-  pointer-events: none;
   font-variant-numeric: tabular-nums;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  touch-action: none;
+  transition: transform 130ms cubic-bezier(0.2, 0, 0, 1), box-shadow 130ms ease,
+    background-color 130ms ease, opacity 130ms ease;
 }
 
-.exs-present-hotspot--on .exs-present-hotspot__no {
+@media (hover: hover) {
+  .exs-present-badge:hover { transform: translate(-50%, -50%) scale(1.16); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); }
+}
+
+.exs-present-badge:active { cursor: grabbing; }
+
+/* 拖动中：源徽标留成虚线空位，落点徽标放大接住 */
+.exs-present-badge--src {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--exs-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--exs-accent) 6%, var(--exs-menu-solid));
+  color: var(--exs-text-secondary);
+  opacity: 0.55;
+}
+
+.exs-present-badge--target {
+  transform: translate(-50%, -50%) scale(1.24);
   background: var(--exs-accent-container);
   color: var(--exs-accent-on-container);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--exs-accent) 16%, transparent);
+}
+
+/* 落定：从落点轻轻散开一圈光，告诉「放到这了」 */
+.exs-present-badge--settle { animation: exs-badge-settle 460ms cubic-bezier(0.2, 0, 0, 1); }
+
+@keyframes exs-badge-settle {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--exs-accent) 45%, transparent); }
+  100% { box-shadow: 0 0 0 10px transparent; }
+}
+
+/* 整页一起出：顺序不参与播放，徽标只报阅读序，不给拖 */
+.exs-present-badge--lock { cursor: default; }
+.exs-present-badge--lock:hover { transform: translate(-50%, -50%); box-shadow: none; }
+
+.exs-present-badge--on {
+  border-color: transparent;
+  background: var(--exs-accent);
+  color: var(--exs-accent-on);
+}
+
+.exs-present-badge--future {
+  opacity: 0.4;
+}
+
+.exs-present-badge--hot {
+  border-color: var(--exs-accent);
+  box-shadow: 0 0 0 2px var(--exs-focus-ring);
+}
+
+.exs-present-stage__canvas--muted .exs-present-badge {
+  opacity: 0.5;
+}
+
+/* 拖徽标的跟手浮影与落点浮签（挂抽屉根，坐标相对抽屉） */
+.exs-present-badge-ghost {
+  position: absolute;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--exs-accent);
+  border-radius: 7px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-accent);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
+  transform: translate(-50%, -50%) rotate(-2deg);
+  pointer-events: none;
+}
+
+.exs-present-badge-ghost--out {
+  border-style: dashed;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-drop-tag {
+  position: absolute;
+  z-index: 31;
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: var(--exs-text);
+  color: var(--exs-menu-solid);
+  font-size: 10.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+  transform: translate(-50%, -170%);
+  pointer-events: none;
+}
+
+.exs-present-drop-tag::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 8px;
+  height: 8px;
+  background: var(--exs-text);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.exs-present-drop-tag--out {
+  opacity: 0.85;
 }
 
 /* 效果菜单：挂在抽屉根上，绝对定位（不进行列表的滚动裁剪） */
@@ -5462,6 +5693,53 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   font-size: 11px;
   line-height: 16px;
   color: var(--exs-accent);
+}
+
+/* 第九十一轮：菜单底的「以后这类默认」——一行小胶囊，点了立刻改自动档 */
+.exs-present-fxdefault {
+  padding: 2px 8px 6px;
+}
+
+.exs-present-fxdefault__head {
+  margin-bottom: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-fxdefault__opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.exs-present-fxchip {
+  box-sizing: border-box;
+  padding: 3px 8px;
+  border: 0.5px solid var(--exs-card-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--exs-text);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 15px;
+  cursor: pointer;
+}
+
+.exs-present-fxchip:hover {
+  background: var(--exs-hover);
+}
+
+.exs-present-fxchip--on {
+  border-color: color-mix(in srgb, var(--exs-accent) 55%, var(--exs-card-border));
+  background: color-mix(in srgb, var(--exs-accent) 14%, transparent);
+  color: var(--exs-accent);
+  font-weight: 600;
+}
+
+.exs-present-fxchip--reset {
+  border-style: dashed;
+  color: var(--exs-text-secondary);
 }
 
 /* 悬浮说明：白底浮层，不靠原生 title 的慢弹出 */
@@ -5568,110 +5846,263 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   background: var(--exs-hover-strong);
 }
 
-/* 出场顺序：把「谁先谁后」压成一眼能读的分组，行数少时也不留大片空白 */
-.exs-present-seq {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 9px 14px 10px;
-  border-top: 0.5px solid var(--exs-separator);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.exs-present-seq::-webkit-scrollbar {
-  display: none;
-}
-
-.exs-present-seq--muted .exs-present-seq__list {
-  opacity: 0.5;
-}
-
-.exs-present-seq__head {
+/* 第九十轮：右栏 = 按播放顺序的分组列表。
+   组头一行（把手 / 第 N 步 / 自动标 / 合·上下移），组内行照旧可改效果和步号。 */
+.exs-present-stepper {
   flex: none;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px 0;
 }
 
-.exs-present-seq__title {
+.exs-present-stepper__arrow {
   flex: none;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--exs-text-secondary);
+  box-sizing: border-box;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 0.5px solid var(--exs-menu-border);
+  border-radius: 6px;
+  background: var(--exs-menu-solid);
+  color: var(--exs-text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
 }
 
-.exs-present-seq__hint {
+.exs-present-stepper__arrow:hover:not(:disabled) {
+  background: var(--exs-hover-strong);
+}
+
+.exs-present-stepper__arrow:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.exs-present-stepper__pos {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   font-size: 10.5px;
   color: var(--exs-text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.exs-present-seq__list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.exs-present-seq__row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.exs-present-seq__step {
-  flex: none;
-  min-width: 46px;
-  box-sizing: border-box;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 6px;
-  background: var(--exs-accent-container);
-  color: var(--exs-accent-on-container);
-  font-size: 10.5px;
-  font-weight: 600;
-  line-height: 20px;
   text-align: center;
   white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
 }
 
-.exs-present-seq__step--auto {
-  background: var(--exs-hover);
-  color: var(--exs-text-secondary);
-}
-
-.exs-present-seq__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  min-width: 0;
-}
-
-.exs-present-seq__chip {
-  max-width: 100%;
+.exs-present-stepper__reset,
+.exs-present-stepper__go {
+  flex: none;
   box-sizing: border-box;
-  height: 20px;
+  height: 22px;
   padding: 0 7px;
   border: 0.5px solid var(--exs-menu-border);
   border-radius: 6px;
   background: var(--exs-menu-solid);
   color: var(--exs-text-secondary);
+  font-family: inherit;
   font-size: 10.5px;
-  line-height: 19px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  cursor: pointer;
 }
 
-/* 窄画布：右栏落到片单下方，两栏各自滚；顺序预览先让位给可编辑的行 */
+.exs-present-stepper__go {
+  border-color: var(--exs-accent);
+  background: var(--exs-accent-container);
+  color: var(--exs-accent-on-container);
+  font-weight: 600;
+}
+
+.exs-present-stepper__reset:hover:not(:disabled) {
+  background: var(--exs-hover-strong);
+  color: var(--exs-text);
+}
+
+.exs-present-stepper__go:hover:not(:disabled) {
+  filter: brightness(1.04);
+}
+
+.exs-present-stepper__reset:disabled,
+.exs-present-stepper__go:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 组卡片：拖着换顺序；「自动」= 还没编步、跟着阅读顺序走 */
+.exs-present-pgroup {
+  box-sizing: border-box;
+  margin: 0 0 6px;
+  padding: 3px 4px 4px;
+  border: 1px solid var(--exs-card-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--exs-menu-solid) 38%, transparent);
+  outline: none;
+  transition: background-color 110ms ease, border-color 110ms ease, opacity 110ms ease;
+}
+
+.exs-present-pgroup:hover {
+  background: color-mix(in srgb, var(--exs-menu-solid) 70%, transparent);
+  border-color: color-mix(in srgb, var(--exs-card-border) 72%, var(--exs-accent) 28%);
+}
+
+.exs-present-pgroup:focus-visible {
+  border-color: var(--exs-accent);
+}
+
+/* 步进游标停在这一组：和画面里正在预览的那一步对上 */
+.exs-present-pgroup--cur {
+  background: color-mix(in srgb, var(--exs-accent) 7%, transparent);
+  border-color: color-mix(in srgb, var(--exs-accent) 45%, transparent);
+}
+
+/* 还没轮到的组：压暗但仍可点（点就能跳过去预览） */
+.exs-present-pgroup--future {
+  opacity: 0.42;
+}
+
+.exs-present-pgroup--dragging {
+  opacity: 0.5;
+}
+
+.exs-present-pgroup--over {
+  border-color: var(--exs-accent);
+  border-style: dashed;
+}
+
+.exs-present-pgroup--muted .exs-present-pgroup__head {
+  opacity: 0.6;
+}
+
+.exs-present-pgroup__head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 2px;
+}
+
+.exs-present-pgroup__grip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 20px;
+  color: var(--exs-text-secondary);
+  cursor: grab;
+}
+
+.exs-present-pgroup__grip:active {
+  cursor: grabbing;
+}
+
+.exs-present-pgroup__step {
+  flex: none;
+  box-sizing: border-box;
+  height: 20px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--exs-accent-container);
+  color: var(--exs-accent-on-container);
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.exs-present-pgroup__step--auto {
+  background: var(--exs-hover);
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-pgroup__step:disabled {
+  cursor: default;
+}
+
+.exs-present-pgroup__tag {
+  flex: none;
+  font-size: 9.5px;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-pgroup__spacer {
+  flex: 1;
+}
+
+.exs-present-pgroup__ops {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+}
+
+.exs-present-pgroup__ops button {
+  box-sizing: border-box;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 5px;
+  border: 0.5px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-family: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.exs-present-pgroup__ops button:hover:not(:disabled) {
+  background: var(--exs-hover);
+  color: var(--exs-text);
+}
+
+.exs-present-pgroup__ops button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* 「合」之后的一次性提示：6 秒内给一个大号的撤销入口，过后只留在组头的「拆」里 */
+.exs-present-mergebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 7px;
+  background: var(--exs-accent-container);
+  color: var(--exs-accent-on-container);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.exs-present-mergebar > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.exs-present-mergebar button {
+  flex: none;
+  box-sizing: border-box;
+  height: 20px;
+  padding: 0 8px;
+  border: 0.5px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.exs-present-mergebar button:hover {
+  background: var(--exs-hover);
+}
+
+/* 窄画布：右栏落到片单下方，两栏各自滚 */
 @container (max-width: 1000px) {
   .exs-present-drawer__body {
     grid-template-columns: 1fr;
@@ -5690,10 +6121,6 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   .exs-present-inspector__rows {
     flex: 1 1 auto;
     max-height: none;
-  }
-
-  .exs-present-seq {
-    display: none;
   }
 }
 

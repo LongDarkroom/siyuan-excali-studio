@@ -65,7 +65,18 @@ import {
   type MotionRow,
   type PosePatch,
 } from "./presentation-motion.ts";
-import { drawBoxOf, drawFrame, isDrawableElement, type DrawBox, type DrawGeom, type DrawPoint } from "./presentation-draw.ts";
+import {
+  drawBoxOf,
+  drawFrame,
+  isDrawableElement,
+  isTraceableStroke,
+  strokePathOf,
+  traceFrame,
+  type DrawBox,
+  type DrawGeom,
+  type DrawPoint,
+  type StrokePath,
+} from "./presentation-draw.ts";
 import { buildSlideGraph, graphState, type GraphFrame, type GraphSide, type GraphState, type SlideGraph } from "./presentation-graph.ts";
 import {
   navEnd,
@@ -190,11 +201,12 @@ type DrawPatch = {
 
 /** 形状换成折线后，收笔要还原的字段（折线元素没有，返回 undefined） */
 function shapeRestoreOf(el: RunElement): DrawPatch["restore"] {
-  if (el.type === "line") return undefined;
+  // 折线和箭头本来就有 points，还原只写回点集，不需要换类型/圆角
+  if (el.type === "line" || el.type === "arrow") return undefined;
   return { type: el.type ?? "line", polygon: el.polygon, roundness: el.roundness };
 }
 
-/** 按快照把几何写回原样的补丁：折线回 points，形状回类型/圆角 */
+/** 按快照把几何写回原样的补丁：折线/箭头回 points，形状回类型/圆角 */
 function restorePatchOf(el: RunElement, want: number): DrawPatch {
   return {
     id: el.id,
@@ -202,7 +214,7 @@ function restorePatchOf(el: RunElement, want: number): DrawPatch {
     y: el.y,
     width: el.width ?? 0,
     height: el.height ?? 0,
-    points: el.type === "line" ? el.points ?? [] : undefined,
+    points: el.type === "line" || el.type === "arrow" ? el.points ?? [] : undefined,
     opacity: want,
     restore: shapeRestoreOf(el),
   };
@@ -834,6 +846,8 @@ export function StudioApp(props: StudioProps) {
     directional: boolean;
     /** 进片场时是否申请过全屏（退出时要退回） */
     fullscreen: boolean;
+    /** 第九十一轮：进片场定格的「自动档」类型默认（放映中改设置不追，下一场生效） */
+    autoEffects: Record<string, EffectId>;
   } | null>(null);
   /**
    * 第七十六轮：导航状态是放映的**唯一真源**（页 + 页内分条 + 访问栈 + 已走边）。
@@ -1260,8 +1274,8 @@ export function StudioApp(props: StudioProps) {
     if (!api || !presentOpen || presenting || deck.slides.length === 0) return [];
     const s = deck.slides[Math.min(presentSel, deck.slides.length - 1)];
     if (!s) return [];
-    return pageRows(api.getSceneElements() as unknown as RunElement[], s.id);
-  }, [api, deck.slides, motionRev, presentOpen, presentSel, presenting]);
+    return pageRows(api.getSceneElements() as unknown as RunElement[], s.id, presentSettings.autoEffects);
+  }, [api, deck.slides, motionRev, presentOpen, presentSel, presenting, presentSettings.autoEffects]);
   /**
    * 选中页记忆：抽屉开着且不在放映时跟着选页写回。
    * 放映中跳过——那是在看片，不该把「上次编排的那页」改成最后一页。
@@ -1274,6 +1288,16 @@ export function StudioApp(props: StudioProps) {
   /** 编排写入和页序一样：正常场景更新（可撤销、会标脏、自动保存照旧） */
   const setRowMotion = useCallback(
     (ids: readonly string[], edit: MotionEdit): void => applyDeckPatches(setMotionPatch(ids, edit)),
+    [applyDeckPatches],
+  );
+  /**
+   * 第九十轮：抽屉里重排一次顺序 → 一次写死 1..n 步。
+   * 必须合成一次 applyDeckPatches：一次重排只该是一个撤销点；
+   * 原本未编步的条目在这里也就变成了显式步号（「固定顺序」同一个入口）。
+   */
+  const reorderRows = useCallback(
+    (edits: { ids: string[]; step: number }[]): void =>
+      applyDeckPatches(edits.flatMap((e) => setMotionPatch(e.ids, { step: e.step }))),
     [applyDeckPatches],
   );
   /** 第八十轮：抽屉内联改名 = 改画框名（vendor 自己的画框名，不另存一份） */
@@ -1559,8 +1583,10 @@ export function StudioApp(props: StudioProps) {
     /** 基准：x/y 是进动画那一刻的真坐标，el 是同一份原始元素（points 只读快照） */
     base: Map<string, { x: number; y: number; el: RunElement }>;
     target: Map<string, number>;
-    /** 效果为「划线」的分组 → 可划部分的外接框；null = 这一条没有可划的，回落成浮现 */
+    /** 效果为「划线」的分组 → 可划部分的外接框；null = 这一组没有填充面，靠 trace 画 */
     draw: Map<string, DrawBox | null>;
+    /** 箭头/连线的描线路径（按元素）：有它就走「沿路径长出来」，没有就淡入 */
+    trace: Map<string, StrokePath | null>;
     /** 划线进度里已经藏掉 / 已经收笔的元素：只在状态翻转那一帧写一次 */
     hidden: Set<string>;
     settled: Set<string>;
@@ -1575,8 +1601,8 @@ export function StudioApp(props: StudioProps) {
     for (const [id, b] of m.base) {
       const want = m.target.get(id) ?? OPACITY_DEFAULT;
       out.push({ id, x: b.x, y: b.y, opacity: want });
-      // 划线中途被打断：几何也要按快照回填，否则元素停在「擦了一半」的形状
-      if (isDrawableElement(b.el)) geo.push(restorePatchOf(b.el, want));
+      // 划线中途被打断：几何也要按快照回填，否则元素停在「擦了一半 / 画了一半」的形状
+      if (isDrawableElement(b.el) || isTraceableStroke(b.el)) geo.push(restorePatchOf(b.el, want));
     }
     applyDrawPatches(geo);
     applyPosePatches(out);
@@ -1596,6 +1622,7 @@ export function StudioApp(props: StudioProps) {
       const base = new Map<string, { x: number; y: number; el: RunElement }>();
       const target = new Map<string, number>();
       const draw = new Map<string, DrawBox | null>();
+      const trace = new Map<string, StrokePath | null>();
       for (const g of groups) {
         for (const id of g.ids) {
           const e = live.get(id);
@@ -1609,6 +1636,11 @@ export function StudioApp(props: StudioProps) {
             return e ? [e] : [];
           });
           draw.set(g.key, drawBoxOf(members));
+          for (const id of g.ids) {
+            const e = live.get(id);
+            if (!e || isDrawableElement(e) || !isTraceableStroke(e)) continue;
+            trace.set(id, strokePathOf(e));
+          }
         }
       }
       if (base.size === 0) return false;
@@ -1618,6 +1650,7 @@ export function StudioApp(props: StudioProps) {
         base,
         target,
         draw,
+        trace,
         hidden: new Set(),
         settled: new Set(),
       };
@@ -1633,27 +1666,24 @@ export function StudioApp(props: StudioProps) {
           const local = elapsed - g.delay;
           if (local < EFFECTS[g.effect].ms) done = false;
           const p = poseOf(g.effect, local);
-          const box = run.draw.get(g.key);
-          if (box === null) {
-            // 标了划线但这组没有可划的折线/形状：退回浮现，别把文字/图片硬切出来
-            for (const id of g.ids) {
-              const b = run.base.get(id);
-              if (!b) continue;
-              out.push({ id, x: b.x, y: b.y, opacity: Math.round((run.target.get(id) ?? OPACITY_DEFAULT) * p.o) });
-            }
-            continue;
-          }
-          if (box) {
+          if (g.effect === "draw") {
+            const box = run.draw.get(g.key) ?? null;
             for (const id of g.ids) {
               const b = run.base.get(id);
               if (!b) continue;
               const want = run.target.get(id) ?? OPACITY_DEFAULT;
-              if (!isDrawableElement(b.el)) {
-                // 绑定文字这类成员：跟着前沿淡入，不参与裁剪
+              // 填充面走前沿清洗扫；箭头/连线沿自己的路径长出来
+              const f =
+                isDrawableElement(b.el) && box
+                  ? drawFrame(b.el, box, p.o, want)
+                  : run.trace.get(id)
+                    ? traceFrame(b.el, run.trace.get(id) as StrokePath, p.o)
+                    : null;
+              if (!f) {
+                // 绑定文字、直角路由箭头这类成员：跟着淡入，不参与几何
                 out.push({ id, x: b.x, y: b.y, opacity: Math.round(want * p.o) });
                 continue;
               }
-              const f = drawFrame(b.el, box, p.o, want);
               if (f.kind === "hidden") {
                 if (!run.hidden.has(id)) {
                   run.hidden.add(id);
@@ -1697,7 +1727,7 @@ export function StudioApp(props: StudioProps) {
         for (const [id, b] of run.base) {
           const want = run.target.get(id) ?? OPACITY_DEFAULT;
           final.push({ id, x: b.x, y: b.y, opacity: want });
-          if (isDrawableElement(b.el)) finalGeo.push(restorePatchOf(b.el, want));
+          if (isDrawableElement(b.el) || isTraceableStroke(b.el)) finalGeo.push(restorePatchOf(b.el, want));
         }
         applyDrawPatches(finalGeo);
         applyPosePatches(final);
@@ -1938,7 +1968,7 @@ export function StudioApp(props: StudioProps) {
       case "reveal": {
         snap.reveal = value as boolean;
         snap.plans = snap.plans.map((p, i) =>
-          planPage(snap.thumbElements, p.frameId, snap.reveal && snap.pageReveal[i]),
+          planPage(snap.thumbElements, p.frameId, snap.reveal && snap.pageReveal[i], snap.autoEffects),
         );
         const cur = presentNavRef.current;
         if (!cur) return;
@@ -2011,7 +2041,7 @@ export function StudioApp(props: StudioProps) {
    * - **关画框渲染**：frameRendering 关掉，框线/画框名/裁剪都没了，成员照常渲染。
    *   （这是「放映全空」的根治点——不再把画框 opacity 压 0，也不清零非当前页。）
    */
-  const enterPresentation = useCallback((startFrameId?: string): void => {
+  const enterPresentation = useCallback((startFrameId?: string, startStep?: number): void => {
     if (!api) return;
     const all = api.getSceneElements() as unknown as RunElement[];
     const shown = visibleSlides(deck);
@@ -2034,7 +2064,7 @@ export function StudioApp(props: StudioProps) {
     /** 页面级例外：这一页设成「整页一起出」时，全局逐条开关管不着它 */
     const pageReveal = shown.map((s) => s.reveal !== "all");
     presentSnapRef.current = {
-      plans: shown.map((s, i) => planPage(all, s.id, ps.reveal && pageReveal[i])),
+      plans: shown.map((s, i) => planPage(all, s.id, ps.reveal && pageReveal[i], ps.autoEffects)),
       titles: shown.map((s) => t(slideTitle(s))),
       graph,
       original: snapshotOpacity(all),
@@ -2063,6 +2093,7 @@ export function StudioApp(props: StudioProps) {
       autoAdvance: ps.autoAdvance,
       directional: ps.directional,
       fullscreen: ps.fullscreen,
+      autoEffects: { ...ps.autoEffects },
     };
     // 即时项的运行时状态：改设置立刻看得到，不改快照
     setPresentScrim(ps.scrim);
@@ -2103,7 +2134,7 @@ export function StudioApp(props: StudioProps) {
     const plans = presentSnapRef.current.plans;
     const at = startFrameId ? shown.findIndex((s) => s.id === startFrameId) : -1;
     const startPage = at >= 0 ? at : graph ? Math.max(0, shown.findIndex((s) => s.id === graph.start)) : 0;
-    const nav = navStart(plans, graph, startPage);
+    const nav = navStart(plans, graph, startPage, startStep);
     presentNavRef.current = nav;
     setPresentOpen(false);
     // 放映中底栏的页码预览也要缩略图：抽屉没来得及画完的，用进片场快照继续补
@@ -2111,10 +2142,32 @@ export function StudioApp(props: StudioProps) {
     scheduleThumbs(true);
     setPresentSel(nav.page);
     focusFrame(plans[nav.page].frameId, presentSnapRef.current.fit);
-    presentGo(nav, "enter");
+    if (nav.step > 0) {
+      /*
+       * 第九十轮「从这一步播放」：先把前几步**无动画**落到现场，再从这一步推进。
+       * 直接 presentGo(nav,"enter") 会把 0..N 全当成「新露出」一起飞进来，
+       * 用户看到的是整页突然弹一下，而不是「前几步已就位、这一次走这一条」。
+       */
+      const before = nav.step - 1;
+      presentNavRef.current = { ...nav, step: before };
+      presentApply({ page: nav.page, step: before }, "jump");
+      presentGo(nav, "advance");
+    } else {
+      presentGo(nav, "enter");
+    }
     // 全屏：进片场就申请（失败静默降级为窗口模式）
     if (ps.fullscreen) applyFullscreen(true);
-  }, [api, applyFullscreen, deck, focusFrame, notify, presentGo, readPresentSettings, scheduleThumbs]);
+  }, [
+    api,
+    applyFullscreen,
+    deck,
+    focusFrame,
+    notify,
+    presentApply,
+    presentGo,
+    readPresentSettings,
+    scheduleThumbs,
+  ]);
 
   /**
    * 退片场：按快照回填 opacity + 全文 + 视口 + viewModeEnabled，然后才摘闸。
@@ -2270,8 +2323,14 @@ export function StudioApp(props: StudioProps) {
     : null;
 
   const startPresentation = useCallback((): void => enterPresentation(), [enterPresentation]);
-  /** 页卡播放键：从这个画框所在页起播（传 id 而不是下标，页序/入片变了也不会错页） */
-  const startPresentationAt = useCallback((id: string): void => enterPresentation(id), [enterPresentation]);
+  /**
+   * 页卡播放键：从这个画框所在页起播（传 id 而不是下标，页序/入片变了也不会错页）。
+   * 第九十轮：带 step（1 起）时从这一页的第几步起播，「从这一步播放」用它。
+   */
+  const startPresentationAt = useCallback(
+    (id: string, step?: number): void => enterPresentation(id, step === undefined ? undefined : step - 1),
+    [enterPresentation],
+  );
 
   /** 幕布/HUD 当前页的计划；退出那一帧 presenting 先置空，不会读到已清的快照 */
   const presentPlan = presenting ? presentSnapRef.current?.plans[presenting.page] : undefined;
@@ -3418,6 +3477,7 @@ export function StudioApp(props: StudioProps) {
           onToggleReveal={toggleDeckReveal}
           rows={presentRows}
           onRowMotion={setRowMotion}
+          onReorder={reorderRows}
           onRename={renameDeckSlide}
           onStart={startPresentation}
           onStartAt={startPresentationAt}

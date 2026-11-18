@@ -35,16 +35,24 @@ export type NavState = {
   done: boolean;
 };
 
-/** 放映开始时的状态：起点页 + 空的访问栈/已走边 */
+/**
+ * 放映开始时的状态：起点页 + 空的访问栈/已走边。
+ * startStep（0 起）用于「从这一步播放」：先把前几步点亮，游标停在指定那一步；
+ * 越界夹进本页的有效范围，整页页（units 为空）仍是 -1。
+ */
 export function navStart(
   plans: readonly RunPlan[],
   graph: SlideGraph | null,
   startPage = 0,
+  startStep?: number,
 ): NavState {
   const page = clampPage(plans, startPage);
+  const lo = firstStep(plans[page]);
+  const hi = lastStep(plans[page]);
+  const step = startStep === undefined ? lo : Math.min(Math.max(startStep, lo), Math.max(lo, hi));
   return {
     page,
-    step: firstStep(plans[page]),
+    step,
     stack: [page],
     traveled: [],
     done: false,

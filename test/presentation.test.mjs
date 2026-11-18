@@ -277,9 +277,9 @@ test("抽屉只读片单、只发意图；写数据与动镜头都在 StudioApp"
   assert.equal(DRAWER.includes("api"), false, "抽屉拿不到 imperative API");
   assert.equal(/from "siyuan"|updateScene|scrollToContent/.test(DRAWER), false, "不许直接写场景或动镜头");
   assert.match(DRAWER, /disabled=\{shown === 0\}/, "没有入片页时「开始演示」是灰的");
-  // 第八十一轮：↑↓ 改页序退役，页序靠拖把手；键盘用户仍有 ↑↓ 兜底
-  assert.equal(/aria-label=\{t\("上移"\)\}/.test(DRAWER), false, "上移按钮已退役");
-  assert.equal(/aria-label=\{t\("下移"\)\}/.test(DRAWER), false, "下移按钮已退役");
+  // 第八十一轮：页序靠拖把手；第九十轮：↑↓ 是「出场小组」的操作，和页序各管各
+  assert.match(DRAWER, /aria-label=\{t\("并入上一步"\)\}/, "组操作：并入上一步");
+  assert.match(DRAWER, /aria-label=\{t\("上移"\)\}/, "组操作：上移（不是页序）");
   assert.match(DRAWER, /data-grip=\{s\.id\}/, "每页左侧有拖拽把手");
   assert.match(DRAWER, /onPointerDown=\{\(e\) => beginDrag\(e, s\.id, i\)\}/, "把手按下进入拖动（指针事件，不走 HTML5 DnD）");
   assert.match(
@@ -617,7 +617,7 @@ test("新建页：按固定比例插画框，一次 updateScene、随后飞过�
 /* ------------------------------ ⑦ 第八十七轮：从这页起播 ------------------------------ */
 
 test("页卡播放键：从这一页进片场，不放映的页是灰的", () => {
-  assert.match(DRAWER, /onStartAt: \(id: string\) => void;/, "抽屉接「从这页起」的意图");
+  assert.match(DRAWER, /onStartAt: \(id: string, step\?: number\) => void;/, "抽屉接「从这页起 / 从这一步起」的意图");
   assert.match(DRAWER, /props\.onStartAt\(s\.id\)/, "按画框 id 起播，不按下标");
   assert.match(DRAWER, /disabled=\{!s\.included\}/, "不放映的页不给起播");
   assert.match(DRAWER, /从这页开始放映/, "按钮有可见的说明文案");
@@ -629,7 +629,7 @@ test("页卡播放键：从这一页进片场，不放映的页是灰的", () =>
 });
 
 test("宿主：起播页 = 指定画框 > 图起点 > 第一页", () => {
-  assert.match(APP, /const enterPresentation = useCallback\(\(startFrameId\?: string\): void => \{/, "进片场接可选起点");
+  assert.match(APP, /const enterPresentation = useCallback\(\(startFrameId\?: string, startStep\?: number\): void => \{/, "进片场接可选起点：画框 id + 页内第几步");
   assert.match(
     APP,
     /const at = startFrameId \? shown\.findIndex\(\(s\) => s\.id === startFrameId\) : -1;/,
@@ -642,8 +642,8 @@ test("宿主：起播页 = 指定画框 > 图起点 > 第一页", () => {
   );
   assert.match(
     APP,
-    /const startPresentationAt = useCallback\(\(id: string\): void => enterPresentation\(id\), \[enterPresentation\]\);/,
-    "两枚播放键共用同一条进片场链路",
+    /const startPresentationAt = useCallback\(\s*\(id: string, step\?: number\): void => enterPresentation\(id, step === undefined \? undefined : step - 1\),\s*\[enterPresentation\],\s*\);/,
+    "两枚播放键共用同一条进片场链路；「从这一步播放」把 1 起步号换成 0 起游标",
   );
   assert.match(APP, /onStartAt=\{startPresentationAt\}/, "抽屉的播放键接到宿主");
 });

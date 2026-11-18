@@ -23,14 +23,19 @@ import {
   defaultEffect,
   effectOfUnit,
   mergeByStep,
+  mergeOrderGroup,
   motionGroups,
   motionRows,
   motionTotalMs,
   poseOf,
   resolveEffect,
   rowHotspots,
+  moveOrderGroup,
+  orderEdits,
+  splitOrderGroup,
+  orderedGroups,
+  playIndexOf,
   rowsSignature,
-  sequenceGroups,
   setMotionPatch,
   stepOfUnit,
 } from "../src/studio/presentation-motion.ts";
@@ -82,13 +87,29 @@ test("poseOf：没到点是满偏移，落定必须归零（不许留小数）",
   assert.ok(poseOf("fade", EFFECTS.fade.ms * 0.6).dy > 0, "没过冲的档在同一点仍停在起点那一侧");
 });
 
-test("默认档位按类型给：文本浮现、箭头连线滑入、图片升起、形状弹入", () => {
+test("默认档位按类型给：文本浮现、图形与箭头画出来、图片升起、其余弹入", () => {
   assert.equal(defaultEffect("text"), "fade");
-  assert.equal(defaultEffect("arrow"), "slide");
-  assert.equal(defaultEffect("line"), "slide");
+  assert.equal(defaultEffect("arrow"), "draw");
+  assert.equal(defaultEffect("line"), "draw");
   assert.equal(defaultEffect("image"), "rise");
-  assert.equal(defaultEffect("rectangle"), "pop");
+  assert.equal(defaultEffect("rectangle"), "draw");
+  assert.equal(defaultEffect("ellipse"), "draw");
+  assert.equal(defaultEffect("diamond"), "draw");
+  assert.equal(defaultEffect("freedraw"), "pop", "画笔还没得描，仍然弹入");
   assert.equal(defaultEffect(undefined), "pop", "认不出的类型也要有档，不许 undefined");
+});
+
+test("自动档：类型默认可以改，但只覆盖「自动」的行，显式选过的仍听自己的", () => {
+  const overrides = { rectangle: "pop" };
+  assert.equal(defaultEffect("rectangle", overrides), "pop", "矩形改成弹入");
+  assert.equal(defaultEffect("ellipse", overrides), "draw", "没表的类型仍走内置");
+  assert.equal(defaultEffect("rectangle"), "draw", "不传覆盖表时口径不变");
+  const rows = pageRows([frame("f1"), el("auto"), el("fixed", meta({ effect: "fade" }))], "f1", overrides);
+  assert.deepEqual(
+    rows.map((r) => [r.kind, r.effect, r.auto]),
+    [["rectangle", "pop", true], ["rectangle", "fade", false]],
+    "自动行走新默认、显式档不动；行上带带头类型，抽屉据此写设置",
+  );
 });
 
 test("显式选过的效果优先，且跟着带头元素走（容器不是它的绑定文字）", () => {
@@ -98,7 +119,7 @@ test("显式选过的效果优先，且跟着带头元素走（容器不是它�
 
   const rect = el("box2");
   const txt = { ...el("t2", { type: "text", containerId: "box2" }), text: "正文" };
-  assert.equal(effectOfUnit(["box2", "t2"], [rect, txt]), "pop", "没显式选时按带头的矩形给弹入，不被 text 抢成浮现");
+  assert.equal(effectOfUnit(["box2", "t2"], [rect, txt]), "draw", "没显式选时按带头的矩形给划线，不被 text 抢成浮现");
 
   const onlyText = { ...el("t3", { type: "text" }), text: "独立文本" };
   assert.equal(effectOfUnit(["t3"], [onlyText]), "fade");
@@ -150,20 +171,74 @@ test("同号合并成一次按键；编过步的先出，没编的排在后面�
   assert.equal(step0.find((p) => p.id === "second")?.opacity, 0);
 });
 
-test("出场顺序预览：步号升序、未编步合成一组排最后；整页只留一组", () => {
+test("播放顺序分组：显式步升序在前，未编步每条自成一组排最后（与 mergeByStep 同序同长）", () => {
   const row = (key, label, step) => ({ key: `e:${key}`, ids: [key], label, effect: "fade", auto: true, step });
   const rows = [row("a", "A", 2), row("b", "B", null), row("c", "C", 1), row("d", "D", 2)];
-  assert.deepEqual(sequenceGroups(rows, false), [
-    { key: "s:1", step: 1, labels: ["C"] },
-    { key: "s:2", step: 2, labels: ["A", "D"] },
-    { key: "auto", step: null, labels: ["B"] },
-  ]);
-  assert.deepEqual(sequenceGroups([], false), [], "空页没有预览");
+  const groups = orderedGroups(rows, false);
   assert.deepEqual(
-    sequenceGroups(rows, true),
-    [{ key: "all", step: null, labels: [], together: true }],
-    "整页模式顺序与步号都不作数",
+    groups.map((g) => [g.key, g.step, g.auto, g.playIndex, g.rows.map((r) => r.label)]),
+    [
+      ["s:1", 1, false, 1, ["C"]],
+      ["s:2", 2, false, 2, ["A", "D"]],
+      ["auto:e:b", null, true, 3, ["B"]],
+    ],
+    "「自动」不再合并成一坨：每条未编步的都可能是一次独立按键",
   );
+  // 和放映的计划同序同长：playIndex 才能直接当「放映游标 + 1」
+  const all = [
+    { ...row("a", "A", 2), ids: ["a"] },
+    { ...row("c", "C", 1), ids: ["c"] },
+    { ...row("b", "B", null), ids: ["b"] },
+  ];
+  assert.equal(orderedGroups(all, false).length, mergeByStep(all).length, "组数 = 放映按键数");
+  assert.deepEqual(orderedGroups([], false), [], "空页没有分组");
+  const whole = orderedGroups(rows, true);
+  assert.deepEqual(
+    whole.map((g) => [g.key, g.playIndex, g.rows.length]),
+    [["all", 1, 4]],
+    "整页模式只有一组，顺序与步号都不作数",
+  );
+});
+
+test("重排：换位 / 并入上一步 / 固定顺序 1..n；每行的播放步号跟着组走", () => {
+  const row = (key, step) => ({ key: `e:${key}`, ids: [key], label: key, effect: "fade", auto: true, step });
+  const rows = [row("a", null), row("b", null), row("c", null)];
+  const groups = orderedGroups(rows, false);
+  assert.deepEqual(groups.map((g) => g.key), ["auto:e:a", "auto:e:b", "auto:e:c"]);
+
+  const moved = moveOrderGroup(groups, 2, 0);
+  assert.deepEqual(moved.map((g) => g.key), ["auto:e:c", "auto:e:a", "auto:e:b"], "把第三条拖到最前");
+  assert.deepEqual(
+    orderEdits(moved),
+    [
+      { ids: ["c"], step: 1 },
+      { ids: ["a"], step: 2 },
+      { ids: ["b"], step: 3 },
+    ],
+    "定稿就是按现在的组序写 1..n（未编步的也写死）",
+  );
+
+  const merged = mergeOrderGroup(groups, 1);
+  assert.equal(merged.length, 2);
+  assert.deepEqual(merged[0].rows.map((r) => r.key), ["e:a", "e:b"], "并入上一步 = 两组的行走同一个按键");
+  assert.deepEqual(orderEdits(merged), [
+    { ids: ["a", "b"], step: 1 },
+    { ids: ["c"], step: 2 },
+  ]);
+
+  const split = splitOrderGroup(merged, 0);
+  assert.equal(split.length, 3, "拆回独立步：两条的合并组变回两条独立条");
+  assert.deepEqual(split.map((g) => g.rows.map((r) => r.key)), [["e:a"], ["e:b"], ["e:c"]], "条内容与顺序都不丢");
+  assert.deepEqual(split.map((g) => g.playIndex), [1, 2, 3], "拆完重排播放步号");
+  assert.deepEqual(splitOrderGroup(groups, 1).length, groups.length, "单条组不拆，原样返回");
+
+  // 越界/原地：原样返回（调用方据此不写盘）
+  assert.deepEqual(moveOrderGroup(groups, 0, 0), groups);
+  assert.deepEqual(moveOrderGroup(groups, 0, 9), groups);
+  assert.deepEqual(mergeOrderGroup(groups, 0), groups);
+
+  const play = playIndexOf(moved);
+  assert.deepEqual([...play.entries()], [["e:c", 1], ["e:a", 2], ["e:b", 3]], "画布徽标 = 播放步号");
 });
 
 test("页面上的步号来自画框内元素，别页的编排不参与", () => {
@@ -193,6 +268,34 @@ test("行包围盒：绑定文字算进容器那条，热区按画框百分比�
   assert.deepEqual(rowHotspots(rows, { x: 0, y: 0, w: 0, h: 0 }), [], "没几何就不画热区");
 });
 
+test("编号落点：箭头取折线弧长中点，三条同起点分叉的箭头不再叠在同一个框角", () => {
+  const pts = (points) => ({ points });
+  const all = [
+    frame("f1"),
+    { ...el("a1", { type: "arrow", x: 100, y: 100, width: 100, height: 60 }), ...pts([[0, 0], [100, 60]]) },
+    { ...el("a2", { type: "arrow", x: 100, y: 100, width: 100, height: 60 }), ...pts([[0, 0], [50, 0], [100, 60]]) },
+    { ...el("a3", { type: "arrow", x: 100, y: 100, width: 100, height: 60 }), ...pts([[0, 0], [0, 60], [100, 60]]) },
+    el("box", { x: 200, y: 150, width: 100, height: 50 }),
+  ];
+  const rows = pageRows(all, "f1");
+  const by = new Map(rows.map((r) => [r.key, r]));
+
+  assert.deepEqual(by.get("e:a1").anchor, { x: 150, y: 130 }, "直线箭头 = 线段中点");
+  // 折线：按弧长走一半，落在线帽上（不是外接框的 (100,100)）
+  const a2 = by.get("e:a2").anchor;
+  assert.ok(Math.abs(a2.x - 158.995) < 0.01 && Math.abs(a2.y - 110.794) < 0.01, `折线中点落在第二段：${a2.x},${a2.y}`);
+  const a3 = by.get("e:a3").anchor;
+  assert.ok(Math.abs(a3.x - 120) < 0.01 && Math.abs(a3.y - 160) < 0.01, `L 形按弧长取点：${a3.x},${a3.y}`);
+  const xs = [by.get("e:a1").anchor, a2, a3].map((p) => `${Math.round(p.x)},${Math.round(p.y)}`);
+  assert.equal(new Set(xs).size, 3, "三条箭头的徽标必须落在三个不同位置");
+
+  assert.equal(by.get("e:a1").linear, true, "箭头默认不描外接虚框");
+  assert.deepEqual(by.get("e:a1").wire, [{ x: 100, y: 100 }, { x: 200, y: 160 }], "折线坐标换算到场景坐标（给线状命中带用）");
+  assert.equal(by.get("e:box").wire, null, "非线状元素没有命中线");
+  assert.deepEqual(by.get("e:box").anchor, { x: 210, y: 160 }, "普通元素仍落在框内左上角");
+  assert.equal(by.get("e:box").linear, false);
+});
+
 /* ------------------------------ 错峰分组 ------------------------------ */
 
 test("同一步里的视觉条数决定错峰；整页模式一律不错峰", () => {
@@ -200,7 +303,7 @@ test("同一步里的视觉条数决定错峰；整页模式一律不错峰", ()
   const ids = ["a", "b", "c", "d"];
   const g = motionGroups(all, ids);
   assert.deepEqual(g.map((x) => x.delay), [0, STAGGER_MS, STAGGER_MS * 2, STAGGER_MS * 3], "一条条排开");
-  assert.equal(motionTotalMs(g), STAGGER_MS * 3 + EFFECTS.pop.ms);
+  assert.equal(motionTotalMs(g), STAGGER_MS * 3 + EFFECTS[defaultEffect("rectangle")].ms);
   assert.deepEqual(motionGroups(all, ids, true).map((x) => x.delay), [0, 0, 0, 0], "整页一起出 = 错峰归零");
 });
 
@@ -209,7 +312,7 @@ test("错峰有上限：条数再多也不会排成一列长龙", () => {
   const g = motionGroups(all, all.slice(1).map((e) => e.id));
   const delays = g.map((x) => x.delay);
   assert.equal(Math.max(...delays), STAGGER_SLOTS * STAGGER_MS, "第 6 条起挤在同一时刻");
-  assert.equal(motionTotalMs(g), STAGGER_SLOTS * STAGGER_MS + EFFECTS.pop.ms);
+  assert.equal(motionTotalMs(g), STAGGER_SLOTS * STAGGER_MS + EFFECTS[defaultEffect("rectangle")].ms);
 });
 
 test("动画分组跟编排分组同口径：绑定文字进容器的组、同组的元素一条", () => {
@@ -299,8 +402,14 @@ test("抽屉：效果按钮说人话 + 菜单 + 步号，同值不写", () => {
 
   assert.match(DRAWER, /aria-haspopup="menu"/, "效果按钮打开菜单");
   assert.match(DRAWER, /EFFECT_IDS\.map\(\(id\) =>/, "菜单里四档齐全");
-  assert.match(DRAWER, /props\.onRowMotion\(cur\.row\.ids, \{ effect \}\)/, "菜单选项写入效果");
-  assert.match(DRAWER, /effect === null \? cur\.row\.auto : !cur\.row\.auto && cur\.row\.effect === effect/, "同值不写（自动档也不重复写）");
+  assert.match(DRAWER, /props\.onRowMotion\(row\.ids, \{ effect \}\)/, "菜单选项写入效果");
+  assert.match(DRAWER, /if \(effect === null \? row\.auto : !row\.auto && row\.effect === effect\) return;/, "同值不写（自动档也不重复写）");
+  assert.match(DRAWER, /\{type\}以后默认/, "菜单底部能改这一类的自动默认");
+  assert.match(DRAWER, /props\.onSetting\("autoEffects", next\)/, "改类型默认写进放映偏好（不改元素元数据）");
+  assert.match(DRAWER, /isAutoFxType\(fxRow\.kind\)/, "只给认识的类型提供设置项");
+  assert.match(DRAWER, /props\.rows\.find\(\(r\) => r\.key === fxMenu\.row\.key\) \?\? fxMenu\.row/, "菜单开着改默认时用最新行，勾选不滞后");
+  assert.match(APP, /pageRows\(api\.getSceneElements\(\) as unknown as RunElement\[\], s\.id, presentSettings\.autoEffects\)/, "抽屉行也跟着类型默认走");
+  assert.match(CSS, /\.exs-present-fxchip--on \{[\s\S]{0,260}var\(--exs-accent\)/, "选中的胶囊有强调色");
   assert.match(DRAWER, /if \(next !== row\.step\) props\.onRowMotion\(row\.ids, \{ step: next \}\);/, "步号同值不写");
   assert.equal(DRAWER.includes("FX_ICONS"), false, "四枚字形退役：图标认不出「会怎么飞」");
 });
@@ -329,8 +438,68 @@ test("本页编排画布：热区 ↔ 右栏行双向联动，右键直接换效
   assert.match(APP, /stageThumbs=\{presentStageThumbs\}/, "宿主递本页高清预览");
   assert.match(APP, /maxWidthOrHeight: big \? STAGE_MAX : THUMB_MAX/, "同一串行队列出两种尺寸");
   assert.match(CSS, /\.exs-present-stage__canvas \{[^}]*position: relative;/, "热区以画布为定位基准");
+  assert.match(
+    CSS,
+    /\.exs-root\[data-theme-mode="dark"\] \.exs-present-stage__img \{\s*filter: brightness\(0\.88\);/, 
+    "深色模式大预览降亮，别拿一整块白晃眼",
+  );
   assert.match(CSS, /\.exs-present-hotspot::before \{[^}]*inset: -6px;/, "细线/箭头的热区要外扩");
   assert.match(CSS, /\.exs-present-mrow--sel \{[^}]*border-color: var\(--exs-accent\);/, "选中行与热区同色环");
+});
+
+test("编号徽标独立一层：落点跟元素本体走，撞车让位，箭头默认不描整块虚框", () => {
+  assert.match(DRAWER, /const ax = \(r\.anchor\.x - selSlide\.x\) \* stageSx;/, "落点用行的锚点，不再取热区的外接框角");
+  assert.match(DRAWER, /if \(ax < 0 \|\| ax > stageW \|\| ay < 0 \|\| ay > stageH\) continue;/, "锚点在框外的条不硬塞回框内");
+  assert.match(DRAWER, /!placed\.some\(\(p\) => Math\.abs\(p\.x - x\) < 22 && Math\.abs\(p\.y - y\) < 18\)/, "撞车就找空位");
+  assert.match(DRAWER, /"exs-present-badge" \+/, "徽标不再嵌在热区按钮里");
+  assert.equal(DRAWER.includes("exs-present-hotspot__no"), false, "旧的内嵌徽标退役");
+  assert.match(DRAWER, /r\?\.linear \? " exs-present-hotspot--line" : ""/, "箭头/连线的热区不描整块虚框");
+  assert.match(CSS, /\.exs-present-badge \{[^}]*cursor: grab;/, "徽标现在就是拖拽把手");
+  assert.match(CSS, /\.exs-present-badge \{[^}]*transform: translate\(-50%, -50%\);/, "落点即徽标中心");
+  assert.match(CSS, /\.exs-present-hotspot--line \{[^}]*outline-color: transparent;/, "折线外接框默认透明");
+});
+
+test("画面徽标拖拽：预览顺序、松手才写一次、整页模式不给拖", () => {
+  assert.match(DRAWER, /onPointerDown=\{\(e\) => beginBadgeDrag\(e, b\.key\)\}/, "徽标按下即开始拖顺序");
+  assert.match(DRAWER, /dataset\.badgekey/, "徽标带 key，落点判定能互相找到");
+  assert.match(DRAWER, /Math\.hypot\(ev\.clientX - c\.startX, ev\.clientY - c\.startY\) < 4/, "4px 起步阈值：单击只算选中");
+  assert.match(DRAWER, /selectRow\(key\);/, "没拖动就松手 = 选中那一条");
+  assert.match(DRAWER, /bestD = 44/, "离指针 44px 内才算接住");
+  assert.match(
+    DRAWER,
+    /Math\.abs\(dx\) > Math\.abs\(dy\) \? dx < 0 : dy < 0/,
+    "左/上半边插到前面，右/下半边插到后面",
+  );
+  assert.match(
+    DRAWER,
+    /commitOrder\(moveOrderGroup\(baseGroups, from, to\)\);/,
+    "拖动只做本地预览，松手才走一次 onReorder",
+  );
+  assert.match(DRAWER, /if \(together\) \{\s*\n\s*selectRow\(key\);/, "整页一起出时顺序不生效，徽标只当选区");
+  assert.match(DRAWER, /badgeGhostRef\.current\.style\.left = `\$\{x\}px`;/, "浮影跟手走 DOM，不逐帧整棵重渲染");
+  assert.match(DRAWER, /t\("放到第 \{n\} 步", \{ n: badgeDropNo \}\)/, "浮签说明会落到第几步");
+  assert.match(CSS, /\.exs-present-badge--src \{[^}]*border-style: dashed;/, "源徽标留虚线空位");
+  assert.match(CSS, /\.exs-present-badge--target \{[^}]*scale\(1\.24\)/, "落点徽标放大接住");
+  assert.match(CSS, /\.exs-present-badge-ghost \{[^}]*pointer-events: none;/, "浮影不吃事件");
+
+  const zh = json("i18n/zh_CN.json");
+  const en = json("i18n/en_US.json");
+  for (const k of ["拖动改出场顺序", "放到第 {n} 步", "松手取消", "整页一起出时不排顺序", "第 {n} 步：{name}，可拖动改顺序"]) {
+    assert.ok(k in zh, `zh_CN 缺键：${k}`);
+    assert.ok(k in en, `en_US 缺键：${k}`);
+  }
+});
+
+test("箭头改成线状命中带：沿笔画接点击，不再用外接框盖住别的条", () => {
+  assert.match(DRAWER, /if \(r\?\.wire\) return null;/, "线状元素不再画外接框热区");
+  assert.match(DRAWER, /className="exs-present-wire-hit"/, "每条折线一条命中带");
+  assert.match(DRAWER, /wireD\(row\)/, "命中带的路径就是折线本身");
+  assert.match(DRAWER, /onMouseEnter=\{\(e\) => \{\s*\n\s*setHoverKey\(spot\.key\);\s*\n\s*showTipSoon\(e, tipForRow\(row\)\);/, "悬停命中带出同一条的提示");
+  assert.match(DRAWER, /tipTimerRef\.current = window\.setTimeout\(\(\) => \{[\s\S]{0,220}\}, 650\);/, "画布说明卡停稳 650ms 才弹，扫过去不挡视野");
+  assert.match(DRAWER, /const hideTip = \(\): void => \{\s*\n\s*window\.clearTimeout\(tipTimerRef\.current\);/, "离开/点击时连计时一起取消，不留后弹");
+  assert.match(CSS, /\.exs-present-wire-hit \{[^}]*stroke-width: 14;/, "命中带够宽，细线也点得中");
+  assert.match(CSS, /\.exs-present-wire-hit \{[^}]*pointer-events: stroke;/, "只认笔画本身，空的外接框不吃点击");
+  assert.match(CSS, /\.exs-present-wire--on \.exs-present-wire-mark \{[^}]*stroke: var\(--exs-accent\);/, "选中时高亮画在笔画上");
 });
 
 /* ------------------------------ ③ 分层与文案 ------------------------------ */
@@ -351,14 +520,17 @@ test("presentation-motion 是纯逻辑：不碰 React / vendor / vendor 类型",
 
 test("样式：右栏常驻、行列表与顺序预览各自限高，控件不靠位移", () => {
   assert.match(CSS, /\.exs-present-inspector \{[^}]*border-left: 0\.5px solid var\(--exs-separator\);/, "右栏用分隔线而不是整块卡片");
-  assert.match(CSS, /\.exs-present-inspector__rows \{[^}]*max-height: 58%;[^}]*overscroll-behavior: contain;/, "行多就内部滚，给顺序预览留位置");
+  assert.match(CSS, /\.exs-present-inspector__rows \{[^}]*flex: 1 1 auto;[^}]*overscroll-behavior: contain;/, "顺序列表自己占满右栏剩余高度并内部滚");
   assert.match(CSS, /\.exs-present-inspector__rows--muted \{[^}]*opacity: 0\.45;/, "整页模式压暗行列表");
   assert.match(CSS, /\.exs-present-fxbtn \{[^}]*box-sizing: border-box;[^}]*width: 82px;/, "效果按钮按最长档定宽，切档不位移");
   assert.match(CSS, /\.exs-present-fxbtn__text \{[^}]*text-overflow: ellipsis;/, "名字超长截断，不挤走步号");
   assert.match(CSS, /\.exs-present-mrow__step \{[^}]*box-sizing: border-box;/, "本仓库没有全局 box-sizing，定宽输入框必须自己声明");
   assert.match(CSS, /\.exs-present-mrow__label \{[^}]*flex: 1;[^}]*text-overflow: ellipsis;/, "名字最长，独占弹性宽度");
   assert.match(CSS, /\.exs-present-seg__btn--on \{[^}]*background: var\(--exs-menu-solid\);/, "分段选中态用实心底色，不靠位移");
-  assert.match(CSS, /\.exs-present-seq__chip \{[^}]*text-overflow: ellipsis;/, "长名字截断，别把分组撑破");
+  assert.match(CSS, /\.exs-present-pgroup__ops button \{[^}]*box-sizing: border-box;/, "组操作按钮自己声明 border-box（本仓库无全局重置）");
+  assert.match(CSS, /\.exs-present-pgroup \{[^}]*border: 1px solid var\(--exs-card-border\);/, "组卡轮廓要看得见，不能靠 hover 才显形");
+  assert.match(CSS, /\.exs-present-mrow--on \{[^}]*border-color: var\(--exs-card-border\);/, "排进队的行卡也有清晰边界");
+  assert.match(CSS, /\.exs-present-stepper__go \{[^}]*border-color: var\(--exs-accent\);/, "「从这一步播放」是主按钮");
 });
 
 test("窄窗回退：容器查询把右栏落到片单下方，顺序预览让位", () => {
@@ -372,7 +544,7 @@ test("窄窗回退：容器查询把右栏落到片单下方，顺序预览让�
     /@container \(max-width: 1000px\) \{[\s\S]{0,320}grid-template-rows: minmax\(0, 1fr\) minmax\(0, 260px\);/,
     "窄窗改成上下两行",
   );
-  assert.match(CSS, /@container \(max-width: 1000px\) \{[\s\S]{0,1200}\.exs-present-seq \{\s*\n\s*display: none;/, "窄窗先砍顺序预览");
+  assert.match(CSS, /@container \(max-width: 1000px\) \{[\s\S]{0,360}grid-template-rows: minmax\(0, 1fr\) minmax\(0, 260px\);/, "窄窗右栏落到下方且保持可编辑");
 });
 
 test("i18n：四档效果名与编排说明双语齐备，英文确实是英文", () => {
@@ -386,8 +558,13 @@ test("i18n：四档效果名与编排说明双语齐备，英文确实是英文"
     "淡入并微微上移，最克制。",
     "带一点过冲再定住，最醒目。",
     "从下方升上来，位移更大。",
-    "从左滑入，适合箭头和连线。",
-    "跟着元素类型走：文本浮现、图形弹入、图片升起、箭头滑入。",
+    "从左滑入，适合整块内容。",
+    "跟着元素类型走：文本浮现、图形划线、图片升起、箭头画出。",
+    "已把第 {n} 步并入第 {m} 步",
+    "拆回独立步：每条各自出场",
+    "拆回独立步",
+    "{type}以后默认",
+    "恢复内置",
     "本页",
     "页单",
     "哪些元素能编排？",
