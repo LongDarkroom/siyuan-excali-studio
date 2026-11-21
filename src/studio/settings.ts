@@ -19,6 +19,13 @@ import { AUTO_FX_TYPES, defaultEffect, isEffectId, type EffectId } from "./prese
  */
 export const DEDICATED_BOARD_DIR = "assets/excali";
 
+/**
+ * 2026-11-21 根治：素材库目录从 <保存目录>/excali-libraries（在 assets 下，会被
+ * 思源「未引用资源」扫描）搬到 storage，与脚本/风格包/媒体图统一收口。
+ * 与 library-import-page.ts 的 DEFAULT_LIB_DIR、storage-migration.ts 的映射同值。
+ */
+export const LIB_DIR = "storage/excali-studio/libraries";
+
 /** 目录引用归一：反斜杠、前导斜杠、data/ 前缀、末尾斜杠都抹平。
  *  用户可能把目录写成 `/data/assets/excali/`、`assets\excali`；存之前只留相对形式。 */
 export function normalizeDirRef(dir: string): string {

@@ -113,6 +113,8 @@
   "这个画板还没有文件，无法重命名": "This board has no file yet; cannot rename",
   "已把 {n} 块白板迁入 {dir}": "Moved {n} whiteboard(s) into {dir}",
   "白板迁移未完成：{fail} 块失败，下次启动会重试": "Whiteboard migration incomplete: {fail} failed; will retry on next startup",
+  "已把 {n} 个功能文件移出资源目录": "Moved {n} data file(s) out of the assets folder",
+  "部分功能文件迁移未完成：{n} 个失败，下次启动重试": "Some data files could not be migrated: {n} failed; will retry on next startup",
   "无法识别的文档链接：{link}": "Unrecognized document link: {link}",
   "画板引擎加载失败：{msg}": "Failed to load canvas engine: {msg}",
   "无法解析图片数据": "Cannot parse image data",

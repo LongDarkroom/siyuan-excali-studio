@@ -301,12 +301,12 @@ function makeStyleDir(files) {
   return dir;
 }
 
-test("风格包·--list-styles 默认只报内置，目录口径 assets/excali-styles", async () => {
+test("风格包·--list-styles 默认只报内置，目录口径 storage/excali-studio/styles", async () => {
   const ws = makeWorkspace();
   const r = await cli(ws, ["list", "--workspace", ws, "--list-styles"]);
   assert.equal(r.code, 0);
   assert.equal(r.json.action, "styles");
-  assert.equal(r.json.styleDir, join(ws, "data", "assets", "excali-styles"));
+  assert.equal(r.json.styleDir, join(ws, "data", "storage", "excali-studio", "styles"));
   assert.deepEqual(r.json.styles.map((s) => s.name), ["pencil", "marker", "blueprint"]);
   assert.equal(r.json.styles[0].extends, "-", "内置包没有 extends，用 - 占位");
   assert.ok(r.json.styles.every((s) => s.label), "每条都要有展示名");

@@ -9,8 +9,12 @@
  * 把 path 读回字节再拼成 dataURL 注水（hydrate）——"存引用、用快照"。
  */
 
-/** 图片二进制的落盘目录（相对工作空间 /data；固定 assets/ 下，与保存目录设置解耦） */
-export const MEDIA_DIR = "assets/excali-media";
+/** 图片二进制的落盘目录（相对工作空间 /data；2026-11-21 从 assets/excali-media 搬到
+ *  storage/excali-studio/media，避免污染思源「未引用资源」；与保存目录设置解耦）。
+ *  存量白板 SVG 里写死旧路径，读取时由宿主 hydrateSceneFiles 做旧→新兜底。 */
+export const MEDIA_DIR = "storage/excali-studio/media";
+/** 旧目录（仅迁移/读时兜底用） */
+export const LEGACY_MEDIA_DIR = "assets/excali-media";
 
 /**
  * img 的 data-src / src 原文 → 资产引用（assets/…svg|png）。

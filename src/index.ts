@@ -20,7 +20,7 @@ import { hasNonEmptyScene, hasSceneInImage, sceneTextsEquivalent } from "./studi
 import { LOCAL_LIB_NAME, mergeLibFiles, parseLibFile, planLibraryWrites, serializeLibFile } from "./studio/stencil";
 // 第三十四轮：脚本侧边栏广播事件（独立小模块，避免主包拉进 React 图）
 import { HIGHLIGHTER_EVENT, RAIL_VIEW_EVENT, SCRIPT_PIN_EVENT } from "./studio/script-pin";
-import { DEFAULT_SETTINGS, DEDICATED_BOARD_DIR, normalizeDirRef, normalizePresentationSettings, normalizeSettings, type PresentationSettings, type StudioSettings } from "./studio/settings";
+import { DEFAULT_SETTINGS, DEDICATED_BOARD_DIR, LIB_DIR, normalizeDirRef, normalizePresentationSettings, normalizeSettings, type PresentationSettings, type StudioSettings } from "./studio/settings";
 // 第三十八轮：荧光笔配置（pens.ts 是纯数据模块，无 vendor/React 依赖，主包可直用）
 import { normalizeHighlighter, type HighlighterConfig } from "./studio/pens.ts";
 import {
@@ -54,7 +54,7 @@ import {
   uniqueTargetPath,
   type BoardFileEntry,
 } from "./studio/storage";
-import { MEDIA_DIR, bytesToDataURL, mediaFileName, parseDataUrl } from "./studio/media-ref";
+import { LEGACY_MEDIA_DIR, MEDIA_DIR, bytesToDataURL, mediaFileName, parseDataUrl } from "./studio/media-ref";
 import { readSiyuanAccent } from "./studio/theme";
 import {
   blockIdFromLink,
@@ -71,6 +71,13 @@ import {
   migrationCandidates,
   remapPaths,
 } from "./studio/migration";
+// 2026-11-21：功能目录从 assets 搬到 storage 的一次性迁移（纯逻辑 + 清单）
+import {
+  FUNCTIONAL_DIR_MOVES,
+  FUNCTIONAL_MIGRATED_KEY,
+  isMigratableFile,
+  remapLegacyRef,
+} from "./studio/storage-migration";
 import {
   describeSiyuanLink,
   parseSiyuanLink,
@@ -181,6 +188,9 @@ export default class ExcaliStudioPlugin extends Plugin {
   /** 第二十五轮：旧 assets → assets/excali 迁移是否已完成（data.json 的 dirMigrated；
    *  部分失败会留 false，下次启动按同一套候选补搬） */
   private dirMigrated = false;
+  /** 2026-11-21：四类功能目录（脚本/风格/媒体/素材库）从 assets 搬到 storage 是否完成。
+   *  与 dirMigrated 独立记账；部分失败留 false，下次启动按清单补搬（已搬走的不再是候选）。 */
+  private functionalDirsMigrated = false;
   /** 第二十四轮登记表的旧值——只作迁移候选读一次，第二十五轮起不再落盘 */
   private legacyBoards: string[] = [];
   /** 第二十五轮：启动闸门（读设置 + 迁移）。页签读盘/库刷新都等它，
@@ -547,6 +557,13 @@ export default class ExcaliStudioPlugin extends Plugin {
     } catch (e) {
       console.error("[excali-studio] 旧白板迁移失败（下次启动重试）", e);
     }
+    // 2026-11-21：功能目录搬出 assets。必须在 installBuiltinScripts（await this.ready
+    // 之后）之前跑完，否则内置脚本会被重新写回旧目录。
+    try {
+      await this.migrateFunctionalDirs();
+    } catch (e) {
+      console.error("[excali-studio] 功能目录迁移失败（下次启动重试）", e);
+    }
   }
 
   /**
@@ -624,6 +641,90 @@ export default class ExcaliStudioPlugin extends Plugin {
       }
     } catch (e) {
       console.warn("[excali-studio] 迁移图库文件失败（忽略）", e);
+    }
+  }
+
+  /**
+   * 2026-11-21：递归列出目录下所有文件路径（工作空间相对形式，如 assets/excali-scripts/x.md）。
+   * 只收文件、跳过隐藏文件/系统残留；子目录递归。目录不存在返回空（新用户）。
+   * 用 /api/file/readDir，与 storage.ts listBoardEntries 同一口径，但这里要递归。
+   */
+  private async listAllFiles(dir: string): Promise<string[]> {
+    const out: string[] = [];
+    const walk = async (cur: string): Promise<void> => {
+      let rows: Array<{ name?: string; isDir?: boolean }> = [];
+      try {
+        const res = await fetch("/api/file/readDir", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: toDataPath(cur) }),
+        });
+        const json = (await res.json().catch(() => null)) as { code?: number; data?: Array<{ name?: string; isDir?: boolean }> } | null;
+        if (res.ok && json && json.code === 0 && Array.isArray(json.data)) rows = json.data;
+      } catch {
+        return; // 目录不存在/读不了：当作空
+      }
+      for (const r of rows) {
+        if (!r || typeof r.name !== "string" || !isMigratableFile(r.name)) continue;
+        const child = `${cur.replace(/\/+$/, "")}/${r.name}`;
+        if (r.isDir === true) await walk(child);
+        else out.push(child);
+      }
+    };
+    await walk(dir);
+    return out;
+  }
+
+  /**
+   * 2026-11-21：把四类功能数据目录一次性从 assets 搬到 storage。
+   * 照搬 migrateLegacyBoards 的幂等范式：成功才置 functionalDirsMigrated，
+   * 失败留 false 下次补搬；先整目录复制到新址、校验后再删旧文件。
+   * 必须在 installBuiltinScripts 之前跑完（bootstrapState 里已保证）。
+   */
+  private async migrateFunctionalDirs(): Promise<void> {
+    if (this.functionalDirsMigrated) return;
+    let moved = 0;
+    let failed = 0;
+    for (const rule of FUNCTIONAL_DIR_MOVES) {
+      const oldFiles = await this.listAllFiles(rule.from);
+      if (oldFiles.length === 0) continue; // 旧目录不存在或已空（新用户/已搬过）
+      for (const oldPath of oldFiles) {
+        const rel = oldPath.slice(rule.from.length).replace(/^\/+/, "");
+        const newPath = `${rule.to}/${rel}`;
+        try {
+          // 新址已有同名文件则不覆盖（防止重跑时把新数据换回旧的）
+          if (await fileExists(newPath)) {
+            await removeSvg(oldPath);
+            moved++;
+            continue;
+          }
+          if (rule.kind === "bytes") {
+            await putBytes(newPath, await getFileBytes(oldPath), "application/octet-stream");
+          } else {
+            await putTextFile(newPath, await getFileText(oldPath));
+          }
+          // 校验：新文件能读回才删旧文件
+          if (await fileExists(newPath)) {
+            await removeSvg(oldPath);
+            moved++;
+          } else {
+            failed++;
+          }
+        } catch (e) {
+          console.warn("[excali-studio] 功能目录迁移失败，保留旧文件", oldPath, e);
+          failed++;
+        }
+      }
+    }
+    if (failed === 0) {
+      this.functionalDirsMigrated = true;
+      this.persist();
+    }
+    if (moved > 0) {
+      showMessage(t("已把 {n} 个功能文件移出资源目录", { n: moved }), 6000);
+    }
+    if (failed > 0) {
+      showMessage(t("部分功能文件迁移未完成：{n} 个失败，下次启动重试", { n: failed }), 10000, "error");
     }
   }
 
@@ -2310,12 +2411,24 @@ export default class ExcaliStudioPlugin extends Plugin {
         out[id] = f;
         continue;
       }
-      try {
-        const bytes = await getFileBytes(rec.path);
-        const mime = typeof rec.mimeType === "string" && rec.mimeType !== "" ? rec.mimeType : "image/png";
-        out[id] = { ...rec, dataURL: bytesToDataURL(bytes, mime) };
-      } catch (e) {
-        console.warn("[excali-studio] 白板图片读回失败（该图会显示为空框）", rec.path, e);
+      // 2026-11-21：存量白板 SVG 里写死旧 media 目录，先 remap 到新目录再读；
+      // 新路径读不到再回退原路径（迁移未跑/旧文件还在时兜底），都不行才留空框。
+      const newPath = remapLegacyRef(rec.path, LEGACY_MEDIA_DIR, MEDIA_DIR);
+      const candidates = newPath === rec.path ? [rec.path] : [newPath, rec.path];
+      let loaded = false;
+      for (const p of candidates) {
+        try {
+          const bytes = await getFileBytes(p);
+          const mime = typeof rec.mimeType === "string" && rec.mimeType !== "" ? rec.mimeType : "image/png";
+          out[id] = { ...rec, dataURL: bytesToDataURL(bytes, mime) };
+          loaded = true;
+          break;
+        } catch {
+          // 这条路读不到，试下一条兜底
+        }
+      }
+      if (!loaded) {
+        console.warn("[excali-studio] 白板图片读回失败（该图会显示为空框）", rec.path);
         out[id] = f;
       }
     }
@@ -2973,7 +3086,9 @@ export default class ExcaliStudioPlugin extends Plugin {
   private libCache: ReturnType<typeof mergeLibFiles> | null = null;
 
   private libDirRel(): string {
-    return joinSavePath(this.settings.saveDir, "excali-libraries");
+    // 2026-11-21：从 <saveDir>/excali-libraries（在 assets 下）搬到 storage，
+    // 与 storage-migration.ts 的映射 / library-import-page.ts 的 DEFAULT_LIB_DIR 同值。
+    return LIB_DIR;
   }
 
   private localLibRel(): string {
@@ -3359,12 +3474,14 @@ export default class ExcaliStudioPlugin extends Plugin {
       recent?: unknown;
       boards?: unknown;
       dirMigrated?: unknown;
+      functionalDirsMigrated?: unknown;
     };
     this.settings = normalizeSettings(obj.settings);
     this.recent = Array.isArray(obj.recent)
       ? obj.recent.filter((p): p is string => typeof p === "string" && p !== "")
       : [];
     this.dirMigrated = obj.dirMigrated === true;
+    this.functionalDirsMigrated = obj.functionalDirsMigrated === true;
     // 第二十四轮的登记表只在迁移时当候选读一次；第二十五轮起以目录为真源，不再落盘
     this.legacyBoards = Array.isArray(obj.boards)
       ? obj.boards.filter((p): p is string => typeof p === "string")
@@ -3387,6 +3504,7 @@ export default class ExcaliStudioPlugin extends Plugin {
       settings: this.settings,
       recent: this.recent,
       dirMigrated: this.dirMigrated,
+      functionalDirsMigrated: this.functionalDirsMigrated,
     }).catch((e) => console.error("[excali-studio] 保存设置失败", e));
   }
 }

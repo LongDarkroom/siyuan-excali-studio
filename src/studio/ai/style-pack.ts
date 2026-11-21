@@ -23,8 +23,9 @@ import {
   type PlanSpace,
 } from "./preset.ts";
 
-/** 风格包目录（资产相对路径，实际落在 {ws}/data/assets/excali-styles） */
-export const STYLE_DIR = "assets/excali-styles";
+/** 风格包目录（工作空间相对路径，实际落在 {ws}/data/storage/excali-studio/styles；
+ *  2026-11-21 从 assets 搬来，避免污染思源「未引用资源」） */
+export const STYLE_DIR = "storage/excali-studio/styles";
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 const COLOR_RE = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;

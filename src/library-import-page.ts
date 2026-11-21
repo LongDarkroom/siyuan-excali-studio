@@ -36,9 +36,10 @@ import {
  * 默认图库目录。页面读不到插件设置（插件数据在 conf/data/ 下，不在 /data/
  * 里，没有 HTTP 端点可读）——故由 libraryReturnUrl 的 dir 参数把库目录带进来
  * （StudioApp 点击「Browse libraries」时从 settings.saveDir 实时算）。
- * 与 settings.ts 的 DEDICATED_BOARD_DIR + "/excali-libraries" 对齐。
+ * 2026-11-21 根治：素材库目录从 assets 搬到 storage，避免污染思源「未引用资源」。
+ * 与 index.ts 的 LIB_DIR / storage-migration.ts 的映射保持一致。
  */
-export const DEFAULT_LIB_DIR = "assets/excali/excali-libraries";
+export const DEFAULT_LIB_DIR = "storage/excali-studio/libraries";
 
 /** 归一化到 /data/...（与 storage.ts toDataPath 同口径：/data/x 原样、data/x 补斜杠、x 加 /data/） */
 export function toDataPath(relative: string): string {

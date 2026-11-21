@@ -106,7 +106,7 @@ function N(e) {
   }
   return null;
 }
-const j = "assets/excali/excali-libraries";
+const j = "storage/excali-studio/libraries";
 function g(e) {
   const t = e.replace(/^\/+/, "");
   return t === "data" || t.startsWith("data/") ? `/${t}` : `/data/${t}`;

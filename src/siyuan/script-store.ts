@@ -10,7 +10,12 @@ import { getFileText, putTextFile, toAssetRef, toDataPath } from "../studio/stor
 import { parseScriptDoc } from "../studio/doc-parse.ts";
 import { t } from "../i18n.ts";
 
-export const SCRIPTS_DIR = "assets/excali-scripts";
+/**
+ * 2026-11-21 根治：脚本目录从 assets 搬到 storage——assets 会被思源「未引用资源」扫描，
+ * 这些从不被笔记引用的 md 会全部进列表。storage 不在扫描范围内。
+ * 老用户由 index.ts 的一次性 migrateFunctionalDirs() 搬迁存量文件。
+ */
+export const SCRIPTS_DIR = "storage/excali-studio/scripts";
 const SCRIPTS_LIMIT = 50;
 
 /** P2 脚本库：一个可配置参数的声明（脚本库面板行内 ⚙ 抽屉的数据源）。

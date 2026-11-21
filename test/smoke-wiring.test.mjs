@@ -990,7 +990,7 @@ test("方案 B'·素材库落地页：libraryReturnUrl 指向本地导入页 + �
   assert.match(PAGE, /from "\.\/studio\/library-import\.ts"/, "复用方案 A 的链接解析");
   assert.match(PAGE, /from "\.\/studio\/stencil\.ts"/, "复用 stencil 的库文件读写纯函数");
   assert.match(PAGE, /typeof document !== "undefined" && typeof location !== "undefined"/, "DOM 引导有守卫（node import 安全）");
-  assert.match(PAGE, /export const DEFAULT_LIB_DIR = "assets\/excali\/excali-libraries"/, "默认图库目录与 settings 对齐");
+  assert.match(PAGE, /export const DEFAULT_LIB_DIR = "storage\/excali-studio\/libraries"/, "默认图库目录与 storage 迁移目标对齐");
   for (const ep of ["/api/file/putFile", "/api/file/getFile", "/api/file/readDir"]) {
     assert.ok(PAGE.includes(ep), `页面直连内核文件 API：${ep}`);
   }

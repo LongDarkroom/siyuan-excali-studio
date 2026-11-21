@@ -43,7 +43,7 @@ test("mediaFileName：内容寻址（同内容同名、异内容异名），扩�
 });
 
 test("mediaExtOf 与 MEDIA_DIR 约定", () => {
-  assert.equal(MEDIA_DIR, "assets/excali-media");
+  assert.equal(MEDIA_DIR, "storage/excali-studio/media");
   assert.equal(mediaExtOf("image/svg+xml"), "svg");
   assert.equal(mediaExtOf("image/gif"), "gif");
 });

@@ -169,7 +169,7 @@ test("风格包·计划与 CLI 参数吃包名，未知包报错带上可选清�
 });
 
 test("风格包·目录口径与 listStyles 展示", async () => {
-  assert.equal(STYLE_DIR, "assets/excali-styles");
+  assert.equal(STYLE_DIR, "storage/excali-studio/styles");
   await loadStylePacks(memoryIo({ "b-pack.json": JSON.stringify({ name: "b-pack", label: "B 包", extends: "pencil" }) }));
   const rows = listStyles();
   assert.deepEqual(rows.map((r) => r.name), ["pencil", "marker", "blueprint", "b-pack"], "内置在前、外部按名排序");
