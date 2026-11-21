@@ -118,9 +118,16 @@ test("补丁：当前页按步放；别页/画框/自由笔画一律不碰（照
   assert.equal(opacityOf(step1, "a2"), 100, "第二条这时才出场");
   assert.equal(opacityOf(step1, "a1"), undefined, "已显示的不重复写");
 
-  const whole = buildRunPatches(live0, plan, -1, original);
-  assert.equal(opacityOf(whole, "a2"), 100, "整页全显把第二条补回来");
+  const whole = buildRunPatches(live0, plan, lastStep(plan), original);
+  assert.equal(opacityOf(whole, "a2"), 100, "落到最后一条 = 整页全显");
   assert.equal(opacityOf(whole, "b1"), undefined, "别页仍然不碰");
+
+  // 第九十二轮「空拍」：分条页的 -1 是「一条都还没出」，不是整页
+  const blank = buildRunPatches(all, plan, -1, original);
+  assert.equal(opacityOf(blank, "a1"), 0, "空拍把第一条藏起来");
+  assert.equal(opacityOf(blank, "a2"), 0, "空拍第二条也藏");
+  assert.equal(opacityOf(blank, "b1"), undefined, "别页仍然不碰");
+  assert.equal(opacityOf(buildRunPatches(live0, plan, -1, original), "a1"), 0, "已藏的第二条不重复写");
 });
 
 test("补丁：别页成员保持原值（用户手工调淡的别被洗白）", () => {
@@ -169,13 +176,13 @@ test("退出回填：只回和快照不同的那些", () => {
   assert.deepEqual(buildRestorePatches(all, original), [], "没动过就不回填");
 });
 
-test("游标：逐条 → 翻页 → 到底停住，倒退同理", () => {
+test("游标：空拍 → 逐条 → 翻页 → 到底停住，倒退同理", () => {
   const plans = [
     { frameId: "f1", units: [{ key: "u1", ids: ["u1"] }, { key: "u2", ids: ["u2"] }], memberIds: ["u1", "u2"] },
     { frameId: "f2", units: [], memberIds: [] },
     { frameId: "f3", units: [{ key: "u3", ids: ["u3"] }], memberIds: ["u3"] },
   ];
-  assert.deepEqual(startCursor(plans), { page: 0, step: 0 }, "开场落在第一页第一条");
+  assert.deepEqual(startCursor(plans), { page: 0, step: -1 }, "开场先在空页（一条都不出）");
   assert.deepEqual(endCursor(plans), { page: 2, step: 0 }, "末页最后一条");
 
   let cur = startCursor(plans);
@@ -184,14 +191,26 @@ test("游标：逐条 → 翻页 → 到底停住，倒退同理", () => {
     seq.push(next);
     cur = next;
   }
-  assert.deepEqual(seq, [{ page: 0, step: 1 }, { page: 1, step: -1 }, { page: 2, step: 0 }], "空页直接跳过（step=-1）");
+  assert.deepEqual(
+    seq,
+    [
+      { page: 0, step: 0 },
+      { page: 0, step: 1 },
+      { page: 1, step: -1 },
+      { page: 2, step: -1 },
+      { page: 2, step: 0 },
+    ],
+    "第一下才出第一条；空页直接跳过；换到分条页也先空一拍（step=-1）",
+  );
   assert.equal(nextCursor(plans, { page: 2, step: 0 }), null, "到底返回 null，由调用方收场");
 
-  assert.deepEqual(prevCursor(plans, { page: 2, step: 0 }), { page: 1, step: -1 }, "后退先进上一页的整页态");
+  assert.deepEqual(prevCursor(plans, { page: 2, step: 0 }), { page: 2, step: -1 }, "退到最后一条前 = 本页空拍");
+  assert.deepEqual(prevCursor(plans, { page: 2, step: -1 }), { page: 1, step: -1 }, "空拍再退 = 上一页的整页态");
   assert.deepEqual(prevCursor(plans, { page: 1, step: -1 }), { page: 0, step: 1 }, "再退到上一页最后一条");
   assert.deepEqual(prevCursor(plans, { page: 0, step: 1 }), { page: 0, step: 0 });
-  assert.equal(prevCursor(plans, { page: 0, step: 0 }), null, "开头返回 null（原地不动）");
-  assert.equal(firstStep(plans[0]), 0);
+  assert.deepEqual(prevCursor(plans, { page: 0, step: 0 }), { page: 0, step: -1 }, "退到第一条再退 = 空拍");
+  assert.equal(prevCursor(plans, { page: 0, step: -1 }), null, "空拍再退就没了（开头停住）");
+  assert.equal(firstStep(plans[0]), -1, "分条页的最小步是空拍");
   assert.equal(lastStep(plans[1]), -1, "空页的 step 恒为 -1");
 });
 
@@ -199,6 +218,7 @@ test("游标越界夹回：画框被删/游标过期不许炸", () => {
   const plans = [{ frameId: "f1", units: [{ key: "u1", ids: ["u1"] }], memberIds: ["u1"] }, { frameId: "f2", units: [], memberIds: [] }];
   assert.deepEqual(clampCursor(plans, { page: 9, step: 5 }), { page: 1, step: -1 });
   assert.deepEqual(clampCursor(plans, { page: 0, step: 9 }), { page: 0, step: 0 });
+  assert.deepEqual(clampCursor(plans, { page: 0, step: -9 }), { page: 0, step: -1 }, "空拍是合法游标");
   assert.deepEqual(clampCursor([], { page: 3, step: 3 }), { page: 0, step: -1 }, "一页都没有时给个安全值");
 });
 

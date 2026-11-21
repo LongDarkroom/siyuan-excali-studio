@@ -6423,10 +6423,44 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   pointer-events: none;
 }
 
+/* ---------- 描线覆盖层 ----------
+
+   演示里「划线」出场的箭头/连线：画布里那份元素压成透明，这层按**终态的 rough
+   操作流**重画一遍，遮罩带沿骨架扫开。收笔撤层时两边像素不变（描线不再跳粗细/
+   弯口）。层在画布之上、幕布（5）之下，幕布洞外照常盖住；不挡指针。 */
+
+.exs-canvas .exs-ink-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.exs-canvas .exs-ink-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 与幕布同款：深色主题下画布吃 vendor 反色，覆盖层是兄弟节点，套同一条滤镜 */
+.exs-root[data-theme-mode="dark"] .exs-ink-layer {
+  filter: invert(93%) hue-rotate(180deg);
+}
+
 /* 填充色由组件按画布底色写进 fill 属性（亮/暗主题各自一色）：
    CSS 不许在这里再定颜色，否则会盖掉属性、退回「压黑幕布」的观感。
    洞边原先补过一圈灰色描边，但幕布色 = 画布底色时它是画面里唯一可见的矩形线，
    用户会当成「画框框线没去掉」——描边已整条退役，别再画回来。 */
+
+/* 深色主题：vendor 对**画布**做了一手反色（.excalidraw.theme--dark canvas 的
+   --theme-filter），白底 #fff 画在屏上是 #121212。幕布是画布的兄弟节点，不在
+   那条规则里——只跟原始色不跟滤镜，画框四周就留一圈白（用户报的「白色边」）。
+   这里套同一条滤镜：fill 仍给原始色，亮暗两边自动同色，任意背景色都对得上。
+   值必须与 vendor 的 --theme-filter 同款，test/presentation-stage 有比对门。 */
+.exs-root[data-theme-mode="dark"] .exs-present-scrim {
+  filter: invert(93%) hue-rotate(180deg);
+}
 
 .exs-canvas .exs-present-hud {
   position: absolute;

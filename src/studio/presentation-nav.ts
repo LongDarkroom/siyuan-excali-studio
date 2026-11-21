@@ -10,6 +10,8 @@
  * - **页内**还有分条没走完 → 先走分条（不动页）；
  * - **页内**走完了 → 按图挑下一条边换页；
  * - **后退**先回退最后一个分条，再沿访问栈弹回上一页。
+ * - 页内游标 -1 是**空拍**：开场与每次换页都先落在空页（什么都没有），
+ *   第一下才让第一条带入场动画出场——顺序由 step 0 起数。
  *
  * 没有图（板子上没画连页箭头）时**退回线性翻页**（片单顺序），
  * 保证「画完就能放」的零配置体验不被图模型绑架。
@@ -25,7 +27,7 @@ import { pickNextEdge, type GraphSide, type SlideGraph } from "./presentation-gr
 export type NavState = {
   /** 当前页（plans 下标） */
   page: number;
-  /** 页内分条游标（-1 = 整页一起出） */
+  /** 页内分条游标（-1 = 空拍：本页一条都还没出；无分条页 -1 = 整页全显） */
   step: number;
   /** 访问栈（页下标序列）：后退沿它弹回 */
   stack: number[];
@@ -37,6 +39,9 @@ export type NavState = {
 
 /**
  * 放映开始时的状态：起点页 + 空的访问栈/已走边。
+ *
+ * 第九十二轮：默认落在**空页**（step = -1）——开场什么都没有，第一下才出第一条；
+ * 无分条的页 -1 本来就是整页全显，行为零变化。
  * startStep（0 起）用于「从这一步播放」：先把前几步点亮，游标停在指定那一步；
  * 越界夹进本页的有效范围，整页页（units 为空）仍是 -1。
  */
@@ -94,7 +99,8 @@ export function navNext(
   if (plan && state.step < lastStep(plan)) {
     return { ...state, step: state.step + 1, done: false };
   }
-  // 换页：优先走图，图里没路就线性兜底
+  // 换页：优先走图，图里没路就线性兜底。
+  // 落点一律是那一页的 firstStep（-1）：分条页先空一拍再逐条出，整页页直接全显。
   const curFrame = frameIdAt(plans, state.page);
   const edge = graph ? pickNextEdge(graph, curFrame, state.traveled, direction) : null;
   if (edge) {
@@ -126,6 +132,7 @@ export function navNext(
 /**
  * 后退：先回退本页最后一个分条，再沿访问栈弹回上一页。
  * 回到的页按 Advanced Canvas 的语义**整页呈现**（分条已全走过）。
+ * 本页退到第一条再退一下 → 回到空拍（-1），与前进的顺序对称。
  */
 export function navPrev(
   plans: readonly RunPlan[],

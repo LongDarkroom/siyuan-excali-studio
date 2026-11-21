@@ -58,6 +58,10 @@ export type DrawElementLike = {
   opacity?: number;
   /** 形状的圆角：轮廓要按 vendor 的半径口径生成，否则擦出来的圆角和原图对不上 */
   roundness?: DrawRoundness | null;
+  /** 直角路由：vendor 会在渲染时按它重新算圆角，描迹前必须知道（见 traceFrame 注释） */
+  elbowed?: boolean;
+  /** 画笔风格：虚线/点线描迹要留在一条子路径里，否则虚线每段重置 */
+  strokeStyle?: string;
 };
 
 export type DrawBox = { x: number; y: number; w: number; h: number };
@@ -71,6 +75,11 @@ export type DrawGeom = {
   points: [number, number][];
   /** true = 这是形状临时换成的折线，现场要连 type/polygon/roundness 一起写 */
   swap: boolean;
+  /**
+   * 描线中：现场要关掉两端的箭头尖、并且不经 vendor 的肘形路由。
+   * `flat` = 圆角也关掉（实线走 linearPath，顶点精确；虚线留着走 curve，虚线才不会断）。
+   */
+  trace?: { flat: boolean };
 };
 
 /**
@@ -421,30 +430,60 @@ export function drawFrame(el: DrawElementLike, box: DrawBox, p: number, opacity?
   };
 }
 
-/* ------------------------------ 第九十轮：箭头/连线「画出来」 ------------------------------ */
+/* ------------------------- 第九十一轮：箭头/连线「画出来」 ------------------------- */
 
 /**
- * 填充高亮是「推一条前沿把面裁掉」，箭头/连线是细笔画，没有面可裁。
- * 这里改成**沿它自己的路径长出来**：每帧只留「笔尖之前」的那一段点集喂给 vendor，
- * 箭头尖自然跟着走。两条硬规矩：
- * ① 直线/手画折线用原控制点，只在末端插一个笔尖点——落定恢复时一个像素都不差；
- * ② 弧线沿原曲线每隔 TRACE_STEP 钉一个定点，**只追加、不回改**。整段重新均分会让已画
- *    出的部分逐帧变形（观感像果冻），所以定点一旦落下就不再动，只有笔尖附近那一段在长。
+ * 填充高亮是「推一条前沿把面裁掉」，箭头/连线是细笔画，没有面可裁——沿它自己的路径长出来。
  *
- * 直角路由箭头（elbowed）也走同一套：vendor 渲染时直接吃 element.points（只做拐角圆角），
- * 不会按绑定重算；只有走 mutateElement 的写入才重算，而放映补丁是 updateScene 整替换。
+ * 三条踩过的坑，在观感上都表现为「割裂断触」：
+ * ① vendor 按 points **最后两点的距离**定箭头尖尺寸（getArrowheadPoints：min(25, 段长/2)）。
+ *    描线时最后一个点就是走着的笔尖，一过拐点或锚点，最后一段归零，箭头缩成一丝再长回来：
+ *    实测 0.76 秒里从 25px 掉到 7.7px 再回到 25px，一条肘形箭头缩三次。所以描线期间把两端
+ *    的箭头尖关掉，落定再原样写回——像擦除式出场，尖跟着收笔一起出现。
+ * ② 肘形路由是 vendor 现场按「到相邻点的距离」算圆角（min(16, 段长/2)）。笔尖刚过拐点时
+ *    下一段还短，圆角被夹成直角，再一点点撑开，拐角就在笔尖底下「鼓」出来。所以先按最终
+ *    半径 16 把圆角采样成折线再描，拐角从出现那一刻就是最终形状。
+ * ③ 弧线在 vendor 里走 roughjs 的曲线拟合：控制点首尾各补一个虚点、**每段控制点出一段三次
+ *    曲线**。老实现只补了一段，三控制点的弧和落定形状能差 27px——动画画的是一条别的弧，收笔
+ *    时整条跳一下。这里按 vendor 公式一比一复刻（curveToBezier），再按 ~8px 密采样算出骨架上
+ *    的弧长表。
+ *
+ * ④ 描线必须和终态走**同一种渲染口径**，否则粗细会跳一档：roughjs 对 `curve()` 的每个控制点
+ *    抖 ±1.2px（第二遍 ±1.8px）、两遍分得开，看着粗；对 `linearPath`/`path` 是 preserveVertices，
+ *    顶点精确、每段偏移最多「段长/10」且双描几乎重合，看着细。实测同一条弧：终态 curve() 比
+ *    8px 密折线多约 30% 墨量。所以描线时**不拍平弧线**：保留 roundness，把终态骨架上的稀疏
+ *    路标（~30px 一个）喂给 vendor 的 curve()——路标和终态形状实测只差 0.5px，粗细/质感从头
+ *    到尾一致；直线/折线/肘形终态本来就是折线口径，直接喂点就行。另外描线帧的 width/height
+ *    必须用终态尺寸：vendor 的 adjustRoughness 会按包围盒降档，框一小粗糙度从 1 掉到 0.5。
+ *
+ * 描线期间现场临时关三样：箭头尖（两端的都关）、elbowed（否则 vendor 会拿移动的笔尖重算
+ * 圆角）、折线口径的 roundness（本来就没有；虚线留着，一条连续子路径里虚线才不会断）。
+ * 收笔/中断按快照把这些字段一起写回。
  */
-export const TRACE_STEP = 30;
-/** 每段三次贝塞尔的采样数：30px 左右的定点间距下，形状误差远小于一个像素 */
-const TRACE_SAMPLES = 32;
+export const TRACE_SAMPLE_STEP = 8;
+/**
+ * 弧线路标的间距上限：喂给 vendor curve() 的点要稀疏——抖动只落在路标上，和终态一样是
+ * 低频率的波形。8px 密点会让每个点各抖一次（±1.2px），线变成毛刷。
+ */
+export const TRACE_CURVE_STRIDE = 30;
+/** vendor 的肘形圆角半径（Shape.ts: generateElbowArrowShape(points, 16)） */
+const ELBOW_RADIUS = 16;
+/** 一段圆角切几刀：16px 的直角圆角切 8 刀后每段不到 3px，看不出折线 */
+const ELBOW_ARC_SAMPLES = 8;
 
 export type StrokePath = {
-  /** 采样折线（元素局部坐标） */
+  /** 最终形状的折线（元素局部坐标）：描迹每一帧就是它的前缀 + 一个笔尖点 */
   dense: [number, number][];
   cum: number[];
   len: number;
-  /** 弧长上的定点（不含起点）：曲线的固定落点；直线/折线就是原控制点 */
-  anchors: { at: number; pt: [number, number] }[];
+  /**
+   * 描线走哪种渲染口径（必须和终态一致，见文件头 ④）：
+   * `curve` = 带圆角的弧线，终态走 roughjs curve()——描线保留 roundness，点按 `way` 稀疏取；
+   * `flat` = 直线/折线/肘形，终态走 linearPath/path（preserveVertices）——直接取折线前缀。
+   */
+  kind: "curve" | "flat";
+  /** kind=curve 时每次描线取的点（dense 下标）；两点直线只有 [0]（首点 + 笔尖） */
+  way: number[] | null;
 };
 
 export function isTraceableStroke(e: DrawElementLike): boolean {
@@ -458,12 +497,15 @@ export function isTraceableStroke(e: DrawElementLike): boolean {
   return false;
 }
 
-/** points-on-curve 的 curveToBezier（vendor 曲线箭头用的同一套公式，tightness=0） */
+/**
+ * vendor 曲线的骨架：首尾各补一个虚点，第 i 个控制点给出第 i 段三次曲线。
+ * 与 roughjs 的 `_curve`（curveTightness=0）逐项同源——**别在这里加「三点合成一段」的
+ * 特例**：vendor 不会那样画，描迹会和终态对不上。
+ */
 function curveToBezier(pts: readonly DrawPoint[]): [number, number][] {
   const len = pts.length;
   const clone = (p: DrawPoint): [number, number] => [p[0], p[1]];
-  if (len < 3) return [clone(pts[0]), clone(pts[0]), clone(pts[1]), clone(pts[1])];
-  if (len === 3) return [clone(pts[0]), clone(pts[1]), clone(pts[2]), clone(pts[2])];
+  if (len < 2) return [clone(pts[0]), clone(pts[0]), clone(pts[0]), clone(pts[0])];
   const pad: DrawPoint[] = [pts[0], pts[0], ...pts.slice(1), pts[len - 1]];
   const out: [number, number][] = [clone(pad[0])];
   for (let i = 1; i + 2 < pad.length; i += 1) {
@@ -480,16 +522,22 @@ function curveToBezier(pts: readonly DrawPoint[]): [number, number][] {
   return out;
 }
 
+/** 沿曲线骨架按弧长密采样：8px 一步，200px 级的曲线形状误差也远小于一个像素 */
 function sampleCurve(pts: readonly DrawPoint[]): [number, number][] {
   const c = curveToBezier(pts);
-  const out: [number, number][] = [c[0]];
+  const out: [number, number][] = [[c[0][0], c[0][1]]];
   for (let i = 0; i + 3 < c.length; i += 3) {
     const p0 = c[i];
     const p1 = c[i + 1];
     const p2 = c[i + 2];
     const p3 = c[i + 3];
-    for (let j = 1; j <= TRACE_SAMPLES; j += 1) {
-      const t = j / TRACE_SAMPLES;
+    const approx =
+      Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) +
+      Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) +
+      Math.hypot(p3[0] - p2[0], p3[1] - p2[1]);
+    const steps = Math.max(4, Math.min(96, Math.ceil(approx / TRACE_SAMPLE_STEP)));
+    for (let j = 1; j <= steps; j += 1) {
+      const t = j / steps;
       const u = 1 - t;
       out.push([
         u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0],
@@ -497,6 +545,104 @@ function sampleCurve(pts: readonly DrawPoint[]): [number, number][] {
       ]);
     }
   }
+  return out;
+}
+
+/** 方向是不是横着走（vendor 的 headingForPointIsHorizontal；直角路由的段都是轴对齐的） */
+function isHorizontalStep(ax: number, ay: number, bx: number, by: number): boolean {
+  return Math.abs(bx - ax) >= Math.abs(by - ay);
+}
+
+/** 圆角在「到邻点那一侧」的落点：照抄 vendor 的 generateElbowArrowShape */
+function cornerInset(
+  px: number,
+  py: number,
+  qx: number,
+  qy: number,
+  horizontal: boolean,
+  corner: number,
+): [number, number] {
+  if (horizontal) return [qx < px ? px - corner : px + corner, py];
+  return [px, qy < py ? py - corner : py + corner];
+}
+
+/**
+ * 直角路由的最终形状：vendor 渲染时才按 getElbowArrowShape 圆角（16），这里提前算出来。
+ * 笔尖落在哪都不会改这些点，圆角因此不会「撑开」。
+ */
+function elbowPolyline(pts: readonly DrawPoint[]): [number, number][] {
+  const out: [number, number][] = [[pts[0][0], pts[0][1]]];
+  for (let i = 1; i < pts.length - 1; i += 1) {
+    const [px, py] = pts[i];
+    const [ax, ay] = pts[i - 1];
+    const [bx, by] = pts[i + 1];
+    const prevH = isHorizontalStep(px, py, ax, ay);
+    const nextH = isHorizontalStep(bx, by, px, py);
+    const corner = Math.min(
+      ELBOW_RADIUS,
+      Math.hypot(bx - px, by - py) / 2,
+      Math.hypot(ax - px, ay - py) / 2,
+    );
+    const a = cornerInset(px, py, ax, ay, prevH, corner);
+    const b = cornerInset(px, py, bx, by, nextH, corner);
+    out.push(a);
+    if (corner > 0.5) {
+      for (let k = 1; k <= ELBOW_ARC_SAMPLES; k += 1) {
+        const t = k / ELBOW_ARC_SAMPLES;
+        const u = 1 - t;
+        out.push([u * u * a[0] + 2 * u * t * px + t * t * b[0], u * u * a[1] + 2 * u * t * py + t * t * b[1]]);
+      }
+    } else {
+      out.push(b);
+    }
+  }
+  const last = pts[pts.length - 1];
+  out.push([last[0], last[1]]);
+  return out;
+}
+
+/**
+ * 肘形终态的 path 字符串：照抄 vendor 的 generateElbowArrowShape(points, 16)。
+ * 描线覆盖层要沿**同一条路由**揭开终态墨迹，不能拿采样折线近似 Q 段。
+ */
+export function elbowPathData(pts: readonly DrawPoint[]): string {
+  const subpoints: [number, number][] = [];
+  for (let i = 1; i < pts.length - 1; i += 1) {
+    const [px, py] = pts[i];
+    const [ax, ay] = pts[i - 1];
+    const [bx, by] = pts[i + 1];
+    const prevH = isHorizontalStep(px, py, ax, ay);
+    const nextH = isHorizontalStep(bx, by, px, py);
+    const corner = Math.min(ELBOW_RADIUS, Math.hypot(bx - px, by - py) / 2, Math.hypot(ax - px, ay - py) / 2);
+    subpoints.push(cornerInset(px, py, ax, ay, prevH, corner));
+    subpoints.push([px, py]);
+    subpoints.push(cornerInset(px, py, bx, by, nextH, corner));
+  }
+  const d = [`M ${pts[0][0]} ${pts[0][1]}`];
+  for (let i = 0; i < subpoints.length; i += 3) {
+    d.push(`L ${subpoints[i][0]} ${subpoints[i][1]}`);
+    d.push(`Q ${subpoints[i + 1][0]} ${subpoints[i + 1][1]}, ${subpoints[i + 2][0]} ${subpoints[i + 2][1]}`);
+  }
+  const last = pts[pts.length - 1];
+  d.push(`L ${last[0]} ${last[1]}`);
+  return d.join(" ");
+}
+
+/**
+ * 描线遮罩的骨架前缀（元素局部坐标）：沿终态骨架走到 `p`，末点补笔尖。
+ * 覆盖层的遮罩顺着这条线扫过去揭开墨迹，扫过的形状就是终态本身。
+ */
+export function traceRevealPoints(path: StrokePath, p: number): [number, number][] {
+  if (!(p > 0)) return [];
+  const target = path.len * Math.min(1, p);
+  const out: [number, number][] = [[path.dense[0][0], path.dense[0][1]]];
+  for (let i = 1; i < path.dense.length; i += 1) {
+    if (path.cum[i] > target) break;
+    out.push([path.dense[i][0], path.dense[i][1]]);
+  }
+  const tip = pointAtPath(path, target);
+  const last = out[out.length - 1];
+  if (Math.hypot(tip[0] - last[0], tip[1] - last[1]) > 0.01) out.push(tip);
   return out;
 }
 
@@ -521,57 +667,74 @@ function pointAtPath(path: StrokePath, target: number): [number, number] {
 export function strokePathOf(e: DrawElementLike): StrokePath | null {
   if (!isTraceableStroke(e)) return null;
   const ctrl = (e.points ?? []).map((q): [number, number] => [q[0], q[1]]);
-  const curved = !!e.roundness && ctrl.length >= 3;
-  const dense = curved ? sampleCurve(ctrl) : ctrl;
+  const elbow = e.type === "arrow" && e.elbowed === true;
+  // 肘形单独走折线（vendor 用 path()，preserveVertices）；其余带圆角的都走 curve()
+  const curved = !!e.roundness && !elbow;
+  const dense = elbow ? elbowPolyline(ctrl) : curved ? sampleCurve(ctrl) : ctrl;
   const cum: number[] = [0];
   for (let i = 1; i < dense.length; i += 1) {
     cum.push(cum[i - 1] + Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]));
   }
   const len = cum[cum.length - 1] ?? 0;
   if (!(len > 0.5)) return null;
-
-  const anchors: { at: number; pt: [number, number] }[] = [];
-  if (curved) {
-    let next = TRACE_STEP;
-    for (let i = 1; i < dense.length && next <= len; i += 1) {
-      while (next <= cum[i] && next <= len) {
-        anchors.push({ at: next, pt: pointAtPath({ dense, cum, len, anchors: [] }, next) });
-        next += TRACE_STEP;
+  if (!curved) return { dense, cum, len, kind: "flat", way: null };
+  // 路标：两点直线只有起点（笔尖每帧另加）；三点以上沿骨架每 ~30px 取一个，
+  // 短弧把间距压到 len/4，保证至少四个点，形状不会丢掉弯。
+  const stride = Math.max(12, Math.min(TRACE_CURVE_STRIDE, len / 4));
+  const way: number[] = [0];
+  if (ctrl.length >= 3) {
+    let last = 0;
+    for (let i = 1; i < dense.length; i += 1) {
+      if (cum[i] - last >= stride) {
+        way.push(i);
+        last = cum[i];
       }
     }
-  } else {
-    for (let i = 1; i < ctrl.length; i += 1) anchors.push({ at: cum[i], pt: ctrl[i] });
   }
-  return { dense, cum, len, anchors };
+  return { dense, cum, len, kind: "curve", way };
 }
 
-/** 某一帧的描线几何：笔尖之前的定点 + 一个移动的笔尖点 */
+/**
+ * 某一帧的描线几何：最终形状点列的前缀 + 一个移动的笔尖点。
+ * `p` 是 0..1 的进度；`flat` 交给现场决定圆角要不要关：
+ * - 弧线（kind=curve）永远 false——保留 roundness 走 vendor curve()，粗细和终态同一档；
+ * - 折线口径（kind=flat）实线才关圆角；虚线条留着，虚线才不会被每段重置。
+ */
 export function traceFrame(el: DrawElementLike, path: StrokePath, p: number): DrawFrame {
   if (p <= 0) return { kind: "hidden" };
   if (p >= 1) return { kind: "done" };
   const target = path.len * p;
-  const pts: [number, number][] = [[path.dense[0][0], path.dense[0][1]]];
-  for (const a of path.anchors) {
-    if (a.at > target - 0.5) break;
-    pts.push([a.pt[0], a.pt[1]]);
+  const pts: [number, number][] = [];
+  if (path.way) {
+    for (const i of path.way) {
+      if (path.cum[i] > target) break;
+      pts.push([path.dense[i][0], path.dense[i][1]]);
+    }
+  } else {
+    for (let i = 0; i < path.dense.length; i += 1) {
+      if (path.cum[i] > target) break;
+      pts.push([path.dense[i][0], path.dense[i][1]]);
+    }
   }
+  if (pts.length === 0) pts.push([path.dense[0][0], path.dense[0][1]]);
   const tip = pointAtPath(path, target);
   const last = pts[pts.length - 1];
   if (Math.hypot(tip[0] - last[0], tip[1] - last[1]) > 0.6) pts.push(tip);
   if (pts.length < 2) return { kind: "hidden" };
 
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  for (const q of pts) {
-    x0 = Math.min(x0, q[0]);
-    y0 = Math.min(y0, q[1]);
-    x1 = Math.max(x1, q[0]);
-    y1 = Math.max(y1, q[1]);
-  }
+  const solid = !el.strokeStyle || el.strokeStyle === "solid";
   return {
     kind: "clip",
-    geom: { x: el.x, y: el.y, width: x1 - x0, height: y1 - y0, points: pts, swap: false },
+    geom: {
+      x: el.x,
+      y: el.y,
+      // 用终态尺寸，不缩到前缀包围盒：vendor 的 adjustRoughness 会按框降档，
+      // 框一小粗糙度从 1 掉到 0.5/0.33，线条画到中段会突然变粗（见文件头 ④）
+      width: el.width ?? 0,
+      height: el.height ?? 0,
+      points: pts,
+      swap: false,
+      trace: { flat: path.kind === "flat" ? solid : false },
+    },
   };
 }

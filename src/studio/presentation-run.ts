@@ -43,6 +43,10 @@ export type RunElement = {
   /** 形状临时换成折线后，收笔要按快照写回的类型之外的两项（矩形/椭圆/菱形） */
   roundness?: { type?: number; value?: number | null } | null;
   polygon?: boolean;
+  /** 第九十一轮描线：期间被临时关掉、收笔要写回的肘形路由与两端箭头尖 */
+  elbowed?: boolean;
+  startArrowhead?: string | null;
+  endArrowhead?: string | null;
 };
 
 /** 一条 = 一次出场：同组元素一起，容器连同它的绑定文字一起 */
@@ -59,7 +63,13 @@ export type RunPlan = {
 
 export type RunPatch = { id: string; opacity: number };
 
-/** 放映游标：page 对 visibleSlides 的下标，step = -1 表示整页（无分条的页） */
+/**
+ * 放映游标：page 对 visibleSlides 的下标。
+ *
+ * 第九十二轮「空拍」：step = -1 = **本页一条都还没出**——开场与每次换页都先落在
+ * 空页，第一次按键才让第一条带入场动画出场。无分条的页（整页一起出）没有分条
+ * 可走，-1 就是它唯一的状态：整页全显。
+ */
 export type Cursor = { page: number; step: number };
 
 function alive(e: RunElement): boolean {
@@ -96,7 +106,7 @@ function unionBox(list: readonly RunElement[]): { id: string; x: number; y: numb
 
 /**
  * 页内条目：顶层元素（绑定文字跟着容器走）按 groupIds 归并，再按阅读顺序排。
- * 空页返回 []，调用方用 step = -1 表示「整页一起出」。
+ * 空页返回 []：调用方据此识别「整页一起出」（没有分条可停，-1 即全显）。
  */
 export function revealUnits(all: readonly RunElement[], frameId: string): StepUnit[] {
   const members = pageMembers(all, frameId);
@@ -179,8 +189,12 @@ export function planPage(
  *   `applyBuildState` 口径——只动登记过的动画目标，其余元素一律不碰。
  * - 原始 opacity 不是 100 的元素，显示时回它自己的值（别人手工调淡的别被洗成 100）
  *
+ * 第九十二轮：有分条的页上 step=-1 是**空拍**（一条都还没出），不是整页。
+ * 开场/换页先空着，「什么都没有 → 出现第一条」才是用户看到的顺序；
+ * 整页全显只属于无分条的页（整页一起出 / 全局逐条关），它们只有 -1 这一态。
+ *
  * @param plan    当前页计划（成员与分条）
- * @param step    游标步（-1 = 整页一起出）
+ * @param step    游标步（-1 = 空拍；无分条的页 -1 = 整页一起出）
  * @param original 进片场时定格时的原始 opacity（恢复用）
  */
 export function buildRunPatches(
@@ -189,11 +203,11 @@ export function buildRunPatches(
   step: number,
   original: ReadonlyMap<string, number>,
 ): RunPatch[] {
-  // 本页「该显示谁」：step=-1 整页全显；否则前 step+1 条显
+  // 本页「该显示谁」：整页页在 -1 全显；分条页 -1 空拍，前 step+1 条显
   const visible = new Set<string>();
-  if (step < 0) {
-    for (const id of plan.memberIds) visible.add(id);
-  } else {
+  if (plan.units.length === 0) {
+    if (step < 0) for (const id of plan.memberIds) visible.add(id);
+  } else if (step >= 0) {
     for (const unit of plan.units.slice(0, step + 1)) {
       for (const id of unit.ids) visible.add(id);
     }
@@ -255,8 +269,9 @@ export function buildRestorePoses(
 
 /* ------------------------------ 游标 ------------------------------ */
 
+/** 本页的最小步：-1 = 空拍（分条页）/ 整页全显（无分条页） */
 export function firstStep(plan: RunPlan | undefined): number {
-  return plan && plan.units.length > 0 ? 0 : -1;
+  return -1;
 }
 
 export function lastStep(plan: RunPlan | undefined): number {

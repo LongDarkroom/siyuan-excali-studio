@@ -18,7 +18,8 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DRAW_SEGMENTS,
-  TRACE_STEP,
+  TRACE_CURVE_STRIDE,
+  TRACE_SAMPLE_STEP,
   drawBoxOf,
   drawFrame,
   isDrawableElement,
@@ -326,6 +327,50 @@ test("旋转的形状：轮廓在元素坐标系里裁，外接框按旋转后�
 
 /* --------------------------- ①b 箭头/连线「画出来」 --------------------------- */
 
+/** vendor 的曲线骨架（roughjs `_curve`，tightness=0）：首尾补虚点、每个控制点一段三次 */
+const vendorCurve = (pts) => {
+  const pad = [pts[0], pts[0], ...pts, pts[pts.length - 1]];
+  const out = [pad[1]];
+  for (let i = 1; i + 2 < pad.length; i += 1) {
+    const c1 = [
+      pad[i][0] + (pad[i + 1][0] - pad[i - 1][0]) / 6,
+      pad[i][1] + (pad[i + 1][1] - pad[i - 1][1]) / 6,
+    ];
+    const c2 = [
+      pad[i + 1][0] + (pad[i][0] - pad[i + 2][0]) / 6,
+      pad[i + 1][1] + (pad[i][1] - pad[i + 2][1]) / 6,
+    ];
+    out.push(c1, c2, pad[i + 1]);
+  }
+  const sampled = [out[0]];
+  for (let i = 0; i + 3 < out.length; i += 3) {
+    const [p0, p1, p2, p3] = [out[i], out[i + 1], out[i + 2], out[i + 3]];
+    for (let k = 1; k <= 64; k += 1) {
+      const t = k / 64;
+      const u = 1 - t;
+      sampled.push([
+        u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0],
+        u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1],
+      ]);
+    }
+  }
+  return sampled;
+};
+const distToPolyline = (pt, line) => {
+  let best = Infinity;
+  for (let i = 1; i < line.length; i += 1) {
+    const [ax, ay] = line[i - 1];
+    const [bx, by] = line[i];
+    const dx = bx - ax;
+    const dy = by - ay;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((pt[0] - ax) * dx + (pt[1] - ay) * dy) / l2)) : 0;
+    best = Math.min(best, Math.hypot(pt[0] - ax - dx * t, pt[1] - ay - dy * t));
+  }
+  return best;
+};
+const maxDeviation = (a, b) => Math.max(...a.map((pt) => distToPolyline(pt, b)));
+
 test("可描判据：直箭头、折线、弧线、直角路由都算；文字/画笔/图片/退化点不算", () => {
   assert.equal(isTraceableStroke(arrow("a")), true);
   assert.equal(isTraceableStroke({ ...arrow("a"), type: "line" }), true, "普通连线也能画出来");
@@ -342,7 +387,7 @@ test("直箭头：每帧只是原控制点的前缀 + 一个笔尖点，落定�
   const path = strokePathOf(a);
   assert.ok(path);
   assert.equal(path.len, 200);
-  assert.deepEqual(path.anchors.map((q) => q.at), [200], "没有中间定点，锚点就是原控制点");
+  assert.deepEqual(path.dense, [[0, 0], [200, 0]], "直线不插采样点——vendor 终态本来就是这一条");
   assert.deepEqual(traceFrame(a, path, 0), { kind: "hidden" });
   assert.deepEqual(traceFrame(a, path, 1), { kind: "done" });
   const f = traceFrame(a, path, 0.5);
@@ -350,10 +395,11 @@ test("直箭头：每帧只是原控制点的前缀 + 一个笔尖点，落定�
   assert.deepEqual(f.geom.points, [[0, 0], [100, 0]], "首点 + 笔尖，没有任何插出来的抖动点");
   assert.equal(f.geom.x, a.x, "x/y 不挪，坐标本来就相对元素原点");
   assert.equal(f.geom.y, a.y);
-  assert.equal(f.geom.swap, false, "箭头不换类型，收笔也不用还原");
+  assert.equal(f.geom.swap, false, "箭头不换类型，收笔只写回字段");
+  assert.deepEqual(f.geom.trace, { flat: true }, "实线描线走折线（圆角关掉、顶点精确）");
 });
 
-test("直角路由箭头：按存好的折线画，最后一段截到笔尖、拐点不丢", () => {
+test("直角路由：拐角先按最终半径 16 采样成折线，笔尖过弯不再把圆角夹尖", () => {
   const a = arrow("elbow", {
     elbowed: true,
     width: 160,
@@ -362,12 +408,19 @@ test("直角路由箭头：按存好的折线画，最后一段截到笔尖、�
   });
   const path = strokePathOf(a);
   assert.ok(path, "直角箭头也要有路径表");
-  assert.equal(path.len, 280);
-  const f = traceFrame(a, path, 0.85); // 238 / 280：刚过第二个拐点
+  const has = (x, y) => path.dense.some((q) => Math.hypot(q[0] - x, q[1] - y) < 0.01);
+  assert.ok(has(144, 0), "拐角前一侧的圆角落点：距拐点 16");
+  assert.ok(has(160, 16), "拐角后一侧的圆角落点");
+  assert.ok(!has(160, 0), "尖角本身不在折线上——圆角从出现那一刻就是最终形状");
+  const near = Math.min(...path.dense.map((q) => Math.hypot(q[0] - 160, q[1])));
+  assert.ok(near > 3, `折线要真的绕过拐点，最近点实测 ${near.toFixed(2)}px`);
+  // 笔尖刚过拐点：前缀里已经带着整段圆角（旧做法这时 vendor 会把半径夹到 0，拐角是尖的）
+  const f = traceFrame(a, path, (144 + 20) / path.len);
   assert.equal(f.kind, "clip");
-  assert.deepEqual(f.geom.points, [[0, 0], [160, 0], [160, 78]]);
-  assert.deepEqual(traceFrame(a, path, 0).kind, "hidden");
-  assert.deepEqual(traceFrame(a, path, 1).kind, "done");
+  const pts = f.geom.points;
+  const arc = pts.filter((q) => q[0] > 144 && q[1] > 0.01 && q[1] < 16);
+  assert.ok(arc.length >= 3, `圆角弧上至少落了三个点，实测 ${arc.length}`);
+  assert.equal(f.geom.trace.flat, true);
 });
 
 test("折线箭头：拐点原样保留，笔尖落在半路也不丢角", () => {
@@ -383,38 +436,110 @@ test("折线箭头：拐点原样保留，笔尖落在半路也不丢角", () =>
   const path = strokePathOf(a);
   assert.ok(path);
   assert.equal(path.len, 200);
-  assert.deepEqual(path.anchors.map((q) => q.at), [100, 200]);
+  assert.deepEqual(path.dense, [[0, 0], [100, 0], [100, 100]], "普通折线（非肘形）原样用控制点");
   const f = traceFrame(a, path, 0.75);
   assert.equal(f.kind, "clip");
   assert.deepEqual(f.geom.points, [[0, 0], [100, 0], [100, 50]], "前两个控制点原样，笔尖在第二段中间");
 });
 
-test("弧线：沿曲线采样，定点按固定弧长只追加，已画的部分一个字都不改", () => {
+test("弧线：骨架按 vendor 的同一套曲线口径密采样，画出来的就是落定形状", () => {
   const c = curve("c");
   const path = strokePathOf(c);
   assert.ok(path);
-  assert.ok(path.len > 260, `曲线比控制折线长，实测 ${path.len}`);
-  assert.deepEqual(path.dense[0], [0, 120], "起点仍是第一个控制点");
-  assert.deepEqual(path.dense[path.dense.length - 1], [240, 120], "终点仍是最后一个控制点");
-  assert.ok(path.dense.length > 60, "曲线要采样成密集折线才喂得动 vendor");
-  const steps = path.anchors.map((q) => q.at);
-  assert.ok(steps.length >= 5, `曲线要钉一排定点，实测 ${steps.length}`);
-  for (let i = 1; i < steps.length; i += 1) {
-    assert.ok(Math.abs(steps[i] - steps[i - 1] - TRACE_STEP) < 1e-6, "定点间距恒定，笔尖速度才均匀");
+  assert.equal(path.kind, "curve", "带圆角的弧线终态走 roughjs curve()");
+  assert.deepEqual(path.dense[0], [0, 120], "起点是第一段曲线的起点");
+  assert.deepEqual(path.dense[path.dense.length - 1], [240, 120], "终点仍在最后一个控制点");
+  assert.ok(path.dense.length > 40, `8px 一步要够密，实测 ${path.dense.length} 点`);
+  for (let i = 1; i < path.dense.length; i += 1) {
+    const step = Math.hypot(path.dense[i][0] - path.dense[i - 1][0], path.dense[i][1] - path.dense[i - 1][1]);
+    assert.ok(step > 0.1 && step <= TRACE_SAMPLE_STEP + 1, `采样间距要均匀在 ${TRACE_SAMPLE_STEP}px 上下，实测 ${step.toFixed(2)}`);
   }
+  const dev = maxDeviation(path.dense, vendorCurve(c.points));
+  assert.ok(dev < 1, `骨架和 vendor 曲线的最大偏离要小于一个像素，实测 ${dev.toFixed(2)}px`);
+  assert.ok(dev > 0, "不是同一条折线，是逼近");
+});
+
+test("弧线描线不拍平：保留圆角走 curve()，点按 ~30px 路标取（粗细才和终态一档）", () => {
+  // 拍平成 8px 折线再关圆角会走 linearPath：preserveVertices 让双描几乎重合，墨量少约 30%，
+  // 收笔换成 curve() 时整条线突然变粗——就是「细的突然变粗箭头」的根因
+  const c = curve("c");
+  const path = strokePathOf(c);
+  assert.ok(path?.way, "弧线要有路标表");
+  assert.equal(path.way[0], 0);
+  assert.ok(path.way.length >= 4 && path.way.length <= Math.ceil(path.len / 12) + 1, `路标别太密，实测 ${path.way.length} 个`);
+  for (let i = 1; i < path.way.length; i += 1) {
+    const gap = path.cum[path.way[i]] - path.cum[path.way[i - 1]];
+    assert.ok(gap >= TRACE_CURVE_STRIDE - 1e-6, `路标间距要够稀疏，实测 ${gap.toFixed(1)}px`);
+  }
+  const f = traceFrame(c, path, 0.5);
+  assert.equal(f.kind, "clip");
+  assert.deepEqual(f.geom.trace, { flat: false }, "弧线描线不许关圆角：必须和终态同样走 curve()");
+  assert.ok(f.geom.points.length <= path.way.length + 1, `描线点来自路标，实测 ${f.geom.points.length} 点`);
+  const dev = maxDeviation(f.geom.points, vendorCurve(c.points));
+  assert.ok(dev < 1, `路标前缀要落在终态曲线上，实测最大偏离 ${dev.toFixed(2)}px`);
+});
+
+test("弧线路标前缀与终态形状只差一个像素以内：收笔不会跳形", () => {
+  const c = curve("c");
+  const path = strokePathOf(c);
+  const late = traceFrame(c, path, 0.995);
+  assert.equal(late.kind, "clip");
+  // 路标 + 笔尖拼出来的折线，和落定后 vendor 画的整条弧比
+  const dev = maxDeviation(late.geom.points, vendorCurve(c.points));
+  assert.ok(dev < 1.5, `收笔前最后一帧和终态的最大偏离实测 ${dev.toFixed(2)}px`);
+});
+
+test("两点带圆角的直箭头：描线也只喂起点 + 笔尖，和终态的 curve() 两点口径一致", () => {
+  const a = { ...arrow("s"), width: 200, height: 0, roundness: { type: 2 } };
+  const path = strokePathOf(a);
+  assert.ok(path);
+  assert.equal(path.kind, "curve", "roundness 在，终态走 curve()——两点也算");
+  assert.deepEqual(path.way, [0], "两点直线没有中间路标");
+  const f = traceFrame(a, path, 0.5);
+  assert.equal(f.kind, "clip");
+  assert.deepEqual(f.geom.points, [[0, 0], [100, 0]], "起点 + 笔尖");
+  assert.deepEqual(f.geom.trace, { flat: false });
+});
+
+test("三控制点的弧：vendor 是两段三次曲线，描迹必须穿过中间那个点", () => {
+  // 旧实现给三控制点只补一段三次曲线，实测和 vendor 的弧差 27px：动画画的是另一条弧
+  const c = { ...arrow("c"), roundness: { type: 2 }, points: [[0, 0], [100, 50], [200, 0]] };
+  const path = strokePathOf(c);
+  assert.ok(path);
+  assert.ok(
+    path.dense.some((q) => Math.hypot(q[0] - 100, q[1] - 50) < 0.5),
+    "vendor 的曲线穿过中间控制点，描迹也要穿过",
+  );
+  const dev = maxDeviation(path.dense, vendorCurve(c.points));
+  assert.ok(dev < 1, `三控制点弧的最大偏离实测 ${dev.toFixed(2)}px`);
+});
+
+test("弧线：只追加不回改，先落下的部分一个字都不动（没有果冻感）", () => {
+  const c = curve("c");
+  const path = strokePathOf(c);
   const early = traceFrame(c, path, 0.45);
   const late = traceFrame(c, path, 0.8);
   assert.equal(early.kind, "clip");
   assert.equal(late.kind, "clip");
   const frozen = early.geom.points.slice(0, -1); // 去掉还在走的笔尖
   assert.ok(frozen.length >= 3);
-  assert.deepEqual(late.geom.points.slice(0, frozen.length), frozen, "先落下的定点不许回改（回改就是果冻感）");
+  assert.deepEqual(late.geom.points.slice(0, frozen.length), frozen, "已画的折线点不许回改");
 });
 
-test("弧线：露出长度跟着进度走、步进均匀，笔尖不会忽快忽慢", () => {
+test("弧线：笔尖沿骨架走、步进均匀，不会忽快忽慢", () => {
   const c = curve("c");
   const path = strokePathOf(c);
-  let prev = -1;
+  // 笔尖该落在骨架的哪一点（和 pointAtPath 同口径：在 dense 上按弧长线性插值）
+  const tipAt = (target) => {
+    let i = 1;
+    while (i < path.cum.length && path.cum[i] < target) i += 1;
+    if (i >= path.cum.length) return path.dense[path.dense.length - 1];
+    const a = path.dense[i - 1];
+    const b = path.dense[i];
+    const span = path.cum[i] - path.cum[i - 1];
+    const t = span > 0 ? (target - path.cum[i - 1]) / span : 0;
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  };
   const tipSteps = [];
   let lastTip = null;
   for (let i = 0; i <= 40; i += 1) {
@@ -422,14 +547,10 @@ test("弧线：露出长度跟着进度走、步进均匀，笔尖不会忽快�
     assert.equal(f.kind, i === 0 ? "hidden" : i === 40 ? "done" : "clip");
     if (f.kind !== "clip") continue;
     const pts = f.geom.points;
-    let drawn = 0;
-    for (let k = 1; k < pts.length; k += 1) {
-      drawn += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]);
-    }
-    assert.ok(drawn >= prev - 1e-6, `p=${i / 40} 反而缩回去了`);
-    assert.ok(Math.abs(drawn - path.len * (i / 40)) < 3, `露出长度要对上笔尖位置：${drawn} vs ${path.len * (i / 40)}`);
-    prev = drawn;
     const tip = pts[pts.length - 1];
+    const want = tipAt(path.len * (i / 40));
+    const miss = Math.hypot(tip[0] - want[0], tip[1] - want[1]);
+    assert.ok(miss < 1e-6, `p=${i / 40} 笔尖没走到该到的位置，差 ${miss.toFixed(3)}px`);
     if (lastTip) {
       const d = Math.hypot(tip[0] - lastTip[0], tip[1] - lastTip[1]);
       if (d > 1e-6) tipSteps.push(d);
@@ -441,17 +562,25 @@ test("弧线：露出长度跟着进度走、步进均匀，笔尖不会忽快�
   assert.ok(worst < avg * 1.6, `笔尖步进忽快忽慢：平均 ${avg.toFixed(2)}，最大 ${worst.toFixed(2)}`);
 });
 
-test("描线包围盒按已画的部分算：上坡到半路不会占满整个框", () => {
-  const c = curve("c");
-  const path = strokePathOf(c);
-  const f = traceFrame(c, path, 0.25);
+test("虚线/点线：弧线描线照样保留圆角走 curve()，虚线不会被每段重置成实线", () => {
+  const dashed = { ...curve("d"), strokeStyle: "dashed" };
+  const f = traceFrame(dashed, strokePathOf(dashed), 0.5);
   assert.equal(f.kind, "clip");
-  assert.ok(f.geom.width > 0 && f.geom.width < c.width, "宽度只到笔尖附近");
-  assert.ok(f.geom.height > 0 && f.geom.height <= c.height);
-  assert.equal(f.geom.swap, false);
+  assert.deepEqual(f.geom.trace, { flat: false }, "非实线不许关圆角：linearPath 每段都是新子路径");
 });
 
-
+test("描线帧的宽高用终态尺寸：别让 vendor 按小框把粗糙度降档", () => {
+  // adjustRoughness：线性元素 maxSize<50 时粗糙度砍半/三分之一。描线时把 width/height
+  // 缩成「已画部分的包围盒」，线条画到中段会从细突然变粗一下——也是「衔接不上」的一档
+  const c = curve("c");
+  const path = strokePathOf(c);
+  const early = traceFrame(c, path, 0.08);
+  assert.equal(early.kind, "clip");
+  assert.deepEqual(early.geom.points.length, 2, "刚起步只有起点和笔尖");
+  assert.equal(early.geom.width, c.width, "宽高保持终态，不随前缀缩水");
+  assert.equal(early.geom.height, c.height);
+  assert.equal(early.geom.swap, false);
+});
 
 test("效果注册：箭头/连线默认就是划线，文本/图片/形状不会被抢走", () => {
   assert.ok(EFFECT_IDS.includes("draw"));
@@ -504,24 +633,43 @@ test("现场：几何补丁 NEVER、按快照回填；有面走清洗扫、细�
   );
   assert.match(
     body,
-    /\} else if \(p\.restore\) \{[\s\S]{0,220}delete next\.points;[\s\S]{0,220}next\.type = p\.restore\.type;/,
-    "收笔/中断写回原来的类型，并把临时折线点删干净",
+    /\} else if \(p\.restore\) \{[\s\S]{0,260}delete next\.points;[\s\S]{0,200}next\.type = p\.restore\.type;/,
+    "收笔/中断写回原来的类型，并把临时折线点删干净（折线/箭头留着）",
   );
-  assert.match(APP, /function shapeRestoreOf[\s\S]{0,200}el\.type === "line" \|\| el\.type === "arrow"/, "折线/箭头有原生 points，不用换类型");
+  assert.match(
+    APP,
+    /function restorePatchOf[\s\S]{0,700}startArrowhead: el\.startArrowhead,[\s\S]{0,200}endArrowhead: el\.endArrowhead,/,
+    "描线期间关掉的箭头尖/肘形路由也要进快照",
+  );
+  assert.match(body, /if \(p\.trace\.flat\) next\.roundness = null;/, "折线口径的实线才关圆角；弧线保留圆角走 curve()，粗细和终态一档");
+  assert.match(
+    body,
+    /if \(p\.trace\) \{[\s\S]{0,240}next\.elbowed = false;[\s\S]{0,120}next\.startArrowhead = null;[\s\S]{0,80}next\.endArrowhead = null;/,
+    "描线中必须关掉箭头尖与肘形路由（否则 vendor 缩尖、按移动笔尖重算圆角）",
+  );
+  assert.match(body, /next\.elbowed = p\.restore\.elbowed;/, "收笔写回肘形路由");
+  assert.match(body, /next\.endArrowhead = p\.restore\.endArrowhead;/, "收笔写回箭头尖");
 
   const motion = APP.slice(APP.indexOf("const motionRef"), APP.indexOf("const presentApply"));
-  assert.match(motion, /trace\.set\(id, strokePathOf\(e\)\)/, "开跑前把每条箭头的路径表算好");
+  assert.match(motion, /const path = strokePathOf\(e\);/, "开跑前把每条箭头的路径表算好");
+  assert.match(motion, /ink\.set\(id, \{/, "终态 rough 操作流能复刻的进覆盖层");
+  assert.match(motion, /trace\.set\(id, path\);/, "复刻不了的（填充面等）仍走几何重渲染");
   assert.match(motion, /isDrawableElement\(b\.el\) && box/, "有可裁的面才走前沿清洗扫");
   assert.match(motion, /drawFrame\(b\.el, box, p\.o, want\)/, "进度 + 该显示的透明度一起喂给几何层");
   assert.match(motion, /traceFrame\(b\.el, run\.trace\.get\(id\) as StrokePath, p\.o\)/, "箭头/连线沿路径长出来");
-  assert.match(motion, /if \(!f\) \{[\s\S]{0,400}Math\.round\(want \* p\.o\)/, "没有几何的成员（绑定文字/路由箭头）回落淡入");
+  assert.match(
+    motion,
+    /const painted = run\.ink\.get\(id\);[\s\S]{0,900}inkRef\.current\?\.reveal\(id, p\.o\)/,
+    "走覆盖层的元素只推遮罩，画布里的那份保持透明",
+  );
+  assert.match(motion, /if \(!f\) \{[\s\S]{0,400}Math\.round\(want \* p\.o\)/, "没有几何的成员（绑定文字）回落淡入");
   assert.match(motion, /if \(!run\.hidden\.has\(id\)\)/, "藏起来的只写一次，不每帧重画");
   assert.match(motion, /if \(!run\.settled\.has\(id\)\)/, "收笔后落回原几何，只写一次");
 
   const finish = APP.slice(APP.indexOf("const finishMotion"), APP.indexOf("const startMotion"));
   assert.match(finish, /restorePatchOf\(b\.el, want\)/, "中断也按快照还原：折线/箭头回 points、形状回类型");
   assert.match(finish, /isDrawableElement\(b\.el\) \|\| isTraceableStroke\(b\.el\)/, "描了一半的箭头也要还原");
-  assert.match(APP, /points: el\.type === "line" \|\| el\.type === "arrow" \? el\.points \?\? \[\] : undefined/, "折线/箭头回填原始点集；形状不带 points");
+  assert.match(APP, /points: linear \? el\.points \?\? \[\] : undefined/, "折线/箭头回填原始点集；形状不带 points");
   assert.match(APP, /applyDrawPatches\(finalGeo\);/, "收尾同样落原几何");
 });
 

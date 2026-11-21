@@ -382,7 +382,7 @@ test("只有向前推进才飞；跳页、倒退、放映中换口径给终态",
   const body = APP.slice(at, APP.indexOf("const bumpAutoDeadline", at));
   assert.match(body, /\(cur: Cursor, kind: PresentNav = "jump"\)/, "默认不动画：忘了传 kind 的调用点是硬切");
   assert.match(body, /if \(kind === "jump" \|\| !startMotion\(ids, together\)\) applyRunPatches\(show\);/);
-  assert.match(body, /const together = cur\.step < 0;/, "整页模式把错峰全归零");
+  assert.match(body, /const together = plan\.units\.length === 0;/, "整页模式把错峰全归零（分条页的 -1 是空拍，没有元素要错峰）");
   assert.match(body, /const hide = patches\.filter\(\(p\) => p\.opacity === 0\);/, "藏起来的硬切");
   assert.match(APP, /presentApply\(next, kind\);/, "presentGo 把导航语义传给动画");
 });

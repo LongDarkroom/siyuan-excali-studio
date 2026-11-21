@@ -1,6 +1,6 @@
 {
   "name": "siyuan-excali-studio",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -16,6 +16,7 @@
     "pako": "^2.0.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "roughjs": "^4.6.4",
     "siyuan": "^1.2.9"
   },
   "devDependencies": {

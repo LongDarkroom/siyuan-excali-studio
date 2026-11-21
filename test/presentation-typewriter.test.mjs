@@ -79,12 +79,19 @@ test("光标：530ms 一换；可打字目标跳过绑定文字、非文本与�
   assert.deepEqual(typingTargets(all, ["t1", "label", "empty", "r", "gone", "missing"]), [{ id: "t1", text: "第一段" }]);
 });
 
-test("新露出条目：进场整页/第一条，同页前进只打新增，后退不打", () => {
-  assert.deepEqual(newlyRevealedIds(plan, null, { page: 0, step: -1 }), ["t1", "t2", "label"], "整页模式全打");
+test("新露出条目：空拍不打字、整页页全打，同页前进只打新增，后退不打", () => {
+  const wholePlan = { ...plan, units: [] };
+  assert.deepEqual(newlyRevealedIds(plan, null, { page: 0, step: -1 }), [], "分条页开场空拍：一个字都不打");
+  assert.deepEqual(newlyRevealedIds(wholePlan, null, { page: 0, step: -1 }), ["t1", "t2", "label"], "整页页一次全打");
   assert.deepEqual(newlyRevealedIds(plan, null, { page: 0, step: 0 }), ["t1"], "逐条进场只打第一条");
-  assert.deepEqual(newlyRevealedIds(plan, { page: 0, step: 1 }, { page: 1, step: -1 }), ["t1", "t2", "label"], "换页整页");
+  assert.deepEqual(newlyRevealedIds(plan, { page: 0, step: 1 }, { page: 1, step: -1 }), [], "换到分条页先空拍，不打字");
+  assert.deepEqual(
+    newlyRevealedIds(wholePlan, { page: 0, step: 1 }, { page: 1, step: -1 }),
+    ["t1", "t2", "label"],
+    "换到整页页一次全打",
+  );
   assert.deepEqual(newlyRevealedIds(plan, { page: 0, step: 0 }, { page: 0, step: 1 }), ["t2", "label"], "同页前进只打新增");
-  assert.deepEqual(newlyRevealedIds(plan, { page: 0, step: -1 }, { page: 0, step: 0 }), ["t1"], "从整页跳回第一条不重打全页");
+  assert.deepEqual(newlyRevealedIds(plan, { page: 0, step: -1 }, { page: 0, step: 0 }), ["t1"], "空拍后的第一条照打");
   assert.deepEqual(newlyRevealedIds(plan, { page: 0, step: 1 }, { page: 0, step: 0 }), [], "后退不打字");
   assert.deepEqual(newlyRevealedIds(undefined, null, { page: 0, step: 0 }), [], "没有计划时安全返回");
 });

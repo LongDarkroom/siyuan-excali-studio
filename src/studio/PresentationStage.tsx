@@ -58,7 +58,11 @@ export function PresentationStage(props: {
   page: number;
   /** 遮罩开关：关掉时只留 HUD（画框外不再盖住） */
   mask: boolean;
-  /** 遮罩用的画布底色（与当前主题/背景一致，避免亮暗主题下出现色块） */
+  /**
+   * 遮罩用的画布底色——**原始值**，不是屏幕上的观感色。
+   * 深色主题下 vendor 会给画布加反色滤镜（.excalidraw.theme--dark canvas），
+   * 幕布用 CSS 套同一条滤镜对齐（见 index.css），两边都不用自己换算色值。
+   */
   maskColor: string;
   /** 放映偏好（设置气泡读它；改一项由宿主落盘） */
   settings: PresentationSettings;

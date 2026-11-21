@@ -81,7 +81,8 @@ export function typingTargets(
 
 /**
  * 这一步**新露出来**的条目。向前推进才打字；后退/跳页/退出都不打（调用方另管）。
- * - 换页（或首次进入）：step=-1 时整页，否则第一到当前条
+ * - 换页（或首次进入）：-1 是空拍，什么都不打；只有无分条的页（整页一起出）
+ *   才把整页当成一次「新露出」交给打字机。
  * - 同页前进：只打新增的条
  */
 export function newlyRevealedIds(
@@ -91,7 +92,7 @@ export function newlyRevealedIds(
 ): string[] {
   if (!plan) return [];
   if (!prev || prev.page !== next.page) {
-    if (next.step < 0) return [...plan.memberIds];
+    if (next.step < 0) return plan.units.length === 0 ? [...plan.memberIds] : [];
     return plan.units.slice(0, next.step + 1).flatMap((u) => u.ids);
   }
   if (next.step > prev.step) {

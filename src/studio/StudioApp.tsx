@@ -77,6 +77,8 @@ import {
   type DrawPoint,
   type StrokePath,
 } from "./presentation-draw.ts";
+import { inkShapeOf, type InkElementLike } from "./presentation-ink.ts";
+import { InkOverlay, type InkHandle, type InkItem } from "./InkOverlay";
 import { buildSlideGraph, graphState, type GraphFrame, type GraphSide, type GraphState, type SlideGraph } from "./presentation-graph.ts";
 import {
   navEnd,
@@ -195,28 +197,44 @@ type DrawPatch = {
   opacity: number;
   /** 第八十八轮：形状这一帧临时换成多边形折线，要一起写 type/polygon/roundness */
   swap?: boolean;
-  /** 第八十八轮：形状收笔/中断/收尾，按快照写回原来的类型、多边形填充与圆角 */
-  restore?: { type: string; polygon?: boolean; roundness?: unknown };
+  /**
+   * 第九十一轮：箭头/连线描线中——两端的箭头尖与肘形路由都关掉（vendor 按最后两点
+   * 距离缩箭头尖、按移动笔尖重算拐角圆角，见 presentation-draw 的注释）
+   */
+  trace?: { flat: boolean };
+  /** 收笔/中断/收尾：按快照写回原来的类型、圆角、肘形路由与两端的箭头尖 */
+  restore?: {
+    type: string;
+    polygon?: boolean;
+    roundness?: unknown;
+    elbowed?: unknown;
+    startArrowhead?: unknown;
+    endArrowhead?: unknown;
+  };
 };
 
-/** 形状换成折线后，收笔要还原的字段（折线元素没有，返回 undefined） */
-function shapeRestoreOf(el: RunElement): DrawPatch["restore"] {
-  // 折线和箭头本来就有 points，还原只写回点集，不需要换类型/圆角
-  if (el.type === "line" || el.type === "arrow") return undefined;
-  return { type: el.type ?? "line", polygon: el.polygon, roundness: el.roundness };
-}
-
-/** 按快照把几何写回原样的补丁：折线/箭头回 points，形状回类型/圆角 */
+/**
+ * 按快照把几何写回原样的补丁：折线/箭头回 points，形状回类型/圆角；
+ * 描线期间改过的肘形路由与两端箭头尖也一并写回（描线时它们被临时关掉）。
+ */
 function restorePatchOf(el: RunElement, want: number): DrawPatch {
+  const linear = el.type === "line" || el.type === "arrow";
   return {
     id: el.id,
     x: el.x,
     y: el.y,
     width: el.width ?? 0,
     height: el.height ?? 0,
-    points: el.type === "line" || el.type === "arrow" ? el.points ?? [] : undefined,
+    points: linear ? el.points ?? [] : undefined,
     opacity: want,
-    restore: shapeRestoreOf(el),
+    restore: {
+      type: el.type ?? "line",
+      polygon: el.polygon,
+      roundness: el.roundness,
+      elbowed: el.elbowed,
+      startArrowhead: el.startArrowhead,
+      endArrowhead: el.endArrowhead,
+    },
   };
 }
 
@@ -672,7 +690,9 @@ export function StudioApp(props: StudioProps) {
   useEffect(() => watchSiyuanThemeMode(setMode), []);
 
   /* 第二十六轮 T4：明暗切换时把画布背景换到另一主题的槽位（槽位没存过 = 保持现状）。
-     初次挂载这 effect 也会跑一次，但 initialData 已按当时主题挑过槽位，cur === slot 直接过。 */
+     初次挂载这 effect 也会跑一次，但 initialData 已按当时主题挑过槽位，cur === slot 直接过。
+     放映中换主题（macOS 日落自动切）也要把幕布色跟着换：幕布是进片场时定格的，
+     画布换了背景而幕布不动，画框外就会露出一圈另一个颜色。 */
   useEffect(() => {
     if (!api) return;
     const slot = mode === "dark" ? bgSlotsRef.current.dark : bgSlotsRef.current.light;
@@ -680,6 +700,7 @@ export function StudioApp(props: StudioProps) {
     const cur = (api.getAppState() as unknown as { viewBackgroundColor?: string }).viewBackgroundColor;
     if (cur === slot) return;
     api.updateScene({ appState: { viewBackgroundColor: slot } as never });
+    setPresentMaskColor(slot);
   }, [api, mode]);
 
   /* 阶段 B：图库持久化——挂载时读回合并进面板（applyDiskLibrary 定义在文件上方，
@@ -1533,6 +1554,8 @@ export function StudioApp(props: StudioProps) {
    * x/y 不挪（折线坐标相对元素原点），所以和 applyPosePatches 分开两条路，互不覆盖。
    * 第八十八轮的形状还多一步换形：擦的时候 type 临时改成 line（`polygon` 打开、圆角必须
    * 关掉——带 roundness 的 line 在 vendor 里走曲线，轮廓会糊成圆滑的绳子），收笔再写回原类型。
+   * 第九十一轮的箭头/连线描线再多一步 `trace`：箭头尖、肘形路由、实线的圆角临时关掉，
+   * 收笔按快照一并写回（原因见 presentation-draw 的描线注释）。
    */
   const applyDrawPatches = useCallback(
     (patches: DrawPatch[]): void => {
@@ -1560,10 +1583,22 @@ export function StudioApp(props: StudioProps) {
             } else if (p.restore) {
               // 换回来的元素身上还留着上一帧的 points（形状本来没有这个字段），
               // 不删掉会被自动保存写进板子文件
-              delete next.points;
+              if (p.restore.type !== "line" && p.restore.type !== "arrow") delete next.points;
               next.type = p.restore.type;
               next.polygon = p.restore.polygon;
               next.roundness = p.restore.roundness;
+              next.elbowed = p.restore.elbowed;
+              next.startArrowhead = p.restore.startArrowhead;
+              next.endArrowhead = p.restore.endArrowhead;
+            }
+            if (p.trace) {
+              // 描线中：尖关掉（否则每过一次拐点缩成一丝再长回来）、肘形路由关掉
+              // （否则 vendor 拿移动的笔尖重算圆角，拐角在笔尖底下撑开）；
+              // 实线再关圆角走折线，虚线留着让虚线留在一条子路径里。
+              next.elbowed = false;
+              next.startArrowhead = null;
+              next.endArrowhead = null;
+              if (p.trace.flat) next.roundness = null;
             }
             return next;
           }) as never,
@@ -1577,6 +1612,8 @@ export function StudioApp(props: StudioProps) {
    * 换页 / 跳页 / 退出之前都要先 finishMotion 落终态，否则中断在那一帧的元素
    * 会停在半空，而且下一次动画会把「半空的坐标」当成基准。
    */
+  /** 描线覆盖层：画终态 rough 操作流的副本，遮罩带逐步揭开（见 presentation-ink） */
+  const inkRef = useRef<InkHandle | null>(null);
   const motionRef = useRef<{
     raf: number;
     groups: MotionGroup[];
@@ -1587,6 +1624,8 @@ export function StudioApp(props: StudioProps) {
     draw: Map<string, DrawBox | null>;
     /** 箭头/连线的描线路径（按元素）：有它就走「沿路径长出来」，没有就淡入 */
     trace: Map<string, StrokePath | null>;
+    /** 走覆盖层描线的元素（终态 rough 副本）；不在表里的 trace 元素仍走几何重渲染 */
+    ink: Map<string, InkItem>;
     /** 划线进度里已经藏掉 / 已经收笔的元素：只在状态翻转那一帧写一次 */
     hidden: Set<string>;
     settled: Set<string>;
@@ -1596,6 +1635,7 @@ export function StudioApp(props: StudioProps) {
     if (!m) return;
     motionRef.current = null;
     if (m.raf) window.cancelAnimationFrame(m.raf);
+    inkRef.current?.clear();
     const out: PosePatch[] = [];
     const geo: DrawPatch[] = [];
     for (const [id, b] of m.base) {
@@ -1623,6 +1663,7 @@ export function StudioApp(props: StudioProps) {
       const target = new Map<string, number>();
       const draw = new Map<string, DrawBox | null>();
       const trace = new Map<string, StrokePath | null>();
+      const ink = new Map<string, InkItem>();
       for (const g of groups) {
         for (const id of g.ids) {
           const e = live.get(id);
@@ -1639,7 +1680,21 @@ export function StudioApp(props: StudioProps) {
           for (const id of g.ids) {
             const e = live.get(id);
             if (!e || isDrawableElement(e) || !isTraceableStroke(e)) continue;
-            trace.set(id, strokePathOf(e));
+            const path = strokePathOf(e);
+            // 能复刻终态 rough 操作流的走覆盖层；有填充面等复刻不了的仍走几何重渲染
+            const shape = path ? inkShapeOf(e as unknown as InkElementLike) : null;
+            if (path && shape) {
+              ink.set(id, {
+                id,
+                shape,
+                path,
+                x: e.x,
+                y: e.y,
+                opacity: target.get(id) ?? OPACITY_DEFAULT,
+              });
+            } else {
+              trace.set(id, path);
+            }
           }
         }
       }
@@ -1651,10 +1706,12 @@ export function StudioApp(props: StudioProps) {
         target,
         draw,
         trace,
+        ink,
         hidden: new Set(),
         settled: new Set(),
       };
       motionRef.current = run;
+      inkRef.current?.begin([...ink.values()]);
       const start = performance.now();
       const frame = (): void => {
         if (motionRef.current !== run) return;
@@ -1672,6 +1729,27 @@ export function StudioApp(props: StudioProps) {
               const b = run.base.get(id);
               if (!b) continue;
               const want = run.target.get(id) ?? OPACITY_DEFAULT;
+              const painted = run.ink.get(id);
+              if (painted) {
+                // 覆盖层描线：画布元素压成透明，进度只推遮罩；收笔撤层还原，
+                // 两边是同一份 rough 操作流，落定不发生任何几何变化
+                if (p.o >= 1) {
+                  if (!run.settled.has(id)) {
+                    run.settled.add(id);
+                    run.hidden.delete(id);
+                    inkRef.current?.end(id);
+                    geo.push(restorePatchOf(b.el, want));
+                  }
+                } else {
+                  run.settled.delete(id);
+                  inkRef.current?.reveal(id, p.o);
+                  if (!run.hidden.has(id)) {
+                    run.hidden.add(id);
+                    out.push({ id, x: b.x, y: b.y, opacity: 0 });
+                  }
+                }
+                continue;
+              }
               // 填充面走前沿清洗扫；箭头/连线沿自己的路径长出来
               const f =
                 isDrawableElement(b.el) && box
@@ -1680,7 +1758,7 @@ export function StudioApp(props: StudioProps) {
                     ? traceFrame(b.el, run.trace.get(id) as StrokePath, p.o)
                     : null;
               if (!f) {
-                // 绑定文字、直角路由箭头这类成员：跟着淡入，不参与几何
+                // 绑定文字这类没几何可动的成员：跟着淡入
                 out.push({ id, x: b.x, y: b.y, opacity: Math.round(want * p.o) });
                 continue;
               }
@@ -1722,6 +1800,7 @@ export function StudioApp(props: StudioProps) {
         }
         // 收尾不再逐帧写，直接落终态（偏移归零、几何回原样、opacity 回元素自己的原值）
         motionRef.current = null;
+        inkRef.current?.clear();
         const final: PosePatch[] = [];
         const finalGeo: DrawPatch[] = [];
         for (const [id, b] of run.base) {
@@ -1763,7 +1842,8 @@ export function StudioApp(props: StudioProps) {
       const show = patches.filter((p) => p.opacity !== 0);
       applyRunPatches(hide);
       const ids = show.map((p) => p.id);
-      const together = cur.step < 0;
+      // 整页一起出（无分条的页）才把错峰归零；分条页的 -1 是空拍，没有元素要错峰
+      const together = plan.units.length === 0;
       if (kind === "jump" || !startMotion(ids, together)) applyRunPatches(show);
     },
     [api, applyRunPatches, finishMotion, startMotion],
@@ -1975,7 +2055,11 @@ export function StudioApp(props: StudioProps) {
         finishTyping();
         cancelPresentFlush();
         presentPendingRef.current = null;
-        presentGo(fromCursor(clampCursor(snap.plans, toCursor(cur)), cur), "jump");
+        // 游标 -1 在整页页是「全显」、在分条页是「空拍」——换口径后要保住眼前的画面：
+        // 原本全显的页落到新计划的最后一条，别因为刚刚打开逐条就整页消失。
+        const clamped = clampCursor(snap.plans, toCursor(cur));
+        const step = cur.step < 0 ? lastStep(snap.plans[clamped.page]) : clamped.step;
+        presentGo(fromCursor({ page: clamped.page, step }, cur), "jump");
         return;
       }
       case "autoAdvance":
@@ -3345,6 +3429,8 @@ export function StudioApp(props: StudioProps) {
           {/* 第二十八轮：Mermaid 转图元对话框（vendor 自带，openDialog=ttd 时自显） */}
           <TTDDialog __fallback />
         </Excalidraw>
+        {/* 描线覆盖层：终态 rough 操作流的副本，收笔撤层时画布像素不变 */}
+        <InkOverlay ref={inkRef} api={api} />
         {/* 2026-10-22：文本折叠圆点控制钮层（脚本「选区折叠为列表」的交互面） */}
         <TextFoldOverlay api={api} getHandle={() => eaHandleRef.current} notify={notify} />
         {/* 2026-10-30：画布元素右键菜单（「思源动作」注入到 vendor 菜单顶部） */}

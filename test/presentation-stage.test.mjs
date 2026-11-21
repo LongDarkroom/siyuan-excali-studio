@@ -65,6 +65,19 @@ test("遮罩换成画布底色：不再压黑，颜色按当前主题取", () =>
   assert.equal(/\.exs-present-scrim__fill\s*\{[^}]*fill:/.test(CSS), false, "CSS 不许再定幕布颜色（会盖掉属性退回压黑）");
 });
 
+test("深色主题：幕布套 vendor 同款反色滤镜（否则画框外留一圈白边）", () => {
+  // vendor 对画布做 invert(93%) hue-rotate(180deg)：白底在屏上是 #121212。
+  // 幕布是画布的兄弟节点，吃不到那条规则，必须自己补同一条滤镜。
+  const vendorCss = readFileSync(resolve(ROOT, "node_modules/@excalidraw/excalidraw/dist/prod/index.css"), "utf8");
+  const vendorFilter = vendorCss.match(/\.excalidraw\.theme--dark\s*\{[^}]*--theme-filter:\s*([^;]+);/);
+  assert.ok(vendorFilter, "vendor 深色主题里应有 --theme-filter");
+  const ours = CSS.match(/\.exs-root\[data-theme-mode="dark"\]\s+\.exs-present-scrim\s*\{[^}]*\bfilter:\s*([^;]+);/);
+  assert.ok(ours, "深色主题下幕布必须有反色滤镜");
+  assert.equal(ours[1].trim(), vendorFilter[1].trim(), "滤镜值必须与 vendor 画布同款（换 vendor 版本时要跟着改）");
+  // 放映中换主题（系统日落自动切）：画布换槽位时幕布色要跟着换，否则又是一圈两色
+  assert.match(APP, /setPresentMaskColor\(slot\)/, "换主题同步幕布色");
+});
+
 test("镜头：留白走进片场定格的偏好；飞行窗内换页排队，不丢输入", () => {
   assert.match(APP, /const PRESENT_CAM_MS = \d+;/, "飞行窗有常量");
   assert.match(APP, /\(frameId: string, fit = 0\.92\): void =>/, "focusFrame 留白兜底 0.92（实际取值来自设置 ps.fit）");

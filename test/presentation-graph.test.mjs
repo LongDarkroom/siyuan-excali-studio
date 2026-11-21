@@ -202,7 +202,7 @@ test("图状态：linear / linked / partial 三态（面板提示用）", () => 
 const mkPlans = (ids) =>
   ids.map((id) => planPage([{ id, type: "frame", x: 0, y: 0, width: 400, height: 300 }], id));
 
-test("导航：先走完本页分条，再换页", () => {
+test("导航：开场先空一拍，再走完本页分条，最后才换页", () => {
   const plans = mkPlans(["f1", "f2"]);
   // f1 塞两个分条
   const withUnits = [
@@ -211,12 +211,31 @@ test("导航：先走完本页分条，再换页", () => {
   ];
   const p = planPage(withUnits, "f1");
   const st = navStart([p, plans[1]], null, 0);
-  assert.equal(st.step, 0, "从第一条分条开始");
-  const s1 = navNext([p, plans[1]], null, st);
+  assert.equal(st.step, -1, "开场是空页：一条都不出");
+  const s0 = navNext([p, plans[1]], null, st);
+  assert.equal(s0?.page, 0, "第一下还在本页");
+  assert.equal(s0?.step, 0, "第一下才出第一条");
+  const s1 = navNext([p, plans[1]], null, s0);
   assert.equal(s1?.page, 0, "还在本页（第二条分条）");
   assert.equal(s1?.step, 1);
   const s2 = navNext([p, plans[1]], null, s1);
   assert.equal(s2?.page, 1, "本页走完才换页");
+  assert.equal(s2?.step, -1, "换到的空页没有分条，-1 即整页");
+});
+
+test("导航：换到分条页也先空一拍，第一下才出第一条", () => {
+  const head = mkPlans(["f1"])[0]; // 整页页
+  const tail = planPage(
+    [{ id: "a", type: "rectangle", x: 0, y: 0, width: 10, height: 10, frameId: "f2" }],
+    "f2",
+  );
+  const plans = [head, tail];
+  const st = navStart(plans, null, 0);
+  const nextPage = navNext(plans, null, st);
+  assert.equal(nextPage?.page, 1);
+  assert.equal(nextPage?.step, -1, "新页先空着（还没有任何一条出场）");
+  const first = navNext(plans, null, nextPage);
+  assert.equal(first?.step, 0, "再按一下才出第一条");
 });
 
 test("从这一步播放：游标直接落在那一条，越界夹回本页，整页页仍是 -1", () => {
@@ -228,7 +247,8 @@ test("从这一步播放：游标直接落在那一条，越界夹回本页，�
   const p = planPage(withUnits, "f1");
   assert.equal(navStart([p], null, 0, 1).step, 1, "第 2 步 = 游标 1");
   assert.equal(navStart([p], null, 0, 99).step, 2, "越界夹到最后一条");
-  assert.equal(navStart([p], null, 0, -5).step, 0, "负数夹回第一条");
+  assert.equal(navStart([p], null, 0, -5).step, -1, "负数夹回空拍（与开场一致）");
+  assert.equal(navStart([p], null, 0).step, -1, "不给步号就是空拍");
   const whole = mkPlans(["f1"]);
   assert.equal(navStart(whole, null, 0, 3).step, -1, "整页没有分条，给了步号也不生效");
 });
@@ -308,10 +328,11 @@ test("导航：从指定页起播，不补播前面的页（第八十七轮）",
   const list = [plans[0], plans[1], tail];
   const st = navStart(list, null, 2);
   assert.equal(st.page, 2, "起点就是指定的那一页");
-  assert.equal(st.step, 0, "从这一页第一条起");
+  assert.equal(st.step, -1, "从这一页的空拍起（第一下才出第一条）");
   assert.deepEqual(st.stack, [2], "访问栈只有起点");
   assert.equal(navPrev(list, null, st), null, "后退到头就停，不回到前面几页");
-  assert.equal(navNext(list, null, st), null, "之后按正常顺序往下走（这里是最后一页）");
+  assert.equal(navNext(list, null, st)?.step, 0, "之后按正常顺序往下走（这里是最后一页的第一条）");
+  assert.equal(navNext(list, null, navNext(list, null, st)), null, "走完这一条就到底");
 });
 
 /* ------------------------------ ③ 接线（源码断言） ------------------------------ */
