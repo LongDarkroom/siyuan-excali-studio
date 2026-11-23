@@ -7,7 +7,7 @@
  */
 
 import { Plugin, Setting, Dialog, confirm, openInputDialog, openTab, showMessage, Menu, type Custom, type IMenu, type Protyle, type subMenu } from "siyuan";
-import { initI18n, t } from "./i18n";
+import { initI18n, readUiLanguageHint, setUiLanguagePreference, t } from "./i18n";
 import { installExcalidrawAssetPath, PLUGIN_WEB_DIR } from "./studio/assets";
 import { hostPlatform, joinPosix, openPathInFileManager, pickStyleFile, workspaceDataDir } from "./studio/desktop-bridge.ts";
 import { STUDIO_ICON_ID, STUDIO_ICON_SVG, slashItemHtml } from "./studio/icons";
@@ -29,8 +29,10 @@ import {
   normalizeDirRef,
   normalizePresentationSettings,
   normalizeSettings,
+  normalizeUiLanguage,
   type PresentationSettings,
   type StudioSettings,
+  type UiLanguage,
 } from "./studio/settings";
 // 第三十八轮：荧光笔配置（pens.ts 是纯数据模块，无 vendor/React 依赖，主包可直用）
 import { normalizeHighlighter, type HighlighterConfig } from "./studio/pens.ts";
@@ -339,6 +341,10 @@ export default class ExcaliStudioPlugin extends Plugin {
     // 本仓库约定图标/页签/顶栏/命令/斜杠必须抢在任何 await 之前注册——少一个入口，
     // 用户就会遇到「装好了却点不到」。读设置挪到这些同步注册之后。
     initI18n(this.i18n);
+    // 第九十四轮：设置里的语言偏好要等读盘，但命令/顶栏/斜杠必须先注册。
+    // 切换时写下的 hint 是同步可读的，先用它把这一轮入口文案定下来；
+    // bootstrapState 读完设置再校准（hint 只是启动加速，真源仍是插件设置）。
+    setUiLanguagePreference(readUiLanguageHint());
 
     /* 第二十五轮：读设置 + 旧白板迁移先起跑，挂成 ready 闸门。
        下一行就要注册页签模型——布局恢复可能立刻让页签读盘，而迁移正在搬文件；
@@ -560,6 +566,8 @@ export default class ExcaliStudioPlugin extends Plugin {
   private async bootstrapState(): Promise<void> {
     try {
       await this.loadState();
+      // 第九十四轮：读盘前的入口按 hint 注册；这里拿到真源后校准一次
+      setUiLanguagePreference(this.settings.uiLanguage);
     } catch (e) {
       console.error("[excali-studio] 读取设置失败，用默认值继续", e);
     }
@@ -790,6 +798,11 @@ export default class ExcaliStudioPlugin extends Plugin {
       get fontFamily() {
         return plugin.settings.fontFamily;
       },
+      // 第九十四轮：界面/画布语言偏好（getter 读设置；☰ 里切换后写回）
+      get uiLanguage() {
+        return plugin.settings.uiLanguage;
+      },
+      onUiLanguageChange: (value) => this.rememberUiLanguage(value),
       onOpenExisting: () => this.promptOpenPath(),
       onNewBoard: () => void this.openNew(),
       onBoardActions: (custom, actions) => {
@@ -3504,6 +3517,34 @@ export default class ExcaliStudioPlugin extends Plugin {
       },
     });
 
+    /* 第九十四轮：界面 + 画布语言。☰ 里的切换项与这里写同一份偏好；
+       壳侧入口（顶栏/命令/斜杠）是启动时注册的，改完重启思源才跟随，
+       画布内文案（含 Excalidraw 自带按钮）即时切换。 */
+    this.setting.addItem({
+      title: t("界面语言"),
+      description: t(
+        "画布与插件界面的语言。跟随思源 = 思源界面是中文就中文，否则英文。画布与已打开的页签立即切换；顶栏、命令、斜杠等入口文案在重启思源后跟随。",
+      ),
+      createActionElement: () => {
+        const el = document.createElement("select");
+        el.className = "b3-select fn__block";
+        const options: Array<[UiLanguage, string]> = [
+          ["auto", t("跟随思源")],
+          ["zh_CN", "简体中文"],
+          ["en_US", "English"],
+        ];
+        for (const [value, label] of options) {
+          const opt = document.createElement("option");
+          opt.value = value;
+          opt.textContent = label;
+          el.appendChild(opt);
+        }
+        el.value = this.settings.uiLanguage;
+        el.addEventListener("change", () => this.rememberUiLanguage(el.value as UiLanguage));
+        return el;
+      },
+    });
+
     /* 2026-10-27：建档（白板↔文档绑定）功能整体移除——原「白板文档目录 /
        新建时自动建档 / 打开白板文档时自动进入画板 / 白板体检」四个设置项随之退役，
        白板回归纯文件（保存目录里的 .svg），文档树零痕迹。 */
@@ -3537,6 +3578,18 @@ export default class ExcaliStudioPlugin extends Plugin {
   private rememberGrid(enabled: boolean): void {
     if (this.settings.gridModeEnabled === enabled) return;
     this.settings = { ...this.settings, gridModeEnabled: enabled };
+    this.persist();
+  }
+
+  /**
+   * 第九十四轮：界面/画布语言偏好。画布 ☰ 与设置页都走这里——
+   * 先落设置，再同步到运行时表（bridge + hint），已开的页签靠订阅自己重绘。
+   */
+  private rememberUiLanguage(value: UiLanguage): void {
+    const next = normalizeUiLanguage(value);
+    setUiLanguagePreference(next);
+    if (this.settings.uiLanguage === next) return;
+    this.settings = { ...this.settings, uiLanguage: next };
     this.persist();
   }
 

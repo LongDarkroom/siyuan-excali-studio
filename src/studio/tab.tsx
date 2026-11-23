@@ -61,6 +61,8 @@ export type StudioTabHost = Pick<
   | "gridModeEnabled"
   | "onGridChange"
   | "fontFamily"
+  | "uiLanguage"
+  | "onUiLanguageChange"
   | "boardDir"
   | "pickBoardPath"
 > & {
@@ -284,6 +286,8 @@ export function attachStudioTab(custom: Custom, host: StudioTabHost): StudioTabS
         gridModeEnabled={host.gridModeEnabled}
         onGridChange={host.onGridChange}
         fontFamily={host.fontFamily}
+        uiLanguage={host.uiLanguage}
+        onUiLanguageChange={host.onUiLanguageChange}
         loadLibraryItems={host.loadLibraryItems}
         saveLibraryItems={host.saveLibraryItems}
         onRunScript={host.onRunScript}

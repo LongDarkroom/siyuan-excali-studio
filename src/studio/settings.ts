@@ -26,6 +26,18 @@ export const DEDICATED_BOARD_DIR = "assets/excali";
  */
 export const LIB_DIR = "storage/excali-studio/libraries";
 
+/**
+ * 第九十四轮：界面语言。auto = 跟随思源界面语言；zh_CN / en_US = 画布 ☰ 里手切过。
+ * 只放类型与归一——选表逻辑在 i18n.ts（那里不依赖这份设置模块，避免环）。
+ */
+export const UI_LANGUAGES = ["auto", "zh_CN", "en_US"] as const;
+export type UiLanguage = (typeof UI_LANGUAGES)[number];
+export const DEFAULT_UI_LANGUAGE: UiLanguage = "auto";
+
+export function normalizeUiLanguage(v: unknown): UiLanguage {
+  return (UI_LANGUAGES as readonly unknown[]).includes(v) ? (v as UiLanguage) : DEFAULT_UI_LANGUAGE;
+}
+
 /** 目录引用归一：反斜杠、前导斜杠、data/ 前缀、末尾斜杠都抹平。
  *  用户可能把目录写成 `/data/assets/excali/`、`assets\excali`；存之前只留相对形式。 */
 export function normalizeDirRef(dir: string): string {
@@ -210,6 +222,8 @@ export function normalizeTextFontFamily(v: unknown): TextFontFamily {
 export interface StudioSettings {
   /** 新白板落盘目录（工作空间相对路径，默认 assets/excali） */
   saveDir: string;
+  /** 第九十四轮：界面语言（☰ 里切换；auto 跟随思源） */
+  uiLanguage: UiLanguage;
   /** 新画笔默认用思源的强调色（默认开） */
   accentStroke: boolean;
   /** 空画板显示引导画面（手绘纸飞机 + 上手提示 + 三个入口） */
@@ -296,6 +310,7 @@ export interface StudioSettings {
 
 export const DEFAULT_SETTINGS: StudioSettings = {
   saveDir: DEDICATED_BOARD_DIR,
+  uiLanguage: DEFAULT_UI_LANGUAGE,
   accentStroke: true,
   showWelcome: true,
   gridModeEnabled: false,
@@ -346,6 +361,7 @@ export function normalizeSettings(raw: unknown): StudioSettings {
     gridModeEnabled:
       typeof r.gridModeEnabled === "boolean" ? r.gridModeEnabled : DEFAULT_SETTINGS.gridModeEnabled,
     fontFamily: normalizeTextFontFamily(r.fontFamily),
+    uiLanguage: normalizeUiLanguage(r.uiLanguage),
     stencilMigrated: typeof r.stencilMigrated === "boolean" ? r.stencilMigrated : DEFAULT_SETTINGS.stencilMigrated,
     pinnedScripts: Array.isArray(r.pinnedScripts)
       ? r.pinnedScripts.filter((x): x is string => typeof x === "string" && x !== "")

@@ -21,6 +21,7 @@ import {
   ICON_FRAME_COLLAPSE,
   ICON_HELP,
   ICON_HIGHLIGHTER,
+  ICON_LANGUAGE,
   ICON_REFRESH,
   ICON_RENAME,
   ICON_SAVE_AS,
@@ -61,6 +62,7 @@ test("菜单图标：24 网格、绝对坐标，改坏会被卡住", () => {
     ICON_ZOOM_FIT,
     ICON_HELP,
     ICON_HIGHLIGHTER,
+    ICON_LANGUAGE,
     ICON_REFRESH,
     ICON_FOLDER_OPEN,
     ICON_FRAME_COLLAPSE,
@@ -87,23 +89,26 @@ test("菜单图标：24 网格、绝对坐标，改坏会被卡住", () => {
 
 /* ------------------------------ 菜单组成 ------------------------------ */
 
-test("StudioMenu：走包导出的 MainMenu，九个独立自绘项，各带图标；素材库三项住在面板 ⋮ 菜单", () => {
+test("StudioMenu：走包导出的 MainMenu，十个独立自绘项，各带图标；素材库三项住在面板 ⋮ 菜单", () => {
   assert.match(MENU, /import \{ MainMenu \} from "@excalidraw\/excalidraw"/, "必须用包导出的 MainMenu，才会顶掉 DefaultMainMenu");
   assert.match(MENU, /<MainMenu>/, "根节点是 MainMenu");
-  for (const item of ["导出图片…", "重命名", "复制此白板的引用", "缩放适应", "Mermaid 转图元…", "嵌入思源块…", "拓展功能…", "AI 通道…", "帮助"]) {
+  for (const item of ["导出图片…", "重命名", "复制此白板的引用", "缩放适应", "Mermaid 转图元…", "嵌入思源块…", "拓展功能…", "AI 通道…", "切换界面语言与画布语言", "帮助"]) {
     assert.ok(MENU.includes(`t("${item}")`), `菜单项缺了：${item}`);
   }
   // 第五十一轮：「运行脚本…」更名「拓展功能…」（面板拆「拓展功能/脚本库」两类后 umbrella 改口）
   // 第四十四轮：AI 通道… 夹在「拓展功能…」和「帮助」之间（能力入口挨着，帮助永远垫底）
-  const order = ["拓展功能…", "AI 通道…", "帮助"].map((s) => MENU.indexOf(`t("${s}")`));
-  assert.ok(order[0] < order[1] && order[1] < order[2], "「AI 通道…」必须排在「拓展功能…」之后、「帮助」之前");
+  const order = ["拓展功能…", "AI 通道…", "切换界面语言与画布语言", "帮助"].map((s) => MENU.indexOf(`t("${s}")`));
+  assert.ok(
+    order[0] < order[1] && order[1] < order[2] && order[2] < order[3],
+    "顺序：拓展功能… → AI 通道… → 切换语言 → 帮助（帮助永远垫底）",
+  );
   // 第三十三轮：笔刷组迁出菜单 → 画布右上角 PenRail；第三十八轮：PenRail 整条退役，
   // 荧光笔进右缘脚本竖条、墨笔交回 vendor 铅笔工具。菜单始终是纯「文件与功能」入口。
   // （2026-10-19：素材库三项（导入/刷新/打开文件夹）迁出 ☰——用户要求它们住进
   //   素材库面板自己的 ⋮ 菜单（vendor 硬编码无扩展点，DOM 注入，见 library-menu-inject.ts），
   //   菜单里不许残留。）
-  assert.equal((MENU.match(/<MainMenu\.Item\b/g) ?? []).length, 9, "9 个独立自绘项（第四十四轮：加「AI 通道…」）");
-  assert.equal((MENU.match(/icon=\{/g) ?? []).length, 9, "每个自绘项都得给图标（菜单项没有固定图标列）");
+  assert.equal((MENU.match(/<MainMenu\.Item\b/g) ?? []).length, 10, "10 个独立自绘项（第九十四轮：加语言切换）");
+  assert.equal((MENU.match(/icon=\{/g) ?? []).length, 10, "每个自绘项都得给图标（菜单项没有固定图标列）");
   for (const gone of ["导入素材库…", "刷新素材库", "打开素材库文件夹"]) {
     assert.equal(MENU.includes(`t("${gone}")`), false, `素材库项该住在面板 ⋮ 菜单，不许留在 ☰：${gone}`);
   }
@@ -116,6 +121,9 @@ test("StudioMenu：走包导出的 MainMenu，九个独立自绘项，各带图�
   assert.match(MENU, /onSelect=\{props\.onZoomToFit\}/, "「缩放适应」接 api.scrollToContent");
   assert.match(MENU, /onSelect=\{props\.onMermaid\}/, "「Mermaid 转图元…」接 vendor TTDDialog 开启通道");
   assert.match(MENU, /onSelect=\{props\.onRunScript\}/, "「拓展功能…」接宿主脚本选择器");
+  // 第九十四轮：☰ 里的语言项显示「要切去的语言」，点了立刻互切并写回设置
+  assert.match(MENU, /onSelect=\{props\.onToggleUiLanguage\}/, "语言项接宿主切换通道");
+  assert.match(MENU, /props\.uiLanguage === "en_US" \? "简体中文" : "English"/, "标签必须是目标语言，不能显示当前语言");
   // 第四十一轮：「插入白板卡片…」从 ☰ 撤出——它是右缘竖条里的拓展功能（契约见 rail-action.test）
   assert.equal(MENU.includes("插入白板卡片"), false, "「插入白板卡片…」已撤出菜单");
   assert.equal(MENU.includes("onInsertBoardCard"), false, "菜单回调通道已删");

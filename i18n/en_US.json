@@ -68,7 +68,6 @@
   "新增文字用的默认字体，只由这里决定：之后打开的任何白板（新建或已有），新打的字都用它。在画布上临时换字体不会写回这里，已有文字也保持自己原来的字体。改完只影响之后打开的页签。": "The default font for new text. This setting is the only source: any whiteboard opened afterwards (new or existing) uses it for text you type. Changing the font inside a canvas does not write back here, and existing text keeps its own font. Changes apply to tabs opened after this.",
   "缩放适应": "Zoom to fit",
   "导出图片…": "Export image…",
-  "Excalidraw 链接": "Excalidraw links",
   "已插入 {n} 张图片": "Inserted {n} image(s)",
   "没有可导入的图片": "No importable images",
   "缩放并滚动到全部内容": "Zoom to fit and scroll to all content",
@@ -684,5 +683,9 @@
   "拆回独立步：每条各自出场": "Split back into separate steps",
   "拆回独立步": "Split into separate steps",
   "{type}以后默认": "Default for {type} from now on",
-  "恢复内置": "Use built-in default"
+  "恢复内置": "Use built-in default",
+  "切换界面语言与画布语言": "Switch the interface and canvas language",
+  "界面语言": "Interface language",
+  "画布与插件界面的语言。跟随思源 = 思源界面是中文就中文，否则英文。画布与已打开的页签立即切换；顶栏、命令、斜杠等入口文案在重启思源后跟随。": "Language for the canvas and plugin UI. Follow SiYuan uses Chinese when SiYuan's UI is Chinese, otherwise English. Canvas and open tabs switch immediately; top bar, commands and slash entries follow after restarting SiYuan.",
+  "跟随思源": "Follow SiYuan"
 }

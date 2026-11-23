@@ -16,10 +16,17 @@
  * 没有任何 SiYuan API，静态契约也好断言。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { CaptureUpdateAction, Excalidraw, TTDDialog, convertToExcalidrawElements, exportToCanvas, hashElementsVersion } from "@excalidraw/excalidraw";
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { excalidrawLangCode, t } from "../i18n";
+import {
+  currentUiLanguage,
+  excalidrawLangCode,
+  getI18nSnapshot,
+  setUiLanguagePreference,
+  subscribeI18n,
+  t,
+} from "../i18n";
 import { themeBgForMode, themeDefaultCanvasColor, readSiyuanThemeMode, readThemeBgSlots, watchSiyuanThemeMode, withThemeBgSlot, type ThemeMode } from "./theme";
 import { StudioMenu } from "./StudioMenu";
 import { ScriptRail, type ScriptRailItem } from "./ScriptRail";
@@ -109,6 +116,7 @@ import {
   normalizePresentationSettings,
   type PresentationSettings,
   type TextFontFamily,
+  type UiLanguage,
 } from "./settings";
 import { PresentationDrawer } from "./PresentationDrawer";
 import { PresentationStage } from "./PresentationStage";
@@ -358,6 +366,9 @@ export type StudioProps = {
    * 开页签时读一次写进 initialData；画布内换字体不回写、也不影响别的板。
    */
   fontFamily: TextFontFamily;
+  /** 第九十四轮：界面语言偏好（auto 跟随思源；☰ 里切换后写回设置） */
+  uiLanguage: UiLanguage;
+  onUiLanguageChange: (uiLanguage: UiLanguage) => void;
   /** ☰「复制此白板的引用」→ 宿主复制图片嵌入引用 ![标题](assets/x.svg) 写剪贴板 */
   onCopyBoardRef: () => void;
   /**
@@ -443,6 +454,8 @@ export function StudioApp(props: StudioProps) {
     gridModeEnabled,
     onGridChange,
     fontFamily,
+    uiLanguage,
+    onUiLanguageChange,
     onCopyBoardRef,
     getLibraryImportUrl,
     libDirAbs,
@@ -681,6 +694,18 @@ export function StudioApp(props: StudioProps) {
   const fontSeededRef = useRef(false);
   /** 第二十六轮 T4：载荷里两个主题的背景槽位（打开时读一次；handleChange 里随当前主题更新） */
   const bgSlotsRef = useRef<{ light: string; dark: string }>({ light: "", dark: "" });
+
+  /* 第九十四轮：语言是模块级查表（t() 被 500+ 处直接调用），切换只能靠外部订阅
+     触发整棵引擎树重绘；同时把 langCode 传给 vendor，画布按钮也跟着换语言 */
+  useSyncExternalStore(subscribeI18n, getI18nSnapshot);
+  useEffect(() => {
+    setUiLanguagePreference(uiLanguage);
+  }, [uiLanguage]);
+  const toggleUiLanguage = useCallback(() => {
+    const next = currentUiLanguage() === "en_US" ? "zh_CN" : "en_US";
+    setUiLanguagePreference(next);
+    onUiLanguageChange(next);
+  }, [onUiLanguageChange]);
 
   /* S3：ea 脚本引擎的画布句柄（构造逻辑在 ea-handle.ts，保持本文件无自动化字段）。
      第三十二轮：把明暗主题的读写器一并交给句柄（ea.getTheme/setTheme 的出口） */
@@ -3462,6 +3487,8 @@ export function StudioApp(props: StudioProps) {
             onAiChannels={openAiPanel}
             onHelp={onHelp}
             onCopyRef={onCopyBoardRef}
+            uiLanguage={currentUiLanguage()}
+            onToggleUiLanguage={toggleUiLanguage}
           />
           {showWelcome ? <StudioWelcome onOpenExisting={onOpenExisting} onNewBoard={onNewBoard} /> : null}
           {/* 第二十八轮：Mermaid 转图元对话框（vendor 自带，openDialog=ttd 时自显） */}

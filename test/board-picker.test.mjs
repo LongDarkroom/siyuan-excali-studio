@@ -15,6 +15,8 @@ import { fileURLToPath } from "node:url";
 import { boardTimeText, filterBoardEntries } from "../src/studio/board-list.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// 第九十四轮：t() 的 auto 落点看宿主语言；Node 里没有思源，按中文宿主跑断言
+globalThis.siyuan = { config: { lang: "zh_CN" } };
 const src = (rel) => readFileSync(resolve(ROOT, "src/" + rel), "utf8");
 const stripComments = (code) => code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'\\])\/\/[^\n]*/g, "$1");
 

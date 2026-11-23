@@ -35,6 +35,7 @@
 
 import { MainMenu } from "@excalidraw/excalidraw";
 import { t } from "../i18n";
+import type { ConcreteUiLanguage } from "../i18n";
 import { menuShortcut } from "./hotkeys";
 import { LineIcon } from "./line-icon";
 import {
@@ -42,6 +43,7 @@ import {
   ICON_EMBED,
   ICON_EXPORT_IMAGE,
   ICON_HELP,
+  ICON_LANGUAGE,
   ICON_MERMAID,
   ICON_RENAME,
   ICON_SAVE_AS,
@@ -68,6 +70,10 @@ export type StudioMenuProps = {
   onAiChannels: () => void;
   /** 2026-10-17 第二十轮：帮助：快捷键速查表（宿主弹 Dialog） */
   onHelp: () => void;
+  /** 第九十四轮：当前界面语言（决定切换项显示「English」还是「简体中文」） */
+  uiLanguage: ConcreteUiLanguage;
+  /** 第九十四轮：中英互切（画布/引擎文案即时跟随，偏好写进插件设置） */
+  onToggleUiLanguage: () => void;
 };
 
 export function StudioMenu(props: StudioMenuProps) {
@@ -111,6 +117,15 @@ export function StudioMenu(props: StudioMenuProps) {
           生图的 API 地址/Key 不住这儿——面板管「开不开」，插件设置页管「怎么连」 */}
       <MainMenu.Item icon={<LineIcon d={ICON_AI} />} onSelect={props.onAiChannels}>
         {t("AI 通道…")}
+      </MainMenu.Item>
+      {/* 第九十四轮：语言切换。项文案用**目标语言**自述（中文界面显示 English、
+          英文界面显示 简体中文），点一下中英互换；画布按钮与所有引擎文案即时跟随 */}
+      <MainMenu.Item
+        icon={<LineIcon d={ICON_LANGUAGE} />}
+        title={t("切换界面语言与画布语言")}
+        onSelect={props.onToggleUiLanguage}
+      >
+        {props.uiLanguage === "en_US" ? "简体中文" : "English"}
       </MainMenu.Item>
       <MainMenu.Item icon={<LineIcon d={ICON_HELP} />} onSelect={props.onHelp}>
         {t("帮助")}
