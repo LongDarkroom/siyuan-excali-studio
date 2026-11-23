@@ -64,6 +64,8 @@
   "没有找到可用的备份": "No usable backup found",
   "已从备份恢复": "Restored from backup",
   "默认显示网格": "Show grid by default",
+  "新增文本默认字体": "Default font for new text",
+  "新增文字用的默认字体，只由这里决定：之后打开的任何白板（新建或已有），新打的字都用它。在画布上临时换字体不会写回这里，已有文字也保持自己原来的字体。改完只影响之后打开的页签。": "The default font for new text. This setting is the only source: any whiteboard opened afterwards (new or existing) uses it for text you type. Changing the font inside a canvas does not write back here, and existing text keeps its own font. Changes apply to tabs opened after this.",
   "缩放适应": "Zoom to fit",
   "导出图片…": "Export image…",
   "Excalidraw 链接": "Excalidraw links",

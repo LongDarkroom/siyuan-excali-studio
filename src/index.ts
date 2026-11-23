@@ -20,7 +20,18 @@ import { hasNonEmptyScene, hasSceneInImage, sceneTextsEquivalent } from "./studi
 import { LOCAL_LIB_NAME, mergeLibFiles, parseLibFile, planLibraryWrites, serializeLibFile } from "./studio/stencil";
 // 第三十四轮：脚本侧边栏广播事件（独立小模块，避免主包拉进 React 图）
 import { HIGHLIGHTER_EVENT, RAIL_VIEW_EVENT, SCRIPT_PIN_EVENT } from "./studio/script-pin";
-import { DEFAULT_SETTINGS, DEDICATED_BOARD_DIR, LIB_DIR, normalizeDirRef, normalizePresentationSettings, normalizeSettings, type PresentationSettings, type StudioSettings } from "./studio/settings";
+import {
+  DEFAULT_SETTINGS,
+  DEDICATED_BOARD_DIR,
+  LIB_DIR,
+  TEXT_FONT_FAMILIES,
+  TEXT_FONT_NAMES,
+  normalizeDirRef,
+  normalizePresentationSettings,
+  normalizeSettings,
+  type PresentationSettings,
+  type StudioSettings,
+} from "./studio/settings";
 // 第三十八轮：荧光笔配置（pens.ts 是纯数据模块，无 vendor/React 依赖，主包可直用）
 import { normalizeHighlighter, type HighlighterConfig } from "./studio/pens.ts";
 import {
@@ -774,6 +785,11 @@ export default class ExcaliStudioPlugin extends Plugin {
         return plugin.settings.gridModeEnabled;
       },
       onGridChange: (enabled) => this.rememberGrid(enabled),
+      // 第九十三轮（二次修订）：新增文本默认字体只由设置页决定，这里只读不回写——
+      // 在画布上换字体不污染设置，也不跨板传播
+      get fontFamily() {
+        return plugin.settings.fontFamily;
+      },
       onOpenExisting: () => this.promptOpenPath(),
       onNewBoard: () => void this.openNew(),
       onBoardActions: (custom, actions) => {
@@ -3458,6 +3474,32 @@ export default class ExcaliStudioPlugin extends Plugin {
           this.persist();
         });
         gridEl = el;
+        return el;
+      },
+    });
+
+    /* 第九十三轮：新增文本的默认字体——**唯一来源就是这一行**。
+       画布内换字体不回写（那只是这块板这一次会话的事），所以这里改了之后，
+       新开的页签一进来第一笔就是这个字体。 */
+    this.setting.addItem({
+      title: t("新增文本默认字体"),
+      description: t(
+        "新增文字用的默认字体，只由这里决定：之后打开的任何白板（新建或已有），新打的字都用它。在画布上临时换字体不会写回这里，已有文字也保持自己原来的字体。改完只影响之后打开的页签。",
+      ),
+      createActionElement: () => {
+        const el = document.createElement("select");
+        el.className = "b3-select fn__block";
+        for (const id of TEXT_FONT_FAMILIES) {
+          const opt = document.createElement("option");
+          opt.value = String(id);
+          opt.textContent = TEXT_FONT_NAMES[id];
+          el.appendChild(opt);
+        }
+        el.value = String(this.settings.fontFamily);
+        el.addEventListener("change", () => {
+          this.settings = normalizeSettings({ ...this.settings, fontFamily: Number(el.value) });
+          this.persist();
+        });
         return el;
       },
     });

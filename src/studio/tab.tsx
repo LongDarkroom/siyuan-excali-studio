@@ -60,6 +60,7 @@ export type StudioTabHost = Pick<
   | "libDirAbs"
   | "gridModeEnabled"
   | "onGridChange"
+  | "fontFamily"
   | "boardDir"
   | "pickBoardPath"
 > & {
@@ -282,6 +283,7 @@ export function attachStudioTab(custom: Custom, host: StudioTabHost): StudioTabS
         searchDocs={host.searchDocs}
         gridModeEnabled={host.gridModeEnabled}
         onGridChange={host.onGridChange}
+        fontFamily={host.fontFamily}
         loadLibraryItems={host.loadLibraryItems}
         saveLibraryItems={host.saveLibraryItems}
         onRunScript={host.onRunScript}

@@ -41,7 +41,7 @@ export const BUNDLED_FONTS = [
   { family: "Zen Kurenaido", file: "ZenKurenaido-Regular.woff2" },
 ];
 
-const ENUM_ID_BASE = 101; // FONT_FAMILY 追加 id 起点（避开 1~9 与 Xiaolai:100）
+export const ENUM_ID_BASE = 101; // FONT_FAMILY 追加 id 起点（避开 1~9 与 Xiaolai:100）
 
 // 枚举锚点：FONT_FAMILY 字面量（稳定，升级后内容不变即可命中）
 const ENUM_ANCHOR = '"Liberation Sans":9}';

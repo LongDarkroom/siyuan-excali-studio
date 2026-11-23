@@ -54,10 +54,10 @@ test("归一：只认布尔，脏值回落默认", () => {
 test("initialData：新建与打开两个分支都必须带上记忆值", () => {
   assert.match(APP, /const grid = \{ gridModeEnabled \};/, "记忆值要先收成 appState 里的一项");
   // 空板分支（!initial）——正是「空白板存不下来」那条路径
-  assert.match(APP, /if \(!initial\) return \{ appState: \{ \.\.\.stroke, \.\.\.grid \} \}/, "空板分支漏掉 grid 就等于没做这个功能");
+  assert.match(APP, /if \(!initial\) return \{ appState: \{ \.\.\.stroke, \.\.\.grid[^}]*\} \}/, "空板分支漏掉 grid 就等于没做这个功能");
   // 有文件分支：grid 必须在 ...initial.appState **之后**，否则文件的值赢过记忆值
-  assert.match(APP, /appState: \{ \.\.\.initial\.appState,.*\.\.\.grid, viewBackgroundColor: bg \}/, "记忆值必须覆盖文件里的网格（T4 的背景槽位在 grid 之后覆盖背景）");
-  assert.match(APP, /\[initial, accent, gridModeEnabled, mode\]/, "useMemo 依赖漏 gridModeEnabled/mode，改设置或切主题后开的新页签会拿旧值");
+  assert.match(APP, /appState: \{ \.\.\.initial\.appState,.*\.\.\.grid[^}]*viewBackgroundColor: bg \}/, "记忆值必须覆盖文件里的网格（T4 的背景槽位在 grid 之后覆盖背景）");
+  assert.match(APP, /\[initial, accent, gridModeEnabled(?:, fontFamily)?, mode\]/, "useMemo 依赖漏 gridModeEnabled/mode，改设置或切主题后开的新页签会拿旧值");
 });
 
 /* ---------------- 第二十六轮 T4：双主题背景槽位（读写两侧） ---------------- */

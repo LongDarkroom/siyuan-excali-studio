@@ -151,6 +151,62 @@ export function normalizePresentationSettings(raw: unknown): PresentationSetting
   };
 }
 
+/**
+ * 第九十三轮：新增文本字体的全局记忆（vendor appState.currentItemFontFamily）。
+ *
+ * 默认 5 = Excalifont，与 vendor 的 DEFAULT_FONT_FAMILY 同值。语义同 gridModeEnabled
+ * ——工具偏好不是内容：该键在 vendor 里标 export:false，白板载荷白名单也不收
+ * （见 scene-codec），所以只可能靠这份设置跨板记住。
+ *
+ * 键域分两段，都要列进设置页下拉：
+ *   ① vendor 原生 8 款（1/2/3/5/6/7/8/9；4 是历史空位，别放进来）；
+ *   ② 插件内置 6 款（101~106）——构建期由 scripts/excalidraw-fonts-patch.mjs 的
+ *      BUNDLED_FONTS 注册进 vendor 的 FONT_FAMILY 与字体选择器，字体文件在
+ *      fonts/extra/。所以它们在画布上本来就能选，只是设置页下拉别漏。
+ *
+ * ⚠️ 101~106 是**按 BUNDLED_FONTS 的顺序**算出来的（101 + 下标）。往那张表里
+ * 中间插一项，后面所有 id 都会平移，已存白板上用这些字体写过的文字会整体换字。
+ * 只能往末尾追加；test/font-memory.test.mjs 有一条断言直接对表锁住。
+ */
+export const VENDOR_TEXT_FONT_FAMILIES = [1, 2, 3, 5, 6, 7, 8, 9] as const;
+export const BUNDLED_TEXT_FONT_FAMILIES = [101, 102, 103, 104, 105, 106] as const;
+export const TEXT_FONT_FAMILIES = [
+  ...VENDOR_TEXT_FONT_FAMILIES,
+  ...BUNDLED_TEXT_FONT_FAMILIES,
+] as const;
+export type TextFontFamily = (typeof TEXT_FONT_FAMILIES)[number];
+export const DEFAULT_TEXT_FONT_FAMILY: TextFontFamily = 5;
+/** 设置页下拉的显示名（字体专名，不翻译）。101~106 必须与 BUNDLED_FONTS 的族名逐字一致 */
+export const TEXT_FONT_NAMES: Record<TextFontFamily, string> = {
+  1: "Virgil",
+  2: "Helvetica",
+  3: "Cascadia",
+  5: "Excalifont",
+  6: "Nunito",
+  7: "Lilita One",
+  8: "Comic Shanns",
+  9: "Liberation Sans",
+  // 插件内置的 6 款（fonts/extra/，构建期注册）：族名即 vendor 选择器里的显示名
+  101: "LXGW WenKai Lite",
+  102: "Smiley Sans",
+  103: "Caveat",
+  104: "Patrick Hand",
+  105: "Yusei Magic",
+  106: "Zen Kurenaido",
+};
+
+/**
+ * 字体归一：只认键域里的值（数字或下拉框给的数字字符串），其余回落 Excalifont。
+ * 未知编号多半来自别的 Excalidraw 实现的旧数据（如 4 = Obsidian 自定义字体），
+ * 放进运行时会让 vendor 找不到字体族。
+ */
+export function normalizeTextFontFamily(v: unknown): TextFontFamily {
+  const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
+  return (TEXT_FONT_FAMILIES as readonly number[]).includes(n as number)
+    ? (n as TextFontFamily)
+    : DEFAULT_TEXT_FONT_FAMILY;
+}
+
 export interface StudioSettings {
   /** 新白板落盘目录（工作空间相对路径，默认 assets/excali） */
   saveDir: string;
@@ -165,6 +221,13 @@ export interface StudioSettings {
    * 默认关——与 Excalidraw 自己的默认一致，用户开一次就被记住。
    */
   gridModeEnabled: boolean;
+  /**
+   * 第九十三轮：新增文本的默认字体（vendor currentItemFontFamily）。
+   * **单向**：只由设置页下拉写入，开板时注入 initialData —— 之后打开任何板（含空白板）
+   * 新输入的文字都用它；画布内换字体只影响那块板这一次会话，不回写、不跨板传播。
+   * 已有文字始终保持自己的字体（vendor 语义：只作用于新文字）。
+   */
+  fontFamily: TextFontFamily;
   /**
    * 第三十轮：图形模板库一次性迁移标记。
    * 旧单文件 <保存目录>/excali-library.json → excali-libraries/local.excalidrawlib，
@@ -236,6 +299,7 @@ export const DEFAULT_SETTINGS: StudioSettings = {
   accentStroke: true,
   showWelcome: true,
   gridModeEnabled: false,
+  fontFamily: DEFAULT_TEXT_FONT_FAMILY,
   stencilMigrated: false,
   pinnedScripts: [],
   pinnedActions: [...DEFAULT_PINNED_ACTIONS],
@@ -281,6 +345,7 @@ export function normalizeSettings(raw: unknown): StudioSettings {
     showWelcome: typeof r.showWelcome === "boolean" ? r.showWelcome : DEFAULT_SETTINGS.showWelcome,
     gridModeEnabled:
       typeof r.gridModeEnabled === "boolean" ? r.gridModeEnabled : DEFAULT_SETTINGS.gridModeEnabled,
+    fontFamily: normalizeTextFontFamily(r.fontFamily),
     stencilMigrated: typeof r.stencilMigrated === "boolean" ? r.stencilMigrated : DEFAULT_SETTINGS.stencilMigrated,
     pinnedScripts: Array.isArray(r.pinnedScripts)
       ? r.pinnedScripts.filter((x): x is string => typeof x === "string" && x !== "")

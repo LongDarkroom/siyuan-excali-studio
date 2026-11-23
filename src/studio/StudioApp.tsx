@@ -105,7 +105,11 @@ import {
   type TextElementLike,
   type TextPatch,
 } from "./presentation-typewriter.ts";
-import { normalizePresentationSettings, type PresentationSettings } from "./settings";
+import {
+  normalizePresentationSettings,
+  type PresentationSettings,
+  type TextFontFamily,
+} from "./settings";
 import { PresentationDrawer } from "./PresentationDrawer";
 import { PresentationStage } from "./PresentationStage";
 import { imageTargetMessageKey, pickImageTarget, type ImageLike } from "./image-to-material.ts";
@@ -349,6 +353,11 @@ export type StudioProps = {
   gridModeEnabled: boolean;
   /** 2026-10-16：用户在画布上切换网格时回写记忆值 */
   onGridChange: (enabled: boolean) => void;
+  /**
+   * 第九十三轮：新增文本的默认字体——**唯一来源是插件设置页的下拉框**，
+   * 开页签时读一次写进 initialData；画布内换字体不回写、也不影响别的板。
+   */
+  fontFamily: TextFontFamily;
   /** ☰「复制此白板的引用」→ 宿主复制图片嵌入引用 ![标题](assets/x.svg) 写剪贴板 */
   onCopyBoardRef: () => void;
   /**
@@ -433,6 +442,7 @@ export function StudioApp(props: StudioProps) {
     onPresentationSetting,
     gridModeEnabled,
     onGridChange,
+    fontFamily,
     onCopyBoardRef,
     getLibraryImportUrl,
     libDirAbs,
@@ -661,6 +671,14 @@ export function StudioApp(props: StudioProps) {
   const baselineRef = useRef<string | null>(null);
   // 网格是「上次看到的值」，用它把 onChange 的高频回调收敛成「真的翻转了才回写设置」
   const gridRef = useRef(gridModeEnabled);
+  /**
+   * 第九十三轮（二次修订）：字体不再做「画布 → 设置」的记忆，字体只由设置页决定。
+   * 这个 ref 只负责挂载后的一次性对表：万一 vendor 初始化把 defaultAppState 的
+   * Excalifont 留在现场（initialData 被忽略之类的边角），补一次写回，保证
+   * 「打开画布第一笔打出来的就是这个字体」。跑过一次就不再干预，用户在板上
+   * 临时换字体不会被抢。
+   */
+  const fontSeededRef = useRef(false);
   /** 第二十六轮 T4：载荷里两个主题的背景槽位（打开时读一次；handleChange 里随当前主题更新） */
   const bgSlotsRef = useRef<{ light: string; dark: string }>({ light: "", dark: "" });
 
@@ -2632,8 +2650,12 @@ export function StudioApp(props: StudioProps) {
     // appState 键，其中就有 gridModeEnabled，所以文件里本来带着上一次的值——但空白板
     // 根本存不下来，且用户要的是「开一次就一直开」，故这里让记忆值赢）。
     const grid = { gridModeEnabled };
+    // 第九十三轮：字体只认设置页的下拉框（vendor 对嵌入式组件不读 localStorage，
+    // 见 initializeScene 的 restore(initialData, null, null)），空白板与已存板都覆盖；
+    // 板里存着的旧值（如果有）被这一项盖掉，所以每次开板都是同一个起手字体
+    const font = { currentItemFontFamily: fontFamily };
     // 强调色是 appState 里的项，新建画板也得包在 appState 下（直接平铺会被忽略）
-    if (!initial) return { appState: { ...stroke, ...grid } } as ExcalidrawInitialData;
+    if (!initial) return { appState: { ...stroke, ...grid, ...font } } as ExcalidrawInitialData;
     // T4：按当前主题挑背景——槽位有值用槽位，否则回落载荷里的 viewBackgroundColor
     const rawState = initial.appState as unknown as Record<string, unknown>;
     const slots = readThemeBgSlots(rawState);
@@ -2641,11 +2663,11 @@ export function StudioApp(props: StudioProps) {
     const bg = themeBgForMode(slots, mode, rawState.viewBackgroundColor as string | undefined);
     return {
       elements: initial.elements as unknown as never,
-      appState: { ...initial.appState, ...(stroke ?? {}), ...grid, viewBackgroundColor: bg },
+      appState: { ...initial.appState, ...(stroke ?? {}), ...grid, ...font, viewBackgroundColor: bg },
       files: initial.files,
       scrollToContent: true,
     } as unknown as ExcalidrawInitialData;
-  }, [initial, accent, gridModeEnabled, mode]);
+  }, [initial, accent, gridModeEnabled, fontFamily, mode]);
 
   /**
    * 第十五轮：场景指纹。算不出来（vendor 内部抛异常）返回 null，由 dirtyFromStamp 判成脏。
@@ -2676,6 +2698,19 @@ export function StudioApp(props: StudioProps) {
       files: api.getFiles(),
     });
   }, [api, stampOf]);
+
+  /**
+   * 第九十三轮（二次修订）：一次性对表——开板后若 vendor 现场的默认字体不是设置页那个，
+   * 补一次 updateScene。正常路径 initialData 已经生效，这里是「打开第一笔就是它」的兜底；
+   * `fontSeededRef` 保证只跑一次，用户随后在板上换字体不会被抢回去。
+   */
+  useEffect(() => {
+    if (!api || fontSeededRef.current) return;
+    fontSeededRef.current = true;
+    if (Number(api.getAppState().currentItemFontFamily) !== fontFamily) {
+      api.updateScene({ appState: { currentItemFontFamily: fontFamily } as never });
+    }
+  }, [api, fontFamily]);
 
   /**
    * 第二十一轮：防抖自动保存——画板侧唯一的保存形态。
@@ -2723,6 +2758,9 @@ export function StudioApp(props: StudioProps) {
         gridRef.current = grid;
         onGridChange(grid);
       }
+      // 第九十三轮（二次修订）：字体单向——设置页 → 画布。这里刻意不读
+      // appState.currentItemFontFamily，也不回写设置：在板上换字体只影响这一块板
+      // 当前这次会话（该键 export:false，白板载荷也不收，下次打开仍按设置页的值起手）。
       // 第二十六轮 T4：当前主题的背景槽位随手跟新（ref 写入，零渲染成本）
       bgSlotsRef.current[modeRef.current] = typeof appState.viewBackgroundColor === "string" ? appState.viewBackgroundColor : "";
       /*
