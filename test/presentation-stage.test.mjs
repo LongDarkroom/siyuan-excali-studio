@@ -11,7 +11,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -65,17 +65,42 @@ test("遮罩换成画布底色：不再压黑，颜色按当前主题取", () =>
   assert.equal(/\.exs-present-scrim__fill\s*\{[^}]*fill:/.test(CSS), false, "CSS 不许再定幕布颜色（会盖掉属性退回压黑）");
 });
 
-test("深色主题：幕布套 vendor 同款反色滤镜（否则画框外留一圈白边）", () => {
-  // vendor 对画布做 invert(93%) hue-rotate(180deg)：白底在屏上是 #121212。
-  // 幕布是画布的兄弟节点，吃不到那条规则，必须自己补同一条滤镜。
+test("深色主题：幕布套 vendor 反色滤镜；演示预览图不套（主题在导出时烘进 PNG）", () => {
   const vendorCss = readFileSync(resolve(ROOT, "node_modules/@excalidraw/excalidraw/dist/prod/index.css"), "utf8");
   const vendorFilter = vendorCss.match(/\.excalidraw\.theme--dark\s*\{[^}]*--theme-filter:\s*([^;]+);/);
   assert.ok(vendorFilter, "vendor 深色主题里应有 --theme-filter");
-  const ours = CSS.match(/\.exs-root\[data-theme-mode="dark"\]\s+\.exs-present-scrim\s*\{[^}]*\bfilter:\s*([^;]+);/);
-  assert.ok(ours, "深色主题下幕布必须有反色滤镜");
-  assert.equal(ours[1].trim(), vendorFilter[1].trim(), "滤镜值必须与 vendor 画布同款（换 vendor 版本时要跟着改）");
-  // 放映中换主题（系统日落自动切）：画布换槽位时幕布色要跟着换，否则又是一圈两色
-  assert.match(APP, /setPresentMaskColor\(slot\)/, "换主题同步幕布色");
+
+  const filterOf = (sel) => {
+    const esc = sel.trim().split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+    const m = CSS.match(
+      new RegExp(`\\.exs-root\\[data-theme-mode="dark"\\]\\s+${esc}\\s*(?:,[^{]*)?\\{[^}]*\\bfilter:\\s*([^;]+);`),
+    );
+    return m && m[1].trim();
+  };
+  assert.equal(filterOf(".exs-present-scrim"), vendorFilter[1].trim(), "幕布滤镜要跟 vendor 画布同款（换 vendor 版本时要跟着改）");
+
+  // 2026-11-25 实测：预览 PNG 像素是 rgb(17,17,17) —— 导出时
+  // `exportWithDarkMode: mode === "dark"` + 主题底色已经把深色烘进去了。
+  // 显示层再反一次只会翻回浅色页（用户截图那块 rgb(231,231,231) 就是这么来的）。
+  for (const sel of [
+    ".exs-present-stage__img",
+    ".exs-present-card__img",
+    ".exs-present-preview__thumb img",
+    ".exs-present-dragghost__img",
+  ]) {
+    assert.ok(!filterOf(sel), `深色模式下 ${sel} 不能再套反色滤镜（会二次反转成浅色页）`);
+  }
+  assert.equal(
+    /\.exs-present-(stage|card)__img[^{]*\{[^}]*filter:\s*brightness\(/.test(CSS),
+    false,
+    "brightness 兜底已退役，别退回去",
+  );
+
+  assert.match(APP, /exportWithDarkMode:\s*modeRef\.current === "dark"/, "预览图导出必须跟随当前主题（深色由导出负责，不靠显示层反色）");
+  assert.equal(existsSync(resolve(ROOT, "src/studio/preview-filter.ts")), false, "preview-filter.ts 已删除（显示层不再反色）");
+  const DRAWER = src("studio/PresentationDrawer.tsx");
+  assert.equal((DRAWER.match(/previewFilterStyle/g) || []).length, 0, "抽屉里不许再挂行内反色滤镜");
+  assert.equal((STAGE.match(/previewFilterStyle/g) || []).length, 0, "底栏页码预览同样不挂滤镜");
 });
 
 test("镜头：留白走进片场定格的偏好；飞行窗内换页排队，不丢输入", () => {

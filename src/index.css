@@ -5313,15 +5313,21 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   -webkit-user-drag: none;
 }
 
-/* 深色模式：演示预览是白板缩略图，白底铺满一整块会晃眼。
-   只把这块大图轻微降亮（0.88 后白≈#e0e0e0），内容色不篡改；
-   页单里的小缩略图不动——面积小，亮一点反而更清楚。 */
+/* 深色模式：演示预览**一律不套滤镜**（第四轮踩的坑，别再加回来）。
+   ----------------------------------------------------------------
+   预览图是 `exportToCanvas` 导出的 PNG，而**导出时主题已经烘进去了**：
+   `exportWithDarkMode: mode === "dark"` 加上 `viewBackgroundColor: 当前主题底色`
+   ⇒ 深色下 PNG 本体就是深底 + 浅笔画（2026-11-25 实测 PNG 像素 rgb(17,17,17)）。
+
+   所以显示层再套一条 `invert(93%) hue-rotate(180deg)`，等于把它翻回**浅色页**：
+   用户截图里那块 rgb(231,231,231) 正是「深色 PNG 被反一次」的结果。
+   结论：主题色只由导出负责，显示层不碰 filter（行内 style 也不要）。
+   旧的 `brightness(0.88)` 同样已退役。 */
 .exs-root[data-theme-mode="dark"] .exs-present-stage__canvas {
   border-color: rgba(255, 255, 255, 0.14);
-}
-
-.exs-root[data-theme-mode="dark"] .exs-present-stage__img {
-  filter: brightness(0.88);
+  /* 预览 PNG 的页底就是 #121212（导出时烘进去的）；外框若还留着 --exs-menu-solid(#2c2c2e)，
+     画框比例与盒子不一致时，contain 的留边会露出一圈更亮的灰边。 */
+  background: #121212;
 }
 
 .exs-present-stage__ph {

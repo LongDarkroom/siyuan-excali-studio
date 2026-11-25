@@ -438,10 +438,10 @@ test("本页编排画布：热区 ↔ 右栏行双向联动，右键直接换效
   assert.match(APP, /stageThumbs=\{presentStageThumbs\}/, "宿主递本页高清预览");
   assert.match(APP, /maxWidthOrHeight: big \? STAGE_MAX : THUMB_MAX/, "同一串行队列出两种尺寸");
   assert.match(CSS, /\.exs-present-stage__canvas \{[^}]*position: relative;/, "热区以画布为定位基准");
-  assert.match(
-    CSS,
-    /\.exs-root\[data-theme-mode="dark"\] \.exs-present-stage__img \{\s*filter: brightness\(0\.88\);/, 
-    "深色模式大预览降亮，别拿一整块白晃眼",
+  assert.equal(
+    /\.exs-root\[data-theme-mode="dark"\] \.exs-present-(stage|card)__img[^{]*\{[\s\S]{0,240}?filter: invert/.test(CSS),
+    false,
+    "深色模式大预览不套反色：导出已带主题，再反一次会翻成浅色页",
   );
   assert.match(CSS, /\.exs-present-hotspot::before \{[^}]*inset: -6px;/, "细线/箭头的热区要外扩");
   assert.match(CSS, /\.exs-present-mrow--sel \{[^}]*border-color: var\(--exs-accent\);/, "选中行与热区同色环");
